@@ -1179,7 +1179,7 @@ class HealthMonitorService:
         settings = dict(agent_settings or {})
         person = self._require_person(person_id)
         logged_at = self._parse_person_datetime(logged_at_local, person)
-        parsed_logged_at, items = parse_text_meal_items(text, default_logged_at=logged_at)
+        repeated_meal = parse_repeated_meal_reference(text, default_logged_at=logged_at)
         run = AgentRun(
             id=self._next_id("agent_run"),
             person_id=person_id,
@@ -1188,6 +1188,19 @@ class HealthMonitorService:
             status="started",
         )
         self.agent_runs[run.id] = run
+        if repeated_meal is not None:
+            source_day, meal_type = repeated_meal
+            proposal = self._create_repeated_meal_proposal(
+                person_id=person_id,
+                text=text,
+                run=run,
+                target_logged_at=logged_at,
+                source_day=source_day,
+                meal_type=meal_type,
+            )
+            self._persist()
+            return proposal
+        parsed_logged_at, items = parse_text_meal_items(text, default_logged_at=logged_at)
         unsupported_items = [
             item
             for item in items
@@ -1421,6 +1434,88 @@ class HealthMonitorService:
             input_text=run.input_text,
             settings=run.settings,
             status="needs_clarification",
+            proposal_id=proposal.id,
+            created_at=run.created_at,
+        )
+        return proposal
+
+    def _create_repeated_meal_proposal(
+        self,
+        *,
+        person_id: str,
+        text: str,
+        run: AgentRun,
+        target_logged_at: datetime,
+        source_day: date,
+        meal_type: str,
+    ) -> CreateDiaryEntriesProposal:
+        source_entries = [
+            entry
+            for entry in self.diary.entries_for_day(person_id, source_day)
+            if entry.meal_type == meal_type
+        ]
+        source_entries.sort(key=lambda entry: entry.logged_at)
+        if not source_entries:
+            raise ValueError(f"no {meal_type} entries found on {source_day.isoformat()}")
+
+        entries: list[DiaryEntry] = []
+        evidence: list[dict[str, object]] = []
+        totals = Nutrients()
+        for source_entry in source_entries:
+            version = self.catalog.get_version(source_entry.food_version_id)
+            copied = DiaryEntry(
+                id=self._next_id("diary_entry"),
+                person_id=person_id,
+                logged_at=target_logged_at,
+                meal_type=meal_type,
+                food_version_id=source_entry.food_version_id,
+                quantity_g=source_entry.quantity_g,
+                source="agent_copy_proposal",
+            )
+            entries.append(copied)
+            nutrients = version.nutrients_per_100g.scale(copied.quantity_g / 100)
+            totals += nutrients
+            food = self.catalog.foods[version.food_id]
+            evidence.append(
+                {
+                    "source_type": "copied_diary_entry",
+                    "source_text": text,
+                    "source_day": source_day.isoformat(),
+                    "source_meal_type": meal_type,
+                    "source_entry_id": source_entry.id,
+                    "food_id": food.id,
+                    "food_name": food.name,
+                    "food_version_id": version.id,
+                    "quantity_g": copied.quantity_g,
+                    "resolution_reason": "same_meal_previous_day",
+                    "confidence": 1.0,
+                }
+            )
+
+        proposal = self.proposals.create(
+            CreateDiaryEntriesProposal(
+                id=self._next_id("proposal"),
+                person_id=person_id,
+                entries=tuple(entries),
+                proposal_type="diary_entries",
+                summary=f"{len(entries)} diary entries copied from {meal_type} on {source_day.isoformat()}",
+                payload={
+                    "raw_text": text,
+                    "source_day": source_day.isoformat(),
+                    "source_meal_type": meal_type,
+                    "copy_mode": "same_meal_previous_day",
+                },
+                totals=totals,
+                evidence=tuple(evidence),
+                source_agent_run_id=run.id,
+            )
+        )
+        self.agent_runs[run.id] = AgentRun(
+            id=run.id,
+            person_id=run.person_id,
+            input_text=run.input_text,
+            settings=run.settings,
+            status="proposal_created",
             proposal_id=proposal.id,
             created_at=run.created_at,
         )
@@ -2561,6 +2656,42 @@ def parse_text_meal_items(text: str, *, default_logged_at: datetime) -> tuple[da
     if not items:
         raise ValueError("text meal has no food items")
     return logged_at, items
+
+
+def parse_repeated_meal_reference(
+    text: str,
+    *,
+    default_logged_at: datetime,
+) -> tuple[date, str] | None:
+    match = re.fullmatch(
+        r"\s*(?:same|mesm[ao])\s+(breakfast|lunch|dinner|snack|late|café da manhã|cafe da manha|almoço|almoco|jantar|lanche)\s+(?:as|de|do|da)\s+(yesterday|ontem|today|hoje|\d{4}-\d{2}-\d{2})\s*",
+        text,
+        re.I,
+    )
+    if match is None:
+        return None
+    meal_type = normalize_meal_type(match.group(1))
+    day_text = match.group(2).casefold()
+    if day_text in {"yesterday", "ontem"}:
+        source_day = default_logged_at.date() - timedelta(days=1)
+    elif day_text in {"today", "hoje"}:
+        source_day = default_logged_at.date()
+    else:
+        source_day = date.fromisoformat(day_text)
+    return source_day, meal_type
+
+
+def normalize_meal_type(value: str) -> str:
+    normalized = value.casefold().strip()
+    aliases = {
+        "café da manhã": "breakfast",
+        "cafe da manha": "breakfast",
+        "almoço": "lunch",
+        "almoco": "lunch",
+        "jantar": "dinner",
+        "lanche": "snack",
+    }
+    return aliases.get(normalized, normalized)
 
 
 def parse_time_prefix(fragment: str, *, default_logged_at: datetime) -> datetime | None:

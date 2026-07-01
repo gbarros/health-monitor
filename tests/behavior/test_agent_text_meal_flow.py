@@ -144,6 +144,70 @@ class AgentTextMealFlowTest(unittest.TestCase):
         self.assertEqual(summary.totals.rounded(), Nutrients(157.5, 11.5, 1.3, 11.75))
         self.assertEqual(summary.meals["snack"][0].quantity_g, 50)
 
+    def test_same_breakfast_as_yesterday_copies_structured_entries_as_proposal(self) -> None:
+        service = HealthMonitorService()
+        household = service.create_household(name="Casa")
+        person = service.create_person(
+            household_id=household.id,
+            name="Gabriel",
+            timezone="America/Sao_Paulo",
+        )
+        _, cheese = service.create_food_with_version(
+            household_id=household.id,
+            name="Queijo Minas",
+            brand=None,
+            version_label="current",
+            nutrients_per_100g=Nutrients(calories_kcal=315, protein_g=23, carbs_g=2.6, fat_g=23.5),
+            source="label_scan",
+            aliases=["queijo"],
+        )
+        _, egg = service.create_food_with_version(
+            household_id=household.id,
+            name="Ovo",
+            brand=None,
+            version_label="large egg",
+            nutrients_per_100g=Nutrients(calories_kcal=155, protein_g=13, carbs_g=1.1, fat_g=11),
+            source="reference",
+            aliases=["ovo"],
+            serving_size_g=50,
+        )
+        first = service.log_diary_entry(
+            person_id=person.id,
+            logged_at_local="2026-07-01T09:00:00",
+            food_version_id=cheese.id,
+            quantity_g=50,
+            source="manual",
+            meal_type="breakfast",
+        )
+        second = service.log_diary_entry(
+            person_id=person.id,
+            logged_at_local="2026-07-01T09:05:00",
+            food_version_id=egg.id,
+            quantity_g=100,
+            source="manual",
+            meal_type="breakfast",
+        )
+
+        proposal = service.propose_text_meal(
+            person_id=person.id,
+            logged_at_local="2026-07-02T09:00:00",
+            text="same breakfast as yesterday",
+            agent_settings={"external_lookup": False},
+        )
+        before = service.day_summary(person.id, date(2026, 7, 2))
+        applied = service.confirm_proposal(proposal.id)
+        after = service.day_summary(person.id, date(2026, 7, 2))
+
+        self.assertEqual(proposal.status, "draft")
+        self.assertEqual(proposal.summary, "2 diary entries copied from breakfast on 2026-07-01")
+        self.assertEqual([entry.food_version_id for entry in proposal.entries], [cheese.id, egg.id])
+        self.assertEqual([entry.quantity_g for entry in proposal.entries], [50, 100])
+        self.assertEqual(proposal.evidence[0]["source_entry_id"], first.id)
+        self.assertEqual(proposal.evidence[1]["source_entry_id"], second.id)
+        self.assertEqual(before.totals, Nutrients())
+        self.assertEqual(applied.status, "applied")
+        self.assertEqual(after.totals.rounded(), Nutrients(312.5, 24.5, 2.4, 22.75))
+
     def test_agent_run_and_pending_proposal_survive_restart(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "health-monitor.sqlite3"

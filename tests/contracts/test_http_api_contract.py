@@ -282,6 +282,109 @@ class HttpApiContractTest(unittest.TestCase):
         self.assertEqual(applied["status"], "applied")
         self.assertEqual(after["totals"]["calories_kcal"], 315)
 
+    def test_text_meal_can_copy_same_breakfast_as_yesterday_through_http_contract(self) -> None:
+        api = HttpApi(HealthMonitorService())
+        household = api.handle("POST", "/api/households", {"name": "Casa"}).body
+        person = api.handle(
+            "POST",
+            "/api/people",
+            {
+                "household_id": household["id"],
+                "name": "Gabriel",
+                "timezone": "America/Sao_Paulo",
+            },
+        ).body
+        cheese = api.handle(
+            "POST",
+            "/api/foods",
+            {
+                "household_id": household["id"],
+                "name": "Queijo Minas",
+                "brand": None,
+                "version_label": "current",
+                "source": "label_scan",
+                "nutrients_per_100g": {
+                    "calories_kcal": 315,
+                    "protein_g": 23,
+                    "carbs_g": 2.6,
+                    "fat_g": 23.5,
+                },
+                "aliases": ["queijo"],
+            },
+        ).body
+        egg = api.handle(
+            "POST",
+            "/api/foods",
+            {
+                "household_id": household["id"],
+                "name": "Ovo",
+                "brand": None,
+                "version_label": "large egg",
+                "source": "reference",
+                "nutrients_per_100g": {
+                    "calories_kcal": 155,
+                    "protein_g": 13,
+                    "carbs_g": 1.1,
+                    "fat_g": 11,
+                },
+                "aliases": ["ovo"],
+                "serving_size_g": 50,
+            },
+        ).body
+        api.handle(
+            "POST",
+            "/api/diary",
+            {
+                "person_id": person["id"],
+                "logged_at_local": "2026-07-01T09:00:00",
+                "food_version_id": cheese["version"]["id"],
+                "quantity_g": 50,
+                "source": "manual",
+                "meal_type": "breakfast",
+            },
+        )
+        api.handle(
+            "POST",
+            "/api/diary",
+            {
+                "person_id": person["id"],
+                "logged_at_local": "2026-07-01T09:05:00",
+                "food_version_id": egg["version"]["id"],
+                "quantity_g": 100,
+                "source": "manual",
+                "meal_type": "breakfast",
+            },
+        )
+
+        proposal = api.handle(
+            "POST",
+            "/api/agent/text-meal",
+            {
+                "person_id": person["id"],
+                "logged_at_local": "2026-07-02T09:00:00",
+                "text": "same breakfast as yesterday",
+                "agent_settings": {"external_lookup": False},
+            },
+        ).body
+        before = api.handle(
+            "GET",
+            f"/api/diary/day?person_id={person['id']}&day=2026-07-02",
+            None,
+        ).body
+        applied = api.handle("POST", f"/api/proposals/{proposal['id']}/confirm", None).body
+        after = api.handle(
+            "GET",
+            f"/api/diary/day?person_id={person['id']}&day=2026-07-02",
+            None,
+        ).body
+
+        self.assertEqual(proposal["summary"], "2 diary entries copied from breakfast on 2026-07-01")
+        self.assertEqual([entry["quantity_g"] for entry in proposal["entries"]], [50, 100])
+        self.assertEqual(before["totals"]["calories_kcal"], 0)
+        self.assertEqual(applied["status"], "applied")
+        self.assertEqual(after["totals"]["calories_kcal"], 312.5)
+        self.assertEqual(len(after["meals"]["breakfast"]), 2)
+
     def test_text_meal_unsupported_unit_returns_clarification_contract(self) -> None:
         api = HttpApi(HealthMonitorService())
         household = api.handle("POST", "/api/households", {"name": "Casa"}).body
