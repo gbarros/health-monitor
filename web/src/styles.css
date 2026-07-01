@@ -254,6 +254,27 @@ td:first-child {
   gap: 10px;
 }
 
+.lookup-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.lookup-list li {
+  border: 1px solid #d9ded5;
+  border-radius: 6px;
+  padding: 10px;
+  display: grid;
+  gap: 4px;
+}
+
+.lookup-list span {
+  color: #657064;
+  font-size: 13px;
+}
+
 .evidence-list {
   list-style: none;
   margin: 12px 0 0;

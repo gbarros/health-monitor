@@ -14,6 +14,7 @@ class AppConfig:
     food_estimator: str = "ollama"
     ollama_base_url: str = "http://127.0.0.1:11434"
     ollama_model: str = "gemma4:e4b"
+    openfoodfacts_enabled: bool = True
 
 
 def load_config() -> AppConfig:
@@ -30,4 +31,6 @@ def load_config() -> AppConfig:
             "OLLAMA_MODEL",
             os.environ.get("DEFAULT_MODEL_PROFILE", "gemma4:e4b"),
         ),
+        openfoodfacts_enabled=os.environ.get("OPENFOODFACTS_ENABLED", "true").casefold()
+        in {"1", "true", "yes", "on"},
     )

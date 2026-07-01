@@ -37,6 +37,22 @@ type FoodVersion = {
 };
 type Food = { id: string; name: string; brand: string | null; default_version_id: string };
 type FoodResponse = { food: Food; version: FoodVersion };
+type FoodLookupCandidate = {
+  id: string;
+  source_type: string;
+  source_name: string;
+  source_id: string;
+  source_url: string | null;
+  product_name: string;
+  brand: string | null;
+  barcode: string | null;
+  food_id: string | null;
+  food_version_id: string | null;
+  serving_size_g: number | null;
+  nutrients_per_100g: Nutrients;
+  confidence: number;
+  warnings: string[];
+};
 type SummaryEntry = {
   id: string;
   logged_at: string;
@@ -125,6 +141,7 @@ type AppState = {
   person: Person | null;
   activeGoal: GoalProfile | null;
   foods: FoodResponse[];
+  lookupCandidates: FoodLookupCandidate[];
   summary: DaySummary | null;
   week: WeekSummary | null;
   weightTrend: WeightTrend | null;
@@ -143,6 +160,7 @@ const state: AppState = {
   person: null,
   activeGoal: null,
   foods: [],
+  lookupCandidates: [],
   summary: null,
   week: null,
   weightTrend: null,
@@ -189,6 +207,7 @@ function render(): void {
           ${renderSetup()}
           ${renderGoalForm()}
           ${renderFoodForm()}
+          ${renderFoodLookup()}
           ${renderManualLog()}
           ${renderWeightForm()}
           ${renderTextMeal()}
@@ -367,7 +386,8 @@ function renderProposal(): string {
     )
     .join("");
   const payloadDetails =
-    state.proposal.proposal_type === "food_version_from_label"
+    state.proposal.proposal_type === "food_version_from_label" ||
+    state.proposal.proposal_type === "food_version_from_lookup"
       ? renderFoodVersionProposalPayload(state.proposal)
       : state.proposal.proposal_type === "recipe_food_version"
         ? renderRecipeProposalPayload(state.proposal)
@@ -591,6 +611,36 @@ function renderFoodForm(): string {
   `;
 }
 
+function renderFoodLookup(): string {
+  const disabled = state.household && state.person ? "" : "disabled";
+  const candidates = state.lookupCandidates
+    .map(
+      (candidate) => `
+        <li>
+          <strong>${escapeHtml(candidate.product_name)}</strong>
+          <span>${escapeHtml(candidate.source_name)} · confidence ${candidate.confidence}</span>
+          <span>${candidate.nutrients_per_100g.calories_kcal} kcal · ${candidate.nutrients_per_100g.protein_g} g protein / 100g</span>
+          ${
+            candidate.source_type.startsWith("local_")
+              ? `<span>Already saved locally</span>`
+              : `<button class="lookup-propose" type="button" data-candidate-id="${candidate.id}">Draft food version</button>`
+          }
+        </li>
+      `
+    )
+    .join("");
+  return `
+    <form id="food-lookup-form" class="panel">
+      <p class="eyebrow">Lookup</p>
+      <h2>Food source</h2>
+      <label>Barcode <input name="barcode" placeholder="789..." ${disabled} /></label>
+      <label>Text <input name="phrase" placeholder="iogurte batavo" ${disabled} /></label>
+      <button type="submit" ${disabled}>Search sources</button>
+      ${candidates ? `<ul class="lookup-list">${candidates}</ul>` : ""}
+    </form>
+  `;
+}
+
 function renderManualLog(): string {
   const disabled = state.person && state.foods.length ? "" : "disabled";
   const options = state.foods
@@ -715,6 +765,7 @@ function bindEvents(): void {
   document.querySelector<HTMLFormElement>("#add-person-form")?.addEventListener("submit", onAddPerson);
   document.querySelector<HTMLFormElement>("#goal-form")?.addEventListener("submit", onGoal);
   document.querySelector<HTMLFormElement>("#food-form")?.addEventListener("submit", onFood);
+  document.querySelector<HTMLFormElement>("#food-lookup-form")?.addEventListener("submit", onFoodLookup);
   document.querySelector<HTMLFormElement>("#manual-log-form")?.addEventListener("submit", onManualLog);
   document.querySelector<HTMLFormElement>("#weight-form")?.addEventListener("submit", onWeight);
   document.querySelector<HTMLFormElement>("#text-meal-form")?.addEventListener("submit", onTextMeal);
@@ -735,6 +786,9 @@ function bindEvents(): void {
   document
     .querySelectorAll<HTMLButtonElement>(".entry-delete")
     .forEach((button) => button.addEventListener("click", onEntryDelete));
+  document
+    .querySelectorAll<HTMLButtonElement>(".lookup-propose")
+    .forEach((button) => button.addEventListener("click", onLookupPropose));
 }
 
 async function onSetup(event: SubmitEvent): Promise<void> {
@@ -877,6 +931,36 @@ async function onFood(event: SubmitEvent): Promise<void> {
   render();
 }
 
+async function onFoodLookup(event: SubmitEvent): Promise<void> {
+  event.preventDefault();
+  if (!state.household || !state.person) return;
+  const form = new FormData(event.currentTarget as HTMLFormElement);
+  const params = new URLSearchParams({
+    household_id: state.household.id,
+    person_id: state.person.id
+  });
+  const barcode = optionalText(form, "barcode");
+  const phrase = optionalText(form, "phrase");
+  if (barcode) params.set("barcode", barcode);
+  if (phrase) params.set("phrase", phrase);
+  state.lookupCandidates = await apiGet<FoodLookupCandidate[]>(`/api/lookups/foods?${params.toString()}`);
+  state.notice = `${state.lookupCandidates.length} lookup candidate${state.lookupCandidates.length === 1 ? "" : "s"} found.`;
+  render();
+}
+
+async function onLookupPropose(event: Event): Promise<void> {
+  if (!state.household || !state.person) return;
+  const candidateId = (event.currentTarget as HTMLButtonElement).dataset.candidateId;
+  if (!candidateId) return;
+  state.proposal = await apiPost<Proposal>("/api/lookups/foods/propose", {
+    household_id: state.household.id,
+    person_id: state.person.id,
+    candidate_id: candidateId
+  });
+  state.notice = "Lookup proposal drafted.";
+  render();
+}
+
 async function onManualLog(event: SubmitEvent): Promise<void> {
   event.preventDefault();
   if (!state.person) return;
@@ -1004,6 +1088,7 @@ async function confirmProposal(): Promise<void> {
   state.proposal = await apiPost<Proposal>(`/api/proposals/${state.proposal.id}/confirm`, {});
   if (
     state.proposal.proposal_type === "food_version_from_label" ||
+    state.proposal.proposal_type === "food_version_from_lookup" ||
     state.proposal.proposal_type === "recipe_food_version"
   ) {
     addAppliedFoodProposalToLocalLibrary(state.proposal);

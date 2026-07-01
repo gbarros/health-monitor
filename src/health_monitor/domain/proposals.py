@@ -15,6 +15,7 @@ ProposalType = Literal[
     "food_version_from_label",
     "recipe_food_version",
     "diary_entry_update",
+    "food_version_from_lookup",
 ]
 
 

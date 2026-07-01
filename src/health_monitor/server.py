@@ -8,6 +8,7 @@ from health_monitor.api.http_api import HttpApi
 from health_monitor.application.service import HealthMonitorService
 from health_monitor.config import load_config
 from health_monitor.lookup.estimates import OllamaFoodEstimator
+from health_monitor.lookup.foods import OpenFoodFactsLookupProvider
 from health_monitor.persistence.sqlite_state import SQLiteStateRepository
 
 
@@ -24,7 +25,14 @@ def build_api() -> HttpApi:
         )
     elif config.food_estimator != "none":
         raise ValueError(f"unsupported food estimator: {config.food_estimator}")
-    return HttpApi(HealthMonitorService(repository=repository, estimator=estimator))
+    food_lookup_provider = OpenFoodFactsLookupProvider() if config.openfoodfacts_enabled else None
+    return HttpApi(
+        HealthMonitorService(
+            repository=repository,
+            estimator=estimator,
+            food_lookup_provider=food_lookup_provider,
+        )
+    )
 
 
 class HealthMonitorRequestHandler(BaseHTTPRequestHandler):

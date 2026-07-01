@@ -38,6 +38,14 @@ OLLAMA_BASE_URL=http://127.0.0.1:11434 OLLAMA_MODEL=gemma4:e4b make dev-api
 
 Set `FOOD_ESTIMATOR=none` to disable model estimates. Estimated foods still go through proposals and only become reusable library entries after confirmation.
 
+Food source lookup can query the local library first and Open Food Facts for packaged foods:
+
+```bash
+OPENFOODFACTS_ENABLED=true make dev-api
+```
+
+Set `OPENFOODFACTS_ENABLED=false` to keep lookup fully local.
+
 ## Local Web
 
 The frontend is a Vite SPA without React/Next:

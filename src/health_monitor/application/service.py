@@ -12,6 +12,7 @@ from health_monitor.domain.foods import BarcodeAssociation, Food, FoodAlias, Foo
 from health_monitor.domain.nutrients import Nutrients
 from health_monitor.domain.proposals import CreateDiaryEntriesProposal, ProposalService
 from health_monitor.lookup.estimates import FoodEstimator, NutritionEstimate
+from health_monitor.lookup.foods import FoodLookupCandidate, FoodLookupProvider
 from health_monitor.persistence.sqlite_state import StateRepository
 
 
@@ -159,9 +160,11 @@ class HealthMonitorService:
         self,
         repository: StateRepository | None = None,
         estimator: FoodEstimator | None = None,
+        food_lookup_provider: FoodLookupProvider | None = None,
     ) -> None:
         self.repository = repository
         self.estimator = estimator
+        self.food_lookup_provider = food_lookup_provider
         self.households: dict[str, Household] = {}
         self.people: dict[str, Person] = {}
         self.goal_profiles: dict[str, GoalProfile] = {}
@@ -171,6 +174,7 @@ class HealthMonitorService:
         self.resolver = FoodResolver(self.catalog)
         self.proposals = ProposalService(self.diary)
         self.agent_runs: dict[str, AgentRun] = {}
+        self.lookup_candidates: dict[str, FoodLookupCandidate] = {}
         self._ids: dict[str, int] = {}
         if self.repository is not None:
             snapshot = self.repository.load()
@@ -380,6 +384,132 @@ class HealthMonitorService:
         if food.household_id != household_id:
             raise ValueError("resolved food belongs to a different household")
         return resolution
+
+    def lookup_food_candidates(
+        self,
+        *,
+        household_id: str,
+        person_id: str,
+        phrase: str | None = None,
+        barcode: str | None = None,
+    ) -> tuple[FoodLookupCandidate, ...]:
+        self._require_household(household_id)
+        self._require_person(person_id)
+        candidates: list[FoodLookupCandidate] = []
+        if barcode is not None:
+            association = self.catalog.resolve_barcode(barcode)
+            if association is not None:
+                food = self.catalog.foods[association.food_id]
+                version = self.catalog.get_version(association.food_version_id)
+                candidates.append(
+                    FoodLookupCandidate(
+                        id=self._next_id("lookup_candidate"),
+                        source_type="local_barcode",
+                        source_name="Local library",
+                        source_id=association.id,
+                        product_name=food.name,
+                        brand=food.brand,
+                        barcode=association.barcode,
+                        food_id=food.id,
+                        food_version_id=version.id,
+                        serving_size_g=version.serving_size_g,
+                        nutrients_per_100g=version.nutrients_per_100g,
+                        confidence=association.confidence,
+                    )
+                )
+        if phrase is not None:
+            resolution = self.resolver.resolve_phrase(phrase, person_id=person_id)
+            if resolution is not None:
+                food = self.catalog.foods[resolution.food_id]
+                version = self.catalog.get_version(resolution.food_version_id)
+                candidates.append(
+                    FoodLookupCandidate(
+                        id=self._next_id("lookup_candidate"),
+                        source_type="local_phrase",
+                        source_name="Local library",
+                        source_id=resolution.reason,
+                        product_name=food.name,
+                        brand=food.brand,
+                        barcode=None,
+                        food_id=food.id,
+                        food_version_id=version.id,
+                        serving_size_g=version.serving_size_g,
+                        nutrients_per_100g=version.nutrients_per_100g,
+                        confidence=resolution.confidence,
+                    )
+                )
+        if self.food_lookup_provider is not None:
+            for candidate in self.food_lookup_provider.lookup(phrase=phrase, barcode=barcode):
+                candidates.append(
+                    FoodLookupCandidate(
+                        id=self._next_id("lookup_candidate"),
+                        source_type=candidate.source_type,
+                        source_name=candidate.source_name,
+                        source_id=candidate.source_id,
+                        source_url=candidate.source_url,
+                        product_name=candidate.product_name,
+                        brand=candidate.brand,
+                        barcode=candidate.barcode,
+                        food_id=candidate.food_id,
+                        food_version_id=candidate.food_version_id,
+                        serving_size_g=candidate.serving_size_g,
+                        nutrients_per_100g=candidate.nutrients_per_100g,
+                        confidence=candidate.confidence,
+                        warnings=candidate.warnings,
+                    )
+                )
+        for candidate in candidates:
+            self.lookup_candidates[candidate.id] = candidate
+        return tuple(candidates)
+
+    def propose_food_lookup_candidate(
+        self,
+        *,
+        household_id: str,
+        person_id: str,
+        candidate_id: str,
+    ) -> CreateDiaryEntriesProposal:
+        self._require_household(household_id)
+        self._require_person(person_id)
+        candidate = self.lookup_candidates[candidate_id]
+        if candidate.source_type.startswith("local_"):
+            raise ValueError("local lookup candidates are already saved")
+        payload = {
+            "household_id": household_id,
+            "food_name": candidate.product_name,
+            "brand": candidate.brand,
+            "version_label": f"{candidate.source_name} lookup",
+            "nutrients_per_100g": nutrients_to_snapshot(candidate.nutrients_per_100g.rounded()),
+            "serving_size_g": candidate.serving_size_g,
+            "barcode": candidate.barcode,
+            "set_as_default": True,
+            "source": "external_lookup",
+            "source_name": candidate.source_name,
+            "source_id": candidate.source_id,
+            "source_url": candidate.source_url,
+        }
+        proposal = self.proposals.create(
+            CreateDiaryEntriesProposal(
+                id=self._next_id("proposal"),
+                person_id=person_id,
+                entries=(),
+                proposal_type="food_version_from_lookup",
+                summary=f"Food version drafted from {candidate.source_name}: {candidate.product_name}",
+                payload=payload,
+                evidence=(
+                    {
+                        "source_type": candidate.source_type,
+                        "source_name": candidate.source_name,
+                        "source_id": candidate.source_id,
+                        "source_url": candidate.source_url,
+                        "warnings": list(candidate.warnings),
+                        "confidence": candidate.confidence,
+                    },
+                ),
+            )
+        )
+        self._persist()
+        return proposal
 
     def log_diary_entry(
         self,
@@ -1030,7 +1160,7 @@ class HealthMonitorService:
 
     def confirm_proposal(self, proposal_id: str) -> CreateDiaryEntriesProposal:
         proposal = self.proposals.proposals[proposal_id]
-        if proposal.proposal_type == "food_version_from_label":
+        if proposal.proposal_type in {"food_version_from_label", "food_version_from_lookup"}:
             applied = self._apply_food_version_proposal(proposal)
             self.proposals.proposals[proposal_id] = applied
             self._persist()

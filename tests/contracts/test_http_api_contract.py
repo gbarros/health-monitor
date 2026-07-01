@@ -6,6 +6,7 @@ from health_monitor.api.http_api import HttpApi
 from health_monitor.application.service import HealthMonitorService
 from health_monitor.domain.nutrients import Nutrients
 from health_monitor.lookup.estimates import NutritionEstimate, StaticFoodEstimator
+from health_monitor.lookup.foods import FoodLookupCandidate, StaticFoodLookupProvider
 
 
 class HttpApiContractTest(unittest.TestCase):
@@ -329,6 +330,70 @@ class HttpApiContractTest(unittest.TestCase):
         self.assertEqual(proposal["proposal_type"], "food_version_from_label")
         self.assertEqual(proposal["payload"]["food_name"], "Iogurte Batavo Protein")
         self.assertEqual(proposal["payload"]["nutrients_per_100g"]["protein_g"], 8.82)
+        self.assertEqual(applied["status"], "applied")
+        self.assertEqual(resolved["reason"], "confirmed_barcode_association")
+
+    def test_food_lookup_candidate_proposal_through_http_contract(self) -> None:
+        api = HttpApi(
+            HealthMonitorService(
+                food_lookup_provider=StaticFoodLookupProvider(
+                    [
+                        FoodLookupCandidate(
+                            source_type="external_database",
+                            source_name="Open Food Facts",
+                            source_id="7891000000000",
+                            product_name="Iogurte Batavo Protein",
+                            brand="Batavo",
+                            barcode="7891000000000",
+                            nutrients_per_100g=Nutrients(70.59, 8.82, 5.88, 1.18),
+                            serving_size_g=170,
+                            confidence=0.82,
+                            warnings=("user-contributed data",),
+                        )
+                    ]
+                )
+            )
+        )
+        household = api.handle("POST", "/api/households", {"name": "Casa"}).body
+        person = api.handle(
+            "POST",
+            "/api/people",
+            {
+                "household_id": household["id"],
+                "name": "Gabriel",
+                "timezone": "America/Sao_Paulo",
+            },
+        ).body
+        candidates = api.handle(
+            "GET",
+            (
+                f"/api/lookups/foods?household_id={household['id']}"
+                f"&person_id={person['id']}&barcode=7891000000000"
+            ),
+            None,
+        ).body
+        proposal = api.handle(
+            "POST",
+            "/api/lookups/foods/propose",
+            {
+                "household_id": household["id"],
+                "person_id": person["id"],
+                "candidate_id": candidates[0]["id"],
+            },
+        ).body
+        applied = api.handle("POST", f"/api/proposals/{proposal['id']}/confirm", None).body
+        resolved = api.handle(
+            "GET",
+            (
+                f"/api/foods/resolve?household_id={household['id']}"
+                f"&person_id={person['id']}&barcode=7891000000000"
+            ),
+            None,
+        ).body
+
+        self.assertEqual(candidates[0]["source_name"], "Open Food Facts")
+        self.assertEqual(candidates[0]["warnings"], ["user-contributed data"])
+        self.assertEqual(proposal["proposal_type"], "food_version_from_lookup")
         self.assertEqual(applied["status"], "applied")
         self.assertEqual(resolved["reason"], "confirmed_barcode_association")
 

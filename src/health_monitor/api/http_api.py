@@ -22,6 +22,7 @@ from health_monitor.domain.food_resolution import FoodResolution
 from health_monitor.domain.foods import Food, FoodVersion
 from health_monitor.domain.nutrients import Nutrients
 from health_monitor.domain.proposals import CreateDiaryEntriesProposal
+from health_monitor.lookup.foods import FoodLookupCandidate
 
 
 @dataclass(frozen=True)
@@ -112,6 +113,23 @@ class HttpApi:
                 barcode=query.get("barcode"),
             )
             return HttpResponse(200, food_resolution_to_dict(resolution))
+
+        if method == "GET" and path == "/api/lookups/foods":
+            candidates = self.service.lookup_food_candidates(
+                household_id=query["household_id"],
+                person_id=query["person_id"],
+                phrase=query.get("phrase"),
+                barcode=query.get("barcode"),
+            )
+            return HttpResponse(200, [food_lookup_candidate_to_dict(item) for item in candidates])
+
+        if method == "POST" and path == "/api/lookups/foods/propose":
+            proposal = self.service.propose_food_lookup_candidate(
+                household_id=body["household_id"],
+                person_id=body["person_id"],
+                candidate_id=body["candidate_id"],
+            )
+            return HttpResponse(201, proposal_to_dict(proposal, self.service))
 
         if method == "POST" and path == "/api/diary":
             entry = self.service.log_diary_entry(
@@ -301,6 +319,25 @@ def food_resolution_to_dict(resolution: FoodResolution) -> dict[str, Any]:
         "reason": resolution.reason,
         "confidence": resolution.confidence,
         "needs_clarification": resolution.needs_clarification,
+    }
+
+
+def food_lookup_candidate_to_dict(candidate: FoodLookupCandidate) -> dict[str, Any]:
+    return {
+        "id": candidate.id,
+        "source_type": candidate.source_type,
+        "source_name": candidate.source_name,
+        "source_id": candidate.source_id,
+        "source_url": candidate.source_url,
+        "product_name": candidate.product_name,
+        "brand": candidate.brand,
+        "barcode": candidate.barcode,
+        "food_id": candidate.food_id,
+        "food_version_id": candidate.food_version_id,
+        "serving_size_g": candidate.serving_size_g,
+        "nutrients_per_100g": nutrients_to_dict(candidate.nutrients_per_100g.rounded()),
+        "confidence": candidate.confidence,
+        "warnings": list(candidate.warnings),
     }
 
 
