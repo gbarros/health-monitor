@@ -877,6 +877,19 @@ class HealthMonitorService:
             self._persist()
             return response
 
+        requested_week = parse_chat_week_reference(message, today=today)
+        if requested_week is not None:
+            start, end = requested_week
+            response = self._chat_explain_week(
+                person_id=person_id,
+                message=message,
+                run=run,
+                start=start,
+                end=end,
+            )
+            self._persist()
+            return response
+
         requested_day = parse_chat_day_reference(message, today=today)
         if requested_day is not None:
             response = self._chat_explain_day(
@@ -892,8 +905,9 @@ class HealthMonitorService:
             run_id=run.id,
             person_id=person_id,
             message=(
-                "I can answer diary summary questions and draft diary quantity corrections from "
-                "structured app data. I do not have enough context for that request yet."
+                "I can answer diary day/week summary questions and draft diary quantity "
+                "corrections from structured app data. I do not have enough context for "
+                "that request yet."
             ),
             behavior_label="answer_question",
         )
@@ -1067,6 +1081,102 @@ class HealthMonitorService:
             citations = tuple(
                 {"record_type": "diary_entry", "record_id": entry.id}
                 for entry in entries
+            )
+        self.agent_runs[run.id] = AgentRun(
+            id=run.id,
+            person_id=run.person_id,
+            input_text=run.input_text,
+            settings=run.settings,
+            status="answered",
+            created_at=run.created_at,
+        )
+        return AgentChatResponse(
+            run_id=run.id,
+            person_id=person_id,
+            message=answer,
+            behavior_label=behavior_label,
+            citations=citations,
+        )
+
+    def _chat_explain_week(
+        self,
+        *,
+        person_id: str,
+        message: str,
+        run: AgentRun,
+        start: date,
+        end: date,
+    ) -> AgentChatResponse:
+        summary = self.week_summary(person_id=person_id, start=start, end=end)
+        current = start
+        entries: list[DaySummaryEntry] = []
+        while current <= end:
+            day = self.day_summary(person_id, current)
+            entries.extend(
+                entry for meal_entries in day.meals.values() for entry in meal_entries
+            )
+            current += timedelta(days=1)
+        trend = self.weight_trend(person_id=person_id, start=start, end=end)
+        if not entries and not trend.entries:
+            answer = (
+                f"There is not enough diary or weight data for {start.isoformat()} to "
+                f"{end.isoformat()} to explain that week. Log meals or weights first."
+            )
+            behavior_label = "answer_question"
+            citations: tuple[dict[str, str], ...] = ()
+        else:
+            totals = summary.totals.rounded()
+            averages = summary.averages.rounded()
+            highest_day, highest_nutrients = max(
+                summary.daily.items(),
+                key=lambda item: item[1].calories_kcal,
+            )
+            logged_days = sum(1 for nutrients in summary.daily.values() if nutrients.calories_kcal > 0)
+            weight_sentence = (
+                f" Weight changed {summary.weight_delta_kg:g} kg."
+                if summary.weight_delta_kg is not None
+                else " Weight trend needs at least two readings in this range."
+            )
+            target_sentence = ""
+            if summary.daily_targets:
+                target_kcal = sum(target.calories_kcal for target in summary.daily_targets.values())
+                target_protein = sum(target.protein_g for target in summary.daily_targets.values())
+                target_sentence = (
+                    f" Against stored targets, this is {totals.calories_kcal - target_kcal:g} "
+                    f"kcal and {totals.protein_g - target_protein:g} g protein for the target-covered days."
+                )
+            repeated_sentence = ""
+            food_days: dict[str, set[date]] = {}
+            for entry in entries:
+                food_days.setdefault(entry.food_name, set()).add(entry.logged_at.date())
+            repeated = sorted(
+                food_days.items(),
+                key=lambda item: (-len(item[1]), item[0].casefold()),
+            )
+            if repeated and len(repeated[0][1]) >= 2:
+                repeated_sentence = (
+                    f" Repeated pattern: {repeated[0][0]} appeared on "
+                    f"{len(repeated[0][1])} logged days."
+                )
+            answer = (
+                f"{start.isoformat()} to {end.isoformat()} totals were "
+                f"{totals.calories_kcal} kcal, {totals.protein_g} g protein, "
+                f"{totals.carbs_g} g carbs, and {totals.fat_g} g fat. "
+                f"That averages {averages.calories_kcal} kcal/day and "
+                f"{averages.protein_g} g protein/day across the range. "
+                f"The highest calorie day was {highest_day.isoformat()} with "
+                f"{highest_nutrients.rounded().calories_kcal} kcal. "
+                f"There were {logged_days} days with logged calories."
+                f"{target_sentence}{weight_sentence}{repeated_sentence} "
+                "This answer is based on deterministic app records, not a model estimate."
+            )
+            behavior_label = "explain_week"
+            citations = tuple(
+                [{"record_type": "diary_entry", "record_id": entry.id} for entry in entries]
+                + [
+                    {"record_type": "weight_entry", "record_id": entry.id}
+                    for entry in trend.entries
+                ]
             )
         self.agent_runs[run.id] = AgentRun(
             id=run.id,
@@ -1830,6 +1940,23 @@ def parse_chat_day_reference(message: str, *, today: date) -> date | None:
     if "today" in lowered or "hoje" in lowered:
         return today
     return None
+
+
+def parse_chat_week_reference(message: str, *, today: date) -> tuple[date, date] | None:
+    lowered = message.casefold()
+    if "week" not in lowered and "semana" not in lowered:
+        return None
+    dates = re.findall(r"\b(\d{4}-\d{2}-\d{2})\b", message)
+    if len(dates) >= 2:
+        start = date.fromisoformat(dates[0])
+        end = date.fromisoformat(dates[1])
+        if end < start:
+            raise ValueError("week end date must be on or after start date")
+        return start, end
+    start = today - timedelta(days=today.weekday())
+    if "last week" in lowered or "semana passada" in lowered:
+        start -= timedelta(days=7)
+    return start, start + timedelta(days=6)
 
 
 def parse_chat_quantity_correction(message: str) -> dict[str, object] | None:

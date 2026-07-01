@@ -95,6 +95,56 @@ class AgentChatHarnessTest(unittest.TestCase):
         self.assertEqual(applied.status, "applied")
         self.assertEqual(after.totals.rounded(), Nutrients(157.5, 11.5, 1.3, 11.75))
 
+    def test_week_question_is_grounded_in_week_summary_and_record_citations(self) -> None:
+        service, person_id, first_entry_id = self.make_service_with_entry()
+        version_id = service.diary.entries[first_entry_id].food_version_id
+        second = service.log_diary_entry(
+            person_id=person_id,
+            logged_at_local="2026-07-02T10:00:00",
+            food_version_id=version_id,
+            quantity_g=50,
+            source="manual",
+        )
+        service.create_goal_profile(
+            person_id=person_id,
+            starts_on=date(2026, 7, 1),
+            targets=Nutrients(2000, 150, 180, 70),
+        )
+        service.log_weight(
+            person_id=person_id,
+            measured_at_local="2026-07-01T08:00:00",
+            weight_kg=91.2,
+            note="start",
+            source="manual",
+        )
+        service.log_weight(
+            person_id=person_id,
+            measured_at_local="2026-07-07T08:00:00",
+            weight_kg=90.4,
+            note="week end",
+            source="manual",
+        )
+
+        response = service.chat(
+            person_id=person_id,
+            message="Explain the week 2026-07-01 to 2026-07-07",
+            today=date(2026, 7, 8),
+        )
+
+        self.assertEqual(response.behavior_label, "explain_week")
+        self.assertIn("472.5 kcal", response.message)
+        self.assertIn("67.5 kcal/day", response.message)
+        self.assertIn("highest calorie day was 2026-07-01", response.message)
+        self.assertIn("Weight changed -0.8 kg", response.message)
+        self.assertIn(
+            {"record_type": "diary_entry", "record_id": first_entry_id},
+            response.citations,
+        )
+        self.assertIn(
+            {"record_type": "diary_entry", "record_id": second.id},
+            response.citations,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
