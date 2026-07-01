@@ -104,6 +104,53 @@ class AgentTextMealFlowTest(unittest.TestCase):
         self.assertEqual(run.status, "needs_clarification")
         self.assertEqual(service.day_summary(person.id, date(2026, 7, 1)).totals, Nutrients())
 
+    def test_ambiguous_local_food_requires_clarification_without_mutation(self) -> None:
+        service = HealthMonitorService()
+        household = service.create_household(name="Casa")
+        person = service.create_person(
+            household_id=household.id,
+            name="Gabriel",
+            timezone="America/Sao_Paulo",
+        )
+        service.create_food_with_version(
+            household_id=household.id,
+            name="Iogurte Natural",
+            brand="Batavo",
+            version_label="natural label",
+            nutrients_per_100g=Nutrients(calories_kcal=80, protein_g=5, carbs_g=9, fat_g=2),
+            source="label_scan",
+            aliases=["iogurte"],
+        )
+        service.create_food_with_version(
+            household_id=household.id,
+            name="Iogurte Protein",
+            brand="Batavo",
+            version_label="protein label",
+            nutrients_per_100g=Nutrients(calories_kcal=70, protein_g=10, carbs_g=6, fat_g=1),
+            source="label_scan",
+            aliases=["iogurte"],
+        )
+
+        proposal = service.propose_text_meal(
+            person_id=person.id,
+            logged_at_local="2026-07-01T10:00:00",
+            text="100g iogurte",
+            agent_settings={"external_lookup": False},
+        )
+        run = service.get_agent_run(proposal.source_agent_run_id or "")
+
+        self.assertEqual(proposal.status, "needs_clarification")
+        self.assertEqual(proposal.entries, ())
+        self.assertEqual(proposal.payload["missing_fields"], ["food_version_id"])
+        self.assertEqual(proposal.payload["unresolved_items"][0]["phrase"], "iogurte")
+        self.assertEqual(
+            [candidate["food_name"] for candidate in proposal.payload["unresolved_items"][0]["candidates"]],
+            ["Iogurte Natural", "Iogurte Protein"],
+        )
+        self.assertIn("which food", proposal.summary.casefold())
+        self.assertEqual(run.status, "needs_clarification")
+        self.assertEqual(service.day_summary(person.id, date(2026, 7, 1)).totals, Nutrients())
+
     def test_draft_text_meal_entry_can_be_edited_before_confirmation(self) -> None:
         service = HealthMonitorService()
         household = service.create_household(name="Casa")

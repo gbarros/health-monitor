@@ -759,6 +759,66 @@ class HttpApiContractTest(unittest.TestCase):
         self.assertIn("needs clarification", rejected_apply.body["error"]["message"])
         self.assertEqual(summary["totals"]["calories_kcal"], 0)
 
+    def test_text_meal_ambiguous_local_food_returns_clarification_contract(self) -> None:
+        api = HttpApi(HealthMonitorService())
+        household = api.handle("POST", "/api/households", {"name": "Casa"}).body
+        person = api.handle(
+            "POST",
+            "/api/people",
+            {
+                "household_id": household["id"],
+                "name": "Gabriel",
+                "timezone": "America/Sao_Paulo",
+            },
+        ).body
+        for name, protein in [("Iogurte Natural", 5), ("Iogurte Protein", 10)]:
+            api.handle(
+                "POST",
+                "/api/foods",
+                {
+                    "household_id": household["id"],
+                    "name": name,
+                    "brand": "Batavo",
+                    "version_label": "current",
+                    "source": "label_scan",
+                    "nutrients_per_100g": {
+                        "calories_kcal": 80,
+                        "protein_g": protein,
+                        "carbs_g": 7,
+                        "fat_g": 1,
+                    },
+                    "aliases": ["iogurte"],
+                },
+            )
+
+        proposal = api.handle(
+            "POST",
+            "/api/agent/text-meal",
+            {
+                "person_id": person["id"],
+                "logged_at_local": "2026-07-01T10:00:00",
+                "text": "100g iogurte",
+                "agent_settings": {"external_lookup": False},
+            },
+        ).body
+        rejected_apply = api.handle("POST", f"/api/proposals/{proposal['id']}/confirm", None)
+        summary = api.handle(
+            "GET",
+            f"/api/diary/day?person_id={person['id']}&day=2026-07-01",
+            None,
+        ).body
+
+        self.assertEqual(proposal["status"], "needs_clarification")
+        self.assertEqual(proposal["entries"], [])
+        self.assertEqual(proposal["payload"]["missing_fields"], ["food_version_id"])
+        self.assertEqual(proposal["payload"]["unresolved_items"][0]["phrase"], "iogurte")
+        self.assertEqual(
+            [candidate["food_name"] for candidate in proposal["payload"]["unresolved_items"][0]["candidates"]],
+            ["Iogurte Natural", "Iogurte Protein"],
+        )
+        self.assertEqual(rejected_apply.status_code, 400)
+        self.assertEqual(summary["totals"]["calories_kcal"], 0)
+
     def test_text_meal_proposal_entry_can_be_edited_through_http_contract(self) -> None:
         api = HttpApi(HealthMonitorService())
         household = api.handle("POST", "/api/households", {"name": "Casa"}).body

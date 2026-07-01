@@ -76,6 +76,12 @@ class DaySummary:
 
 
 @dataclass(frozen=True)
+class AmbiguousFoodReference:
+    phrase: str
+    candidates: tuple[dict[str, object], ...]
+
+
+@dataclass(frozen=True)
 class WeightEntry:
     id: str
     person_id: str
@@ -1378,6 +1384,24 @@ class HealthMonitorService:
         estimated_food_versions: list[dict[str, object]] = []
         totals = Nutrients()
         for item in items:
+            ambiguity = self._ambiguous_local_food_reference(
+                household_id=person.household_id,
+                person_id=person.id,
+                phrase=item.phrase,
+            )
+            if ambiguity is not None:
+                proposal = self._create_text_meal_clarification_proposal(
+                    person_id=person_id,
+                    text=text,
+                    run=run,
+                    logged_at=parsed_logged_at,
+                    unresolved_items=(item,),
+                    missing_fields=("food_version_id",),
+                    summary="Need to know which food to use before logging this meal.",
+                    candidate_overrides={item.phrase: ambiguity.candidates},
+                )
+                self._persist()
+                return proposal
             resolution: FoodResolution | None = None
             estimate: NutritionEstimate | None = None
             evidence_source_type = "local_food"
@@ -1541,6 +1565,54 @@ class HealthMonitorService:
         self._persist()
         return proposal
 
+    def _ambiguous_local_food_reference(
+        self,
+        *,
+        household_id: str,
+        person_id: str,
+        phrase: str,
+    ) -> AmbiguousFoodReference | None:
+        matching_food_ids = {
+            alias.food_id
+            for alias in self.catalog.aliases.values()
+            if alias.household_id == household_id
+            and alias.phrase.casefold().strip() == phrase.casefold().strip()
+            and (alias.person_id is None or alias.person_id == person_id)
+            and alias.food_id in self.catalog.foods
+            and not self.catalog.foods[alias.food_id].archived
+        }
+        if len(matching_food_ids) <= 1:
+            return None
+        if self._resolve_phrase_by_recent_use(
+            household_id=household_id,
+            person_id=person_id,
+            phrase=phrase,
+        ) is not None:
+            return None
+
+        candidates: list[dict[str, object]] = []
+        for food_id in sorted(matching_food_ids, key=lambda item: self.catalog.foods[item].name.casefold()):
+            food = self.catalog.foods[food_id]
+            if food.default_version_id is None:
+                continue
+            version = self.catalog.get_version(food.default_version_id)
+            if version.archived:
+                continue
+            candidates.append(
+                {
+                    "food_id": food.id,
+                    "food_version_id": version.id,
+                    "food_name": food.name,
+                    "brand": food.brand,
+                    "version_label": version.label,
+                    "nutrients_per_100g": nutrients_to_snapshot(version.nutrients_per_100g.rounded()),
+                    "reason": "matching_alias_without_recent_use",
+                }
+            )
+        if len(candidates) <= 1:
+            return None
+        return AmbiguousFoodReference(phrase=phrase, candidates=tuple(candidates))
+
     def _create_text_meal_clarification_proposal(
         self,
         *,
@@ -1549,6 +1621,9 @@ class HealthMonitorService:
         run: AgentRun,
         logged_at: datetime,
         unresolved_items: tuple[ParsedMealItem, ...] | list[ParsedMealItem],
+        missing_fields: tuple[str, ...] = ("quantity_g",),
+        summary: str = "Need grams or serving size before logging this meal.",
+        candidate_overrides: dict[str, tuple[dict[str, object], ...]] | None = None,
     ) -> CreateDiaryEntriesProposal:
         unresolved_payload = [
             {
@@ -1557,6 +1632,11 @@ class HealthMonitorService:
                 "unit": item.evidence.get("unit"),
                 "quantity": item.evidence.get("unit_quantity", item.quantity_g),
                 "quantity_basis": item.evidence.get("quantity_basis"),
+                **(
+                    {"candidates": list(candidate_overrides[item.phrase])}
+                    if candidate_overrides is not None and item.phrase in candidate_overrides
+                    else {}
+                ),
             }
             for item in unresolved_items
         ]
@@ -1567,11 +1647,11 @@ class HealthMonitorService:
                 entries=(),
                 proposal_type="diary_entries",
                 status="needs_clarification",
-                summary="Need grams or serving size before logging this meal.",
+                summary=summary,
                 payload={
                     "logged_at_local": logged_at.isoformat(),
                     "raw_text": text,
-                    "missing_fields": ["quantity_g"],
+                    "missing_fields": list(missing_fields),
                     "unresolved_items": unresolved_payload,
                 },
                 evidence=(
