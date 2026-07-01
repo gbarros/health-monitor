@@ -1,0 +1,18 @@
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Private user data imports and generated local fixtures
+/imports/
+/data/imports/
+/private/
+/Health - *.html
+
+# Python local state
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+venv/
