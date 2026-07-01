@@ -68,6 +68,108 @@ class HttpApiContractTest(unittest.TestCase):
         self.assertEqual(summary["totals"]["protein_g"], 15)
         self.assertEqual(summary["meals"]["breakfast"][0]["food_name"], "Iogurte Batavo")
 
+    def test_manual_diary_log_can_use_serving_count_through_http_contract(self) -> None:
+        api = HttpApi(HealthMonitorService())
+
+        household = api.handle("POST", "/api/households", {"name": "Casa"}).body
+        person = api.handle(
+            "POST",
+            "/api/people",
+            {
+                "household_id": household["id"],
+                "name": "Gabriel",
+                "timezone": "America/Sao_Paulo",
+            },
+        ).body
+        food_response = api.handle(
+            "POST",
+            "/api/foods",
+            {
+                "household_id": household["id"],
+                "name": "Ovo",
+                "brand": None,
+                "version_label": "large egg",
+                "source": "reference",
+                "nutrients_per_100g": {
+                    "calories_kcal": 155,
+                    "protein_g": 13,
+                    "carbs_g": 1.1,
+                    "fat_g": 11,
+                },
+                "aliases": ["ovo"],
+                "serving_size_g": 50,
+            },
+        ).body
+
+        created = api.handle(
+            "POST",
+            "/api/diary",
+            {
+                "person_id": person["id"],
+                "logged_at_local": "2026-07-01T09:00:00",
+                "food_version_id": food_response["version"]["id"],
+                "serving_count": 2,
+                "source": "manual",
+            },
+        )
+        summary = api.handle(
+            "GET",
+            f"/api/diary/day?person_id={person['id']}&day=2026-07-01",
+            None,
+        ).body
+
+        self.assertEqual(created.status_code, 201)
+        self.assertEqual(created.body["quantity_g"], 100)
+        self.assertEqual(summary["totals"]["calories_kcal"], 155)
+        self.assertEqual(summary["totals"]["protein_g"], 13)
+
+    def test_manual_diary_serving_count_requires_serving_size_through_http_contract(self) -> None:
+        api = HttpApi(HealthMonitorService())
+
+        household = api.handle("POST", "/api/households", {"name": "Casa"}).body
+        person = api.handle(
+            "POST",
+            "/api/people",
+            {
+                "household_id": household["id"],
+                "name": "Gabriel",
+                "timezone": "America/Sao_Paulo",
+            },
+        ).body
+        food_response = api.handle(
+            "POST",
+            "/api/foods",
+            {
+                "household_id": household["id"],
+                "name": "Queijo Minas",
+                "brand": None,
+                "version_label": "current",
+                "source": "label_scan",
+                "nutrients_per_100g": {
+                    "calories_kcal": 315,
+                    "protein_g": 23,
+                    "carbs_g": 2.6,
+                    "fat_g": 23.5,
+                },
+                "aliases": ["queijo"],
+            },
+        ).body
+
+        created = api.handle(
+            "POST",
+            "/api/diary",
+            {
+                "person_id": person["id"],
+                "logged_at_local": "2026-07-01T09:00:00",
+                "food_version_id": food_response["version"]["id"],
+                "serving_count": 1,
+                "source": "manual",
+            },
+        )
+
+        self.assertEqual(created.status_code, 400)
+        self.assertIn("serving_size_g is required", created.body["error"]["message"])
+
     def test_quick_custom_food_log_through_http_contract(self) -> None:
         api = HttpApi(HealthMonitorService())
         household = api.handle("POST", "/api/households", {"name": "Casa"}).body

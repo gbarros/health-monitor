@@ -201,6 +201,64 @@ class DailyDriverApplicationSliceTest(unittest.TestCase):
         self.assertEqual(summary.totals.rounded(), Nutrients(224, 5.6, 28, 9.6))
         self.assertEqual(resolved.food_version_id, version.id)
 
+    def test_manual_log_can_use_known_serving_size(self) -> None:
+        service = HealthMonitorService()
+        household = service.create_household(name="Casa")
+        person = service.create_person(
+            household_id=household.id,
+            name="Gabriel",
+            timezone="America/Sao_Paulo",
+        )
+        _, egg = service.create_food_with_version(
+            household_id=household.id,
+            name="Ovo",
+            brand=None,
+            version_label="large egg",
+            nutrients_per_100g=Nutrients(calories_kcal=155, protein_g=13, carbs_g=1.1, fat_g=11),
+            source="reference",
+            aliases=["ovo"],
+            serving_size_g=50,
+        )
+
+        entry = service.log_diary_entry(
+            person_id=person.id,
+            logged_at_local="2026-07-01T09:00:00",
+            food_version_id=egg.id,
+            serving_count=2,
+            source="manual",
+        )
+        summary = service.day_summary(person.id, date(2026, 7, 1))
+
+        self.assertEqual(entry.quantity_g, 100)
+        self.assertEqual(summary.totals.rounded(), Nutrients(155, 13, 1.1, 11))
+
+    def test_manual_serving_log_requires_serving_size(self) -> None:
+        service = HealthMonitorService()
+        household = service.create_household(name="Casa")
+        person = service.create_person(
+            household_id=household.id,
+            name="Gabriel",
+            timezone="America/Sao_Paulo",
+        )
+        _, cheese = service.create_food_with_version(
+            household_id=household.id,
+            name="Queijo Minas",
+            brand=None,
+            version_label="current",
+            nutrients_per_100g=Nutrients(calories_kcal=315, protein_g=23, carbs_g=2.6, fat_g=23.5),
+            source="label_scan",
+            aliases=["queijo"],
+        )
+
+        with self.assertRaisesRegex(ValueError, "serving_size_g is required"):
+            service.log_diary_entry(
+                person_id=person.id,
+                logged_at_local="2026-07-01T09:00:00",
+                food_version_id=cheese.id,
+                serving_count=1,
+                source="manual",
+            )
+
     def test_archived_food_leaves_history_but_stops_future_resolution(self) -> None:
         service = HealthMonitorService()
         household = service.create_household(name="Casa")

@@ -852,24 +852,54 @@ class HealthMonitorService:
         person_id: str,
         logged_at_local: str,
         food_version_id: str,
-        quantity_g: float,
+        quantity_g: float | None = None,
+        serving_count: float | None = None,
         source: str,
         meal_type: str | None = None,
     ) -> DiaryEntry:
         person = self._require_person(person_id)
         logged_at = self._parse_person_datetime(logged_at_local, person)
+        resolved_quantity_g = self._resolve_log_quantity_g(
+            food_version_id=food_version_id,
+            quantity_g=quantity_g,
+            serving_count=serving_count,
+        )
         entry = DiaryEntry(
             id=self._next_id("diary_entry"),
             person_id=person_id,
             logged_at=logged_at,
             meal_type=meal_type or infer_meal_type(logged_at),
             food_version_id=food_version_id,
-            quantity_g=quantity_g,
+            quantity_g=resolved_quantity_g,
             source=source,
         )
         created = self.diary.add_entry(entry)
         self._persist()
         return created
+
+    def _resolve_log_quantity_g(
+        self,
+        *,
+        food_version_id: str,
+        quantity_g: float | None,
+        serving_count: float | None,
+    ) -> float:
+        if quantity_g is None and serving_count is None:
+            raise ValueError("quantity_g or serving_count is required")
+        if quantity_g is not None and serving_count is not None:
+            raise ValueError("provide either quantity_g or serving_count, not both")
+        if quantity_g is not None:
+            if quantity_g <= 0:
+                raise ValueError("quantity_g must be positive")
+            return float(quantity_g)
+
+        assert serving_count is not None
+        if serving_count <= 0:
+            raise ValueError("serving_count must be positive")
+        version = self.catalog.get_version(food_version_id)
+        if version.serving_size_g is None:
+            raise ValueError("serving_size_g is required to log by serving count")
+        return float(serving_count) * version.serving_size_g
 
     def update_diary_entry(
         self,

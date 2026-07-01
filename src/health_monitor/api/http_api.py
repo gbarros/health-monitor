@@ -178,7 +178,8 @@ class HttpApi:
                 person_id=body["person_id"],
                 logged_at_local=body["logged_at_local"],
                 food_version_id=body["food_version_id"],
-                quantity_g=float(body["quantity_g"]),
+                quantity_g=float(body["quantity_g"]) if body.get("quantity_g") is not None else None,
+                serving_count=float(body["serving_count"]) if body.get("serving_count") is not None else None,
                 source=body["source"],
                 meal_type=body.get("meal_type"),
             )

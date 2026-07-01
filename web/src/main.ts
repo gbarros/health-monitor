@@ -747,7 +747,15 @@ function renderManualLog(): string {
       <h2>Diary entry</h2>
       <label>Food <select name="food_version_id" ${disabled}>${options}</select></label>
       <label>Time <input name="logged_at_local" type="datetime-local" value="${today}T10:00" ${disabled} /></label>
-      <label>Quantity <input name="quantity_g" type="number" step="0.1" value="100" ${disabled} /></label>
+      <div class="grid-two">
+        <label>Quantity <input name="quantity" type="number" step="0.1" value="100" ${disabled} /></label>
+        <label>Unit
+          <select name="quantity_unit" ${disabled}>
+            <option value="g">Grams</option>
+            <option value="serving">Servings</option>
+          </select>
+        </label>
+      </div>
       <button type="submit" ${disabled}>Add entry</button>
     </form>
     <form id="quick-custom-log-form" class="panel">
@@ -1156,11 +1164,13 @@ async function onManualLog(event: SubmitEvent): Promise<void> {
   event.preventDefault();
   if (!state.person) return;
   const form = new FormData(event.currentTarget as HTMLFormElement);
+  const quantityUnit = requiredText(form, "quantity_unit");
+  const quantity = numberField(form, "quantity");
   await apiPost("/api/diary", {
     person_id: state.person.id,
     logged_at_local: requiredText(form, "logged_at_local"),
     food_version_id: requiredText(form, "food_version_id"),
-    quantity_g: numberField(form, "quantity_g"),
+    ...(quantityUnit === "serving" ? { serving_count: quantity } : { quantity_g: quantity }),
     source: "manual"
   });
   state.notice = "Diary entry added.";
