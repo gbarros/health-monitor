@@ -2404,19 +2404,34 @@ class HealthMonitorService:
         if proposal.status == "rejected":
             raise ValueError("cannot apply rejected proposal")
         payload = proposal.payload
+        household_id = str(payload["household_id"])
+        food_name = str(payload["food_name"])
+        brand = payload.get("brand") if payload.get("brand") is None else str(payload["brand"])
+        existing_food = self._find_food_by_name(
+            household_id=household_id,
+            name=food_name,
+            brand=brand,
+        )
+        requested_food_id = (
+            existing_food.id
+            if existing_food is not None
+            else str(payload["food_id"])
+            if payload.get("food_id") is not None
+            else None
+        )
         food, version = self._create_food_with_version(
-            household_id=str(payload["household_id"]),
-            name=str(payload["food_name"]),
-            brand=payload.get("brand") if payload.get("brand") is None else str(payload["brand"]),
+            household_id=household_id,
+            name=food_name,
+            brand=brand,
             version_label=str(payload["version_label"]),
             nutrients_per_100g=nutrients_from_snapshot(
                 dict(payload["nutrients_per_100g"])
             ),
             source=str(payload.get("source", "label_scan")),
-            aliases=[str(payload["food_name"]).casefold()],
+            aliases=[food_name.casefold()],
             barcode=payload.get("barcode") if payload.get("barcode") is None else str(payload["barcode"]),
             serving_size_g=float(payload["serving_size_g"]),
-            food_id=str(payload["food_id"]) if payload.get("food_id") is not None else None,
+            food_id=requested_food_id,
             version_id=str(payload["food_version_id"]) if payload.get("food_version_id") is not None else None,
         )
         applied_ids = [food.id, version.id]

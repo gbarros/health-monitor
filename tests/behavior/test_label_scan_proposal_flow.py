@@ -134,6 +134,55 @@ class LabelScanProposalFlowTest(unittest.TestCase):
         self.assertEqual(entry.source, "label_scan")
         self.assertEqual(after.totals.rounded(), Nutrients(120, 14.99, 10, 2.01))
 
+    def test_new_label_for_existing_food_creates_new_default_version_without_rewriting_history(self) -> None:
+        service = HealthMonitorService()
+        household = service.create_household(name="Casa")
+        person = service.create_person(
+            household_id=household.id,
+            name="Gabriel",
+            timezone="America/Sao_Paulo",
+        )
+        food, old_version = service.create_food_with_version(
+            household_id=household.id,
+            name="Iogurte Batavo Protein",
+            brand="Batavo",
+            version_label="old label",
+            nutrients_per_100g=Nutrients(calories_kcal=80, protein_g=8, carbs_g=7, fat_g=2),
+            source="label_scan",
+            aliases=["iogurte batavo"],
+        )
+        old_entry = service.log_diary_entry(
+            person_id=person.id,
+            logged_at_local="2026-07-01T10:00:00",
+            food_version_id=old_version.id,
+            quantity_g=100,
+            source="manual",
+        )
+
+        proposal = service.propose_label_scan(
+            household_id=household.id,
+            person_id=person.id,
+            table_text=LABEL_TEXT,
+            set_as_default=True,
+        )
+        applied = service.confirm_proposal(proposal.id)
+        updated_food = service.catalog.foods[food.id]
+        new_version = service.catalog.get_version(applied.applied_record_ids[1])
+        old_day = service.day_summary(person.id, date(2026, 7, 1))
+        resolved = service.resolve_food_reference(
+            household_id=household.id,
+            person_id=person.id,
+            phrase="iogurte batavo",
+        )
+
+        self.assertEqual(applied.applied_record_ids[0], food.id)
+        self.assertEqual(new_version.food_id, food.id)
+        self.assertNotEqual(new_version.id, old_version.id)
+        self.assertEqual(updated_food.default_version_id, new_version.id)
+        self.assertEqual(service.diary.entries[old_entry.id].food_version_id, old_version.id)
+        self.assertEqual(old_day.totals.rounded(), Nutrients(80, 8, 7, 2))
+        self.assertEqual(resolved.food_version_id, new_version.id)
+
     def test_pending_label_proposal_survives_restart_and_can_be_confirmed(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "health-monitor.sqlite3"

@@ -1054,6 +1054,89 @@ class HttpApiContractTest(unittest.TestCase):
         self.assertEqual(after["totals"]["calories_kcal"], 120)
         self.assertEqual(after["meals"]["breakfast"][0]["food_version_id"], applied["applied_record_ids"][1])
 
+    def test_label_scan_updates_existing_food_with_new_default_version_through_http_contract(self) -> None:
+        api = HttpApi(HealthMonitorService())
+        household = api.handle("POST", "/api/households", {"name": "Casa"}).body
+        person = api.handle(
+            "POST",
+            "/api/people",
+            {
+                "household_id": household["id"],
+                "name": "Gabriel",
+                "timezone": "America/Sao_Paulo",
+            },
+        ).body
+        old_food = api.handle(
+            "POST",
+            "/api/foods",
+            {
+                "household_id": household["id"],
+                "name": "Iogurte Batavo Protein",
+                "brand": "Batavo",
+                "version_label": "old label",
+                "source": "label_scan",
+                "nutrients_per_100g": {
+                    "calories_kcal": 80,
+                    "protein_g": 8,
+                    "carbs_g": 7,
+                    "fat_g": 2,
+                },
+                "aliases": ["iogurte batavo"],
+            },
+        ).body
+        api.handle(
+            "POST",
+            "/api/diary",
+            {
+                "person_id": person["id"],
+                "logged_at_local": "2026-07-01T10:00:00",
+                "food_version_id": old_food["version"]["id"],
+                "quantity_g": 100,
+                "source": "manual",
+            },
+        )
+        proposal = api.handle(
+            "POST",
+            "/api/agent/label-scan",
+            {
+                "household_id": household["id"],
+                "person_id": person["id"],
+                "table_text": "\n".join(
+                    [
+                        "Produto: Iogurte Batavo Protein",
+                        "Marca: Batavo",
+                        "Porcao: 170 g",
+                        "Valor energetico: 120 kcal",
+                        "Proteinas: 15 g",
+                        "Carboidratos: 10 g",
+                        "Gorduras totais: 2 g",
+                    ]
+                ),
+                "set_as_default": True,
+            },
+        ).body
+
+        applied = api.handle("POST", f"/api/proposals/{proposal['id']}/confirm", None).body
+        foods = api.handle(
+            "GET",
+            f"/api/foods?household_id={household['id']}&person_id={person['id']}",
+            None,
+        ).body
+        summary = api.handle(
+            "GET",
+            f"/api/diary/day?person_id={person['id']}&day=2026-07-01",
+            None,
+        ).body
+
+        self.assertEqual(applied["applied_record_ids"][0], old_food["food"]["id"])
+        self.assertNotEqual(applied["applied_record_ids"][1], old_food["version"]["id"])
+        self.assertEqual(len(foods), 1)
+        self.assertEqual(foods[0]["food"]["id"], old_food["food"]["id"])
+        self.assertEqual(foods[0]["version"]["id"], applied["applied_record_ids"][1])
+        self.assertEqual(foods[0]["version"]["nutrients_per_100g"]["protein_g"], 8.82)
+        self.assertEqual(summary["meals"]["breakfast"][0]["food_version_id"], old_food["version"]["id"])
+        self.assertEqual(summary["totals"]["calories_kcal"], 80)
+
     def test_attachment_label_scan_round_trip_through_http_contract(self) -> None:
         api = HttpApi(HealthMonitorService())
         household = api.handle("POST", "/api/households", {"name": "Casa"}).body
