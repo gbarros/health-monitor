@@ -6,9 +6,75 @@ from datetime import date
 from health_monitor.application.service import HealthMonitorService
 from health_monitor.domain.nutrients import Nutrients
 from health_monitor.lookup.estimates import NutritionEstimate, StaticFoodEstimator
+from health_monitor.lookup.foods import FoodLookupCandidate, StaticFoodLookupProvider
 
 
 class UnknownFoodEstimateFlowTest(unittest.TestCase):
+    def test_external_lookup_is_used_before_model_estimate_for_unknown_text_meal(self) -> None:
+        service = HealthMonitorService(
+            food_lookup_provider=StaticFoodLookupProvider(
+                [
+                    FoodLookupCandidate(
+                        source_type="external_database",
+                        source_name="Open Food Facts",
+                        source_id="kfc-double-crunch-br",
+                        product_name="KFC Double Crunch combo",
+                        brand="KFC Brasil",
+                        barcode=None,
+                        nutrients_per_100g=Nutrients(240, 12, 25, 10),
+                        serving_size_g=None,
+                        confidence=0.76,
+                        warnings=("third-party nutrition data",),
+                    )
+                ]
+            ),
+            estimator=StaticFoodEstimator(
+                {
+                    "kfc double crunch combo": NutritionEstimate(
+                        phrase="kfc double crunch combo",
+                        food_name="Model KFC estimate",
+                        nutrients_per_100g=Nutrients(300, 9, 30, 16),
+                        source="fixture_model_estimate",
+                        confidence=0.42,
+                        notes="Model fallback should not be used when lookup returns a candidate.",
+                    )
+                }
+            ),
+        )
+        household = service.create_household(name="Casa")
+        person = service.create_person(
+            household_id=household.id,
+            name="Gabriel",
+            timezone="America/Sao_Paulo",
+        )
+
+        proposal = service.propose_text_meal(
+            person_id=person.id,
+            logged_at_local="2026-07-01T20:00:00",
+            text="300g KFC Double Crunch combo",
+            agent_settings={"external_lookup": True},
+        )
+        pending = proposal.payload["estimated_food_versions"][0]
+        applied = service.confirm_proposal(proposal.id)
+        resolution = service.resolve_food_reference(
+            household_id=household.id,
+            person_id=person.id,
+            phrase="kfc double crunch combo",
+        )
+        stored_version = service.catalog.get_version(resolution.food_version_id)
+        stored_food = service.catalog.foods[stored_version.food_id]
+
+        self.assertEqual(proposal.proposal_type, "diary_entries_with_estimates")
+        self.assertEqual(proposal.totals.rounded(), Nutrients(720, 36, 75, 30))
+        self.assertEqual(pending["source"], "external_lookup")
+        self.assertEqual(pending["source_name"], "Open Food Facts")
+        self.assertEqual(proposal.evidence[0]["source_type"], "external_database")
+        self.assertEqual(proposal.evidence[0]["resolution_reason"], "external_lookup")
+        self.assertEqual(applied.status, "applied")
+        self.assertEqual(resolution.food_version_id, proposal.entries[0].food_version_id)
+        self.assertEqual(stored_food.brand, "KFC Brasil")
+        self.assertEqual(stored_version.source, "external_lookup")
+
     def test_unknown_food_estimate_is_proposed_before_any_mutation(self) -> None:
         service = HealthMonitorService(
             estimator=StaticFoodEstimator(

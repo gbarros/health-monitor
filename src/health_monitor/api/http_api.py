@@ -531,7 +531,7 @@ def proposal_to_dict(
                 {
                     "food_id": pending["food_id"],
                     "food_name": pending["food_name"],
-                    "brand": None,
+                    "brand": pending.get("brand"),
                     "food_version_label": pending["version_label"],
                     "nutrients": nutrients_to_dict(nutrients.scale(entry.quantity_g / 100).rounded()),
                 }

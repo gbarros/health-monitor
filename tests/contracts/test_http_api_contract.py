@@ -1082,6 +1082,69 @@ class HttpApiContractTest(unittest.TestCase):
         self.assertEqual(len(applied["applied_record_ids"]), 3)
         self.assertEqual(resolved["food_version_id"], proposal["entries"][0]["food_version_id"])
 
+    def test_text_meal_uses_external_lookup_before_model_estimate_through_http_contract(self) -> None:
+        api = HttpApi(
+            HealthMonitorService(
+                food_lookup_provider=StaticFoodLookupProvider(
+                    [
+                        FoodLookupCandidate(
+                            source_type="external_database",
+                            source_name="Open Food Facts",
+                            source_id="kfc-double-crunch-br",
+                            product_name="KFC Double Crunch combo",
+                            brand="KFC Brasil",
+                            barcode=None,
+                            nutrients_per_100g=Nutrients(240, 12, 25, 10),
+                            serving_size_g=None,
+                            confidence=0.76,
+                            warnings=("third-party nutrition data",),
+                        )
+                    ]
+                ),
+                estimator=StaticFoodEstimator(
+                    {
+                        "kfc double crunch combo": NutritionEstimate(
+                            phrase="kfc double crunch combo",
+                            food_name="Model KFC estimate",
+                            nutrients_per_100g=Nutrients(300, 9, 30, 16),
+                            source="fixture_model_estimate",
+                            confidence=0.42,
+                            notes="Model fallback should not be used when lookup returns a candidate.",
+                        )
+                    }
+                ),
+            )
+        )
+        household = api.handle("POST", "/api/households", {"name": "Casa"}).body
+        person = api.handle(
+            "POST",
+            "/api/people",
+            {
+                "household_id": household["id"],
+                "name": "Gabriel",
+                "timezone": "America/Sao_Paulo",
+            },
+        ).body
+
+        proposal = api.handle(
+            "POST",
+            "/api/agent/text-meal",
+            {
+                "person_id": person["id"],
+                "logged_at_local": "2026-07-01T20:00:00",
+                "text": "300g KFC Double Crunch combo",
+                "agent_settings": {"external_lookup": True},
+            },
+        ).body
+        applied = api.handle("POST", f"/api/proposals/{proposal['id']}/confirm", None).body
+
+        self.assertEqual(proposal["totals"]["calories_kcal"], 720)
+        self.assertEqual(proposal["payload"]["estimated_food_versions"][0]["source"], "external_lookup")
+        self.assertEqual(proposal["payload"]["estimated_food_versions"][0]["source_name"], "Open Food Facts")
+        self.assertEqual(proposal["evidence"][0]["source_type"], "external_database")
+        self.assertEqual(proposal["evidence"][0]["resolution_reason"], "external_lookup")
+        self.assertEqual(applied["status"], "applied")
+
     def test_agent_chat_answer_and_correction_proposal_through_http_contract(self) -> None:
         api = HttpApi(HealthMonitorService())
         household = api.handle("POST", "/api/households", {"name": "Casa"}).body

@@ -710,6 +710,15 @@ class HealthMonitorService:
         self._persist()
         return proposal
 
+    def _lookup_first_external_food_candidate(self, phrase: str) -> FoodLookupCandidate | None:
+        if self.food_lookup_provider is None:
+            return None
+        for candidate in self.food_lookup_provider.lookup(phrase=phrase, barcode=None):
+            if candidate.food_id is not None or candidate.food_version_id is not None:
+                continue
+            return candidate
+        return None
+
     def log_diary_entry(
         self,
         *,
@@ -1201,6 +1210,8 @@ class HealthMonitorService:
         for item in items:
             resolution: FoodResolution | None = None
             estimate: NutritionEstimate | None = None
+            evidence_source_type = "local_food"
+            evidence_source_details: dict[str, object] = {}
             try:
                 resolution = self.resolve_food_reference(
                     household_id=person.household_id,
@@ -1213,39 +1224,90 @@ class HealthMonitorService:
                 resolution_reason = resolution.reason
                 confidence = resolution.confidence
             except ValueError:
-                if not settings.get("external_lookup", True) or self.estimator is None:
+                if not settings.get("external_lookup", True):
                     raise
-                estimate = self.estimator.estimate(item.phrase)
-                if estimate is None:
-                    raise ValueError(f"food reference could not be resolved or estimated: {item.phrase}")
-                food_id = self._next_id("food")
-                food_version_id = self._next_id("food_version")
-                version = FoodVersion(
-                    id=food_version_id,
-                    food_id=food_id,
-                    label="model estimate",
-                    nutrients_per_100g=estimate.nutrients_per_100g,
-                    source=estimate.source,
-                )
-                estimated_food_versions.append(
-                    {
-                        "food_id": food_id,
-                        "food_version_id": food_version_id,
-                        "household_id": person.household_id,
-                        "food_name": estimate.food_name,
-                        "phrase": item.phrase,
-                        "version_label": "model estimate",
-                        "nutrients_per_100g": nutrients_to_snapshot(
-                            estimate.nutrients_per_100g.rounded()
-                        ),
-                        "source": estimate.source,
-                        "confidence": estimate.confidence,
-                        "notes": estimate.notes,
+                lookup_candidate = self._lookup_first_external_food_candidate(item.phrase)
+                if lookup_candidate is not None:
+                    food_id = self._next_id("food")
+                    food_version_id = self._next_id("food_version")
+                    version_label = f"{lookup_candidate.source_name} lookup"
+                    version = FoodVersion(
+                        id=food_version_id,
+                        food_id=food_id,
+                        label=version_label,
+                        nutrients_per_100g=lookup_candidate.nutrients_per_100g,
+                        source="external_lookup",
+                        serving_size_g=lookup_candidate.serving_size_g,
+                    )
+                    estimated_food_versions.append(
+                        {
+                            "food_id": food_id,
+                            "food_version_id": food_version_id,
+                            "household_id": person.household_id,
+                            "food_name": lookup_candidate.product_name,
+                            "brand": lookup_candidate.brand,
+                            "phrase": item.phrase,
+                            "version_label": version_label,
+                            "nutrients_per_100g": nutrients_to_snapshot(
+                                lookup_candidate.nutrients_per_100g.rounded()
+                            ),
+                            "source": "external_lookup",
+                            "source_type": lookup_candidate.source_type,
+                            "source_name": lookup_candidate.source_name,
+                            "source_id": lookup_candidate.source_id,
+                            "source_url": lookup_candidate.source_url,
+                            "barcode": lookup_candidate.barcode,
+                            "serving_size_g": lookup_candidate.serving_size_g,
+                            "confidence": lookup_candidate.confidence,
+                            "warnings": list(lookup_candidate.warnings),
+                        }
+                    )
+                    source = "agent_lookup_proposal"
+                    resolution_reason = "external_lookup"
+                    confidence = lookup_candidate.confidence
+                    evidence_source_type = lookup_candidate.source_type
+                    evidence_source_details = {
+                        "source_name": lookup_candidate.source_name,
+                        "source_id": lookup_candidate.source_id,
+                        "source_url": lookup_candidate.source_url,
+                        "warnings": list(lookup_candidate.warnings),
                     }
-                )
-                source = "agent_estimate_proposal"
-                resolution_reason = "model_estimate"
-                confidence = estimate.confidence
+                else:
+                    if self.estimator is None:
+                        raise ValueError(f"food reference could not be resolved or estimated: {item.phrase}")
+                    estimate = self.estimator.estimate(item.phrase)
+                    if estimate is None:
+                        raise ValueError(f"food reference could not be resolved or estimated: {item.phrase}")
+                    food_id = self._next_id("food")
+                    food_version_id = self._next_id("food_version")
+                    version = FoodVersion(
+                        id=food_version_id,
+                        food_id=food_id,
+                        label="model estimate",
+                        nutrients_per_100g=estimate.nutrients_per_100g,
+                        source=estimate.source,
+                    )
+                    estimated_food_versions.append(
+                        {
+                            "food_id": food_id,
+                            "food_version_id": food_version_id,
+                            "household_id": person.household_id,
+                            "food_name": estimate.food_name,
+                            "brand": None,
+                            "phrase": item.phrase,
+                            "version_label": "model estimate",
+                            "nutrients_per_100g": nutrients_to_snapshot(
+                                estimate.nutrients_per_100g.rounded()
+                            ),
+                            "source": estimate.source,
+                            "confidence": estimate.confidence,
+                            "notes": estimate.notes,
+                        }
+                    )
+                    source = "agent_estimate_proposal"
+                    resolution_reason = "model_estimate"
+                    confidence = estimate.confidence
+                    evidence_source_type = "model_estimate"
             quantity_g = item.quantity_g
             if item.evidence.get("quantity_basis") == "serving_count":
                 if version.serving_size_g is None:
@@ -1270,16 +1332,16 @@ class HealthMonitorService:
             )
             entries.append(entry)
             totals += version.nutrients_per_100g.scale(quantity_g / 100)
-            source_type = "model_estimate" if estimate is not None else "local_food"
             evidence.append(
                 {
-                    "source_type": source_type,
+                    "source_type": evidence_source_type,
                     "source_text": item.source_text,
                     "phrase": item.phrase,
                     "quantity_g": quantity_g,
                     "resolution_reason": resolution_reason,
                     "confidence": confidence,
                     "food_version_id": food_version_id,
+                    **evidence_source_details,
                     **item.evidence,
                 }
             )
@@ -2275,19 +2337,30 @@ class HealthMonitorService:
             food, version = self._create_food_with_version(
                 household_id=str(estimate_payload["household_id"]),
                 name=str(estimate_payload["food_name"]),
-                brand=None,
+                brand=estimate_payload.get("brand")
+                if estimate_payload.get("brand") is None
+                else str(estimate_payload["brand"]),
                 version_label=str(estimate_payload["version_label"]),
                 nutrients_per_100g=nutrients_from_snapshot(
                     dict(estimate_payload["nutrients_per_100g"])
                 ),
                 source=str(estimate_payload["source"]),
                 aliases=[str(estimate_payload["phrase"])],
-                barcode=None,
-                serving_size_g=None,
+                barcode=estimate_payload.get("barcode")
+                if estimate_payload.get("barcode") is None
+                else str(estimate_payload["barcode"]),
+                serving_size_g=float(estimate_payload["serving_size_g"])
+                if estimate_payload.get("serving_size_g") is not None
+                else None,
                 food_id=str(estimate_payload["food_id"]),
                 version_id=str(estimate_payload["food_version_id"]),
             )
             applied_record_ids.extend([food.id, version.id])
+            barcode = estimate_payload.get("barcode")
+            if barcode is not None:
+                association = self.catalog.resolve_barcode(str(barcode))
+                if association is not None:
+                    applied_record_ids.append(association.id)
         for entry in proposal.entries:
             self.diary.add_entry(entry)
             applied_record_ids.append(entry.id)
