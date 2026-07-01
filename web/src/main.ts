@@ -357,6 +357,8 @@ function renderToday(): string {
               <span>Target ${target.calories_kcal} kcal</span>
               <span>${signed(delta.calories_kcal)} kcal</span>
               <span>${signed(delta.protein_g)} g protein</span>
+              <span>${signed(delta.fiber_g)} g fiber</span>
+              <span>${signed(delta.sodium_mg)} mg sodium</span>
             </div>`
           : ""
       }
@@ -887,6 +889,8 @@ function renderSetup(): string {
         <label>Protein g <input name="target_protein_g" type="number" value="150" /></label>
         <label>Carbs g <input name="target_carbs_g" type="number" value="180" /></label>
         <label>Fat g <input name="target_fat_g" type="number" value="70" /></label>
+        <label>Fiber g <input name="target_fiber_g" type="number" value="30" /></label>
+        <label>Sodium mg <input name="target_sodium_mg" type="number" value="2300" /></label>
       </div>
       <button class="primary-action" type="submit">Create profile</button>
     </form>
@@ -905,6 +909,8 @@ function renderGoalForm(): string {
         <label>Protein <input name="protein_g" type="number" value="${state.activeGoal?.targets.protein_g ?? 150}" ${disabled} /></label>
         <label>Carbs <input name="carbs_g" type="number" value="${state.activeGoal?.targets.carbs_g ?? 180}" ${disabled} /></label>
         <label>Fat <input name="fat_g" type="number" value="${state.activeGoal?.targets.fat_g ?? 70}" ${disabled} /></label>
+        <label>Fiber <input name="goal_fiber_g" type="number" value="${state.activeGoal?.targets.fiber_g ?? 30}" ${disabled} /></label>
+        <label>Sodium mg <input name="goal_sodium_mg" type="number" value="${state.activeGoal?.targets.sodium_mg ?? 2300}" ${disabled} /></label>
       </div>
       <label>Notes <input name="notes" value="${escapeHtml(state.activeGoal?.notes ?? "")}" ${disabled} /></label>
       <button type="submit" ${disabled}>Save targets</button>
@@ -1245,6 +1251,8 @@ async function onSetup(event: SubmitEvent): Promise<void> {
     protein_g: numberField(form, "target_protein_g"),
     carbs_g: numberField(form, "target_carbs_g"),
     fat_g: numberField(form, "target_fat_g"),
+    fiber_g: numberField(form, "target_fiber_g"),
+    sodium_mg: numberField(form, "target_sodium_mg"),
     notes: "initial plan"
   });
   state.household = household;
@@ -1298,6 +1306,8 @@ async function onGoal(event: SubmitEvent): Promise<void> {
     protein_g: numberField(form, "protein_g"),
     carbs_g: numberField(form, "carbs_g"),
     fat_g: numberField(form, "fat_g"),
+    fiber_g: numberField(form, "goal_fiber_g"),
+    sodium_mg: numberField(form, "goal_sodium_mg"),
     notes: optionalText(form, "notes")
   });
   state.notice = "Targets saved.";
@@ -1844,6 +1854,8 @@ async function createGoalFromFields(
     protein_g: number;
     carbs_g: number;
     fat_g: number;
+    fiber_g: number;
+    sodium_mg: number;
     notes: string | null;
   }
 ): Promise<GoalProfile> {
@@ -1854,7 +1866,9 @@ async function createGoalFromFields(
       calories_kcal: fields.calories_kcal,
       protein_g: fields.protein_g,
       carbs_g: fields.carbs_g,
-      fat_g: fields.fat_g
+      fat_g: fields.fat_g,
+      fiber_g: fields.fiber_g,
+      sodium_mg: fields.sodium_mg
     },
     notes: fields.notes
   });
