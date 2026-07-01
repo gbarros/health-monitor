@@ -461,6 +461,118 @@ textarea {
   padding: 7px 10px;
 }
 
+.chart-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 2px 0 16px;
+}
+
+.chart-panel {
+  border-top: 1px solid #d9ded5;
+  padding-top: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.chart-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.chart-heading span,
+.chart-legend {
+  color: #657064;
+  font-size: 13px;
+}
+
+.chart-svg {
+  width: 100%;
+  height: auto;
+  min-height: 150px;
+  border: 1px solid #eef1eb;
+  border-radius: 6px;
+  background: #fbfcfa;
+  overflow: visible;
+}
+
+.chart-svg text {
+  fill: #657064;
+  font-size: 12px;
+}
+
+.chart-svg .grid-line {
+  stroke: #e3e8df;
+  stroke-width: 1;
+}
+
+.chart-svg .axis-line {
+  stroke: #cbd3c8;
+  stroke-width: 1.5;
+}
+
+.macro-chart rect {
+  fill: #2f6b4f;
+}
+
+.macro-chart .target-marker {
+  stroke: #b4712a;
+  stroke-width: 4;
+  stroke-linecap: round;
+}
+
+.weight-chart polyline {
+  fill: none;
+  stroke: #2f5d8c;
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.weight-chart circle {
+  fill: #ffffff;
+  stroke: #2f5d8c;
+  stroke-width: 4;
+}
+
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+
+.chart-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend-box {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  display: inline-block;
+}
+
+.legend-box.actual {
+  background: #2f6b4f;
+}
+
+.legend-box.weight {
+  background: #2f5d8c;
+}
+
+.legend-line {
+  width: 18px;
+  height: 4px;
+  border-radius: 999px;
+  background: #b4712a;
+  display: inline-block;
+}
+
 .grid-two {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -490,6 +602,7 @@ textarea {
 
   .metrics,
   .side,
+  .chart-grid,
   .grid-two,
   .payload-grid,
   .job-list li,

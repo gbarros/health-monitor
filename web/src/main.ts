@@ -414,6 +414,10 @@ function renderReview(): string {
         ${metric("Protein", `${totals.protein_g}`, "g total")}
         ${metric("Weight", `${trend?.delta_kg ?? 0}`, "kg delta")}
       </div>
+      <div class="chart-grid">
+        ${week ? renderMacroChart(week) : ""}
+        ${trend?.entries.length ? renderWeightTrendChart(trend) : ""}
+      </div>
       ${
         dailyRows
           ? `<table><thead><tr><th>Day</th><th>Calories</th><th>Protein</th><th>Target</th><th>Carbs</th><th>Fat</th></tr></thead><tbody>${dailyRows}</tbody></table>`
@@ -519,6 +523,114 @@ function renderProposal(): string {
       ${payloadDetails}
       <p class="hint">${escapeHtml(settings)}</p>
       ${evidence ? `<ul class="evidence-list">${evidence}</ul>` : ""}
+    </section>
+  `;
+}
+
+function renderMacroChart(week: WeekSummary): string {
+  const days = Object.keys(week.daily).sort();
+  if (!days.length) return "";
+  const width = 640;
+  const height = 180;
+  const padding = { top: 18, right: 18, bottom: 34, left: 42 };
+  const chartWidth = width - padding.left - padding.right;
+  const chartHeight = height - padding.top - padding.bottom;
+  const values = days.flatMap((day) => [
+    week.daily[day]?.calories_kcal ?? 0,
+    week.daily_targets[day]?.calories_kcal ?? 0
+  ]);
+  const maxValue = Math.max(1, ...values);
+  const step = chartWidth / days.length;
+  const barWidth = Math.min(34, step * 0.52);
+  const bars = days
+    .map((day, index) => {
+      const calories = week.daily[day]?.calories_kcal ?? 0;
+      const target = week.daily_targets[day]?.calories_kcal ?? 0;
+      const x = padding.left + index * step + (step - barWidth) / 2;
+      const barHeight = (calories / maxValue) * chartHeight;
+      const y = padding.top + chartHeight - barHeight;
+      const targetY = padding.top + chartHeight - (target / maxValue) * chartHeight;
+      return `
+        <rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barWidth.toFixed(1)}" height="${barHeight.toFixed(1)}" rx="4" />
+        ${
+          target
+            ? `<line x1="${(x - 4).toFixed(1)}" y1="${targetY.toFixed(1)}" x2="${(x + barWidth + 4).toFixed(1)}" y2="${targetY.toFixed(1)}" class="target-marker" />`
+            : ""
+        }
+        <text x="${(x + barWidth / 2).toFixed(1)}" y="${height - 12}" text-anchor="middle">${escapeHtml(day.slice(5))}</text>
+      `;
+    })
+    .join("");
+  const gridLines = [0.25, 0.5, 0.75, 1]
+    .map((ratio) => {
+      const y = padding.top + chartHeight - chartHeight * ratio;
+      return `<line x1="${padding.left}" y1="${y.toFixed(1)}" x2="${width - padding.right}" y2="${y.toFixed(1)}" class="grid-line" />`;
+    })
+    .join("");
+  return `
+    <section class="chart-panel" aria-label="Weekly calories chart">
+      <div class="chart-heading">
+        <h3>Calories vs target</h3>
+        <span>${week.start} to ${week.end}</span>
+      </div>
+      <svg class="chart-svg macro-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Daily calories compared with calorie target">
+        ${gridLines}
+        <line x1="${padding.left}" y1="${padding.top + chartHeight}" x2="${width - padding.right}" y2="${padding.top + chartHeight}" class="axis-line" />
+        ${bars}
+      </svg>
+      <div class="chart-legend">
+        <span><i class="legend-box actual"></i> Calories</span>
+        <span><i class="legend-line"></i> Target</span>
+      </div>
+    </section>
+  `;
+}
+
+function renderWeightTrendChart(trend: WeightTrend): string {
+  const entries = [...trend.entries].sort((left, right) => left.measured_at.localeCompare(right.measured_at));
+  if (!entries.length) return "";
+  const width = 640;
+  const height = 180;
+  const padding = { top: 18, right: 18, bottom: 34, left: 42 };
+  const chartWidth = width - padding.left - padding.right;
+  const chartHeight = height - padding.top - padding.bottom;
+  const weights = entries.map((entry) => entry.weight_kg);
+  const min = Math.min(...weights);
+  const max = Math.max(...weights);
+  const span = Math.max(1, max - min);
+  const points = entries.map((entry, index) => {
+    const x = padding.left + (entries.length === 1 ? chartWidth / 2 : (index / (entries.length - 1)) * chartWidth);
+    const y = padding.top + chartHeight - ((entry.weight_kg - min) / span) * chartHeight;
+    return { entry, x, y };
+  });
+  const linePoints = points.map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(" ");
+  const markers = points
+    .map(
+      (point) => `
+        <circle cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="5" />
+        <text x="${point.x.toFixed(1)}" y="${height - 12}" text-anchor="middle">${escapeHtml(point.entry.measured_at.slice(5, 10))}</text>
+      `
+    )
+    .join("");
+  const mid = min + span / 2;
+  return `
+    <section class="chart-panel" aria-label="Weight trend chart">
+      <div class="chart-heading">
+        <h3>Weight trend</h3>
+        <span>${trend.latest_kg ?? 0} kg latest · ${signed(trend.delta_kg ?? 0)} kg</span>
+      </div>
+      <svg class="chart-svg weight-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Weight entries over time">
+        <line x1="${padding.left}" y1="${padding.top}" x2="${padding.left}" y2="${padding.top + chartHeight}" class="axis-line" />
+        <line x1="${padding.left}" y1="${padding.top + chartHeight}" x2="${width - padding.right}" y2="${padding.top + chartHeight}" class="axis-line" />
+        <text x="8" y="${(padding.top + 5).toFixed(1)}">${max.toFixed(1)}</text>
+        <text x="8" y="${(padding.top + chartHeight / 2 + 5).toFixed(1)}">${mid.toFixed(1)}</text>
+        <text x="8" y="${(padding.top + chartHeight + 5).toFixed(1)}">${min.toFixed(1)}</text>
+        ${entries.length > 1 ? `<polyline points="${linePoints}" />` : ""}
+        ${markers}
+      </svg>
+      <div class="chart-legend">
+        <span><i class="legend-box weight"></i> Weight kg</span>
+      </div>
     </section>
   `;
 }
