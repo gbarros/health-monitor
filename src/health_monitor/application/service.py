@@ -435,6 +435,40 @@ class HealthMonitorService:
         self._persist()
         return restored
 
+    def export_data(self) -> dict[str, Any]:
+        return {
+            "format": "health-monitor.snapshot",
+            "version": 1,
+            "exported_at": datetime.now(timezone.utc).isoformat(),
+            "data": self._snapshot(),
+        }
+
+    def import_data(self, payload: dict[str, Any]) -> dict[str, int]:
+        if not self._is_empty():
+            raise ValueError("import target must be empty")
+        if payload.get("format") != "health-monitor.snapshot":
+            raise ValueError("unsupported import format")
+        if int(payload.get("version", 0)) != 1:
+            raise ValueError("unsupported import version")
+        snapshot = dict(payload.get("data") or {})
+        if int(snapshot.get("version", 0)) != 1:
+            raise ValueError("unsupported snapshot version")
+        self._restore_snapshot(snapshot)
+        self._persist()
+        return {
+            "households": len(self.households),
+            "people": len(self.people),
+            "goal_profiles": len(self.goal_profiles),
+            "foods": len(self.catalog.foods),
+            "food_versions": len(self.catalog.versions),
+            "food_aliases": len(self.catalog.aliases),
+            "barcode_associations": len(self.catalog.barcode_associations),
+            "diary_entries": len(self.diary.entries),
+            "weight_entries": len(self.weights),
+            "proposals": len(self.proposals.proposals),
+            "agent_runs": len(self.agent_runs),
+        }
+
     def day_summary(self, person_id: str, day: date) -> DaySummary:
         self._require_person(person_id)
         meals: dict[str, list[DaySummaryEntry]] = {}
@@ -958,6 +992,23 @@ class HealthMonitorService:
     def _persist(self) -> None:
         if self.repository is not None:
             self.repository.save(self._snapshot())
+
+    def _is_empty(self) -> bool:
+        return not any(
+            (
+                self.households,
+                self.people,
+                self.goal_profiles,
+                self.catalog.foods,
+                self.catalog.versions,
+                self.catalog.aliases,
+                self.catalog.barcode_associations,
+                self.diary.entries,
+                self.weights,
+                self.proposals.proposals,
+                self.agent_runs,
+            )
+        )
 
     def _snapshot(self) -> dict[str, Any]:
         return {

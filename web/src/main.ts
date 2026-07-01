@@ -121,6 +121,7 @@ type AppState = {
   weightTrend: WeightTrend | null;
   proposal: Proposal | null;
   lastDeletedEntry: DiaryEntryRecord | null;
+  exportText: string;
   notice: string | null;
 };
 
@@ -137,6 +138,7 @@ const state: AppState = {
   weightTrend: null,
   proposal: null,
   lastDeletedEntry: null,
+  exportText: "",
   notice: null
 };
 
@@ -181,6 +183,7 @@ function render(): void {
           ${renderTextMeal()}
           ${renderLabelScan()}
           ${renderRecipeForm()}
+          ${renderDataPortability()}
         </aside>
       </section>
     </section>
@@ -644,6 +647,18 @@ Ingredients:
   `;
 }
 
+function renderDataPortability(): string {
+  return `
+    <form id="import-form" class="panel">
+      <p class="eyebrow">Data</p>
+      <h2>Export / import</h2>
+      <button id="export-data" type="button" ${state.household ? "" : "disabled"}>Export JSON</button>
+      <textarea name="import_json" placeholder="Paste exported JSON here">${escapeHtml(state.exportText)}</textarea>
+      <button type="submit">Import into empty app</button>
+    </form>
+  `;
+}
+
 function bindEvents(): void {
   document.querySelector<HTMLFormElement>("#setup-form")?.addEventListener("submit", onSetup);
   document.querySelector<HTMLFormElement>("#add-person-form")?.addEventListener("submit", onAddPerson);
@@ -654,9 +669,11 @@ function bindEvents(): void {
   document.querySelector<HTMLFormElement>("#text-meal-form")?.addEventListener("submit", onTextMeal);
   document.querySelector<HTMLFormElement>("#label-scan-form")?.addEventListener("submit", onLabelScan);
   document.querySelector<HTMLFormElement>("#recipe-form")?.addEventListener("submit", onRecipe);
+  document.querySelector<HTMLFormElement>("#import-form")?.addEventListener("submit", onImportData);
   document.querySelector<HTMLSelectElement>("#profile-select")?.addEventListener("change", onProfileSelect);
   document.querySelector<HTMLButtonElement>("#refresh-summary")?.addEventListener("click", refreshSummary);
   document.querySelector<HTMLButtonElement>("#refresh-review")?.addEventListener("click", refreshReview);
+  document.querySelector<HTMLButtonElement>("#export-data")?.addEventListener("click", onExportData);
   document.querySelector<HTMLButtonElement>("#confirm-proposal")?.addEventListener("click", confirmProposal);
   document.querySelector<HTMLButtonElement>("#reject-proposal")?.addEventListener("click", rejectProposal);
   document.querySelector<HTMLButtonElement>("#undo-delete")?.addEventListener("click", undoLastDelete);
@@ -881,6 +898,31 @@ async function onRecipe(event: SubmitEvent): Promise<void> {
   });
   state.notice = "Recipe proposal drafted.";
   render();
+}
+
+async function onExportData(): Promise<void> {
+  const exported = await apiGet<Record<string, unknown>>("/api/exports/full");
+  state.exportText = JSON.stringify(exported, null, 2);
+  state.notice = "Export generated.";
+  render();
+}
+
+async function onImportData(event: SubmitEvent): Promise<void> {
+  event.preventDefault();
+  const form = new FormData(event.currentTarget as HTMLFormElement);
+  const raw = requiredText(form, "import_json");
+  const payload = JSON.parse(raw) as {
+    data?: { households?: Household[]; people?: Person[] };
+  };
+  await apiPost("/api/imports/full", payload as Record<string, unknown>);
+  const household = payload.data?.households?.[0] ?? null;
+  state.household = household;
+  state.people = household ? await apiGet<Person[]>(`/api/people?household_id=${household.id}`) : [];
+  state.person = state.people[0] ?? null;
+  state.exportText = raw;
+  saveSession();
+  state.notice = "Import completed.";
+  await refreshAllReadSurfaces();
 }
 
 async function confirmProposal(): Promise<void> {

@@ -545,6 +545,61 @@ class HttpApiContractTest(unittest.TestCase):
         self.assertEqual(week["averages"]["calories_kcal"], 45)
         self.assertEqual(week["weight_delta_kg"], -0.8)
 
+    def test_export_and_import_round_trip_through_http_contract(self) -> None:
+        source = HttpApi(HealthMonitorService())
+        household = source.handle("POST", "/api/households", {"name": "Casa"}).body
+        person = source.handle(
+            "POST",
+            "/api/people",
+            {
+                "household_id": household["id"],
+                "name": "Gabriel",
+                "timezone": "America/Sao_Paulo",
+            },
+        ).body
+        food = source.handle(
+            "POST",
+            "/api/foods",
+            {
+                "household_id": household["id"],
+                "name": "Queijo Minas",
+                "brand": None,
+                "version_label": "current",
+                "source": "label_scan",
+                "nutrients_per_100g": {
+                    "calories_kcal": 315,
+                    "protein_g": 23,
+                    "carbs_g": 2.6,
+                    "fat_g": 23.5,
+                },
+                "aliases": ["queijo"],
+            },
+        ).body
+        source.handle(
+            "POST",
+            "/api/diary",
+            {
+                "person_id": person["id"],
+                "logged_at_local": "2026-07-01T10:00:00",
+                "food_version_id": food["version"]["id"],
+                "quantity_g": 50,
+                "source": "manual",
+            },
+        )
+
+        exported = source.handle("GET", "/api/exports/full", None).body
+        target = HttpApi(HealthMonitorService())
+        imported = target.handle("POST", "/api/imports/full", exported).body
+        summary = target.handle(
+            "GET",
+            f"/api/diary/day?person_id={person['id']}&day=2026-07-01",
+            None,
+        ).body
+
+        self.assertEqual(exported["format"], "health-monitor.snapshot")
+        self.assertEqual(imported["imported"]["diary_entries"], 1)
+        self.assertEqual(summary["totals"]["calories_kcal"], 157.5)
+
 
 if __name__ == "__main__":
     unittest.main()

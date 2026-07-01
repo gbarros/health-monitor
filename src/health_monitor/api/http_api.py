@@ -177,6 +177,13 @@ class HttpApi:
             )
             return HttpResponse(200, week_summary_to_dict(summary))
 
+        if method == "GET" and path == "/api/exports/full":
+            return HttpResponse(200, self.service.export_data())
+
+        if method == "POST" and path == "/api/imports/full":
+            imported = self.service.import_data(body)
+            return HttpResponse(201, {"imported": imported})
+
         if method == "POST" and path == "/api/agent/text-meal":
             proposal = self.service.propose_text_meal(
                 person_id=body["person_id"],
