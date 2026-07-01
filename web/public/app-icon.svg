@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Health Monitor app icon</title>
+  <desc id="desc">A green nutrition dashboard mark with a plate, chart line, and check mark.</desc>
+  <rect width="512" height="512" rx="96" fill="#2f6b4f"/>
+  <circle cx="256" cy="256" r="142" fill="#f6f7f3"/>
+  <circle cx="256" cy="256" r="104" fill="none" stroke="#8fb99d" stroke-width="24"/>
+  <path d="M154 285c36-70 67-83 100-37 29 41 53 43 104-52" fill="none" stroke="#1e2420" stroke-width="28" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M189 328l38 38 96-102" fill="none" stroke="#2f6b4f" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

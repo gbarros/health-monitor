@@ -216,6 +216,7 @@ const appRoot = requireAppRoot();
 
 render();
 void hydrateStoredSession();
+registerServiceWorker();
 
 function render(): void {
   appRoot.innerHTML = `
@@ -1651,6 +1652,23 @@ function saveSession(): void {
     sessionStorageKey,
     JSON.stringify({ household: state.household, person_id: state.person?.id ?? null })
   );
+}
+
+function registerServiceWorker(): void {
+  if (!("serviceWorker" in navigator)) return;
+  window.addEventListener("load", () => {
+    navigator.serviceWorker
+      .register("/service-worker.js")
+      .then((registration) => {
+        if (!registration.active) return;
+        state.notice ??= "App shell is available offline.";
+        render();
+      })
+      .catch(() => {
+        state.notice ??= "Offline app shell is unavailable in this browser.";
+        render();
+      });
+  });
 }
 
 async function fetchActiveGoal(personId: string, day: string): Promise<GoalProfile | null> {
