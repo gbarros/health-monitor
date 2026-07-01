@@ -1360,10 +1360,12 @@ async function refreshReview(): Promise<void> {
 
 async function refreshAllReadSurfaces(): Promise<void> {
   if (!state.person) {
+    await refreshFoodLibrary();
     state.reviewNotes = [];
     render();
     return;
   }
+  await refreshFoodLibrary();
   state.summary = await apiGet<DaySummary>(`/api/diary/day?person_id=${state.person.id}&day=${today}`);
   state.weightTrend = await apiGet<WeightTrend>(`/api/weights/trend?person_id=${state.person.id}`);
   state.activeGoal = await fetchActiveGoal(state.person.id, today);
@@ -1372,6 +1374,18 @@ async function refreshAllReadSurfaces(): Promise<void> {
   );
   state.reviewNotes = await apiGet<ReviewNote[]>(`/api/review-notes?person_id=${state.person.id}`);
   render();
+}
+
+async function refreshFoodLibrary(): Promise<void> {
+  if (!state.household) {
+    state.foods = [];
+    return;
+  }
+  const params = new URLSearchParams({ household_id: state.household.id });
+  if (state.person) {
+    params.set("person_id", state.person.id);
+  }
+  state.foods = await apiGet<FoodResponse[]>(`/api/foods?${params.toString()}`);
 }
 
 async function hydrateStoredSession(): Promise<void> {

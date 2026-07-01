@@ -461,6 +461,64 @@ class HealthMonitorService:
         self._persist()
         return food, version, entry
 
+    def list_food_versions(
+        self,
+        *,
+        household_id: str,
+        person_id: str | None = None,
+        query: str | None = None,
+    ) -> tuple[tuple[Food, FoodVersion], ...]:
+        self._require_household(household_id)
+        if person_id is not None:
+            person = self._require_person(person_id)
+            if person.household_id != household_id:
+                raise ValueError("person belongs to a different household")
+
+        normalized_query = query.casefold().strip() if query is not None else ""
+        latest_logged_by_food: dict[str, datetime] = {}
+        if person_id is not None:
+            for entry in self.diary.entries.values():
+                if entry.person_id != person_id or entry.deleted_at is not None:
+                    continue
+                version = self.catalog.versions.get(entry.food_version_id)
+                if version is None:
+                    continue
+                current_latest = latest_logged_by_food.get(version.food_id)
+                if current_latest is None or entry.logged_at > current_latest:
+                    latest_logged_by_food[version.food_id] = entry.logged_at
+
+        rows: list[tuple[Food, FoodVersion]] = []
+        for food in self.catalog.foods.values():
+            if food.household_id != household_id or food.archived or food.default_version_id is None:
+                continue
+            version = self.catalog.versions.get(food.default_version_id)
+            if version is None or version.archived:
+                continue
+            if normalized_query and not self._food_matches_query(food, normalized_query):
+                continue
+            rows.append((food, version))
+
+        rows.sort(
+            key=lambda row: (
+                0 if row[0].id in latest_logged_by_food else 1,
+                -latest_logged_by_food[row[0].id].timestamp()
+                if row[0].id in latest_logged_by_food
+                else 0,
+                row[0].name.casefold(),
+                row[0].brand.casefold() if row[0].brand is not None else "",
+            )
+        )
+        return tuple(rows)
+
+    def _food_matches_query(self, food: Food, normalized_query: str) -> bool:
+        haystacks = [food.name, food.brand or ""]
+        haystacks.extend(
+            alias.phrase
+            for alias in self.catalog.aliases.values()
+            if alias.food_id == food.id and alias.household_id == food.household_id
+        )
+        return any(normalized_query in value.casefold() for value in haystacks)
+
     def _create_food_with_version(
         self,
         *,

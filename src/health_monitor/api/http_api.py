@@ -108,6 +108,23 @@ class HttpApi:
             attachment = self.service.get_attachment(attachment_id)
             return HttpResponse(200, attachment_to_dict(attachment))
 
+        if method == "GET" and path == "/api/foods":
+            foods = self.service.list_food_versions(
+                household_id=query["household_id"],
+                person_id=query.get("person_id"),
+                query=query.get("q"),
+            )
+            return HttpResponse(
+                200,
+                [
+                    {
+                        "food": food_to_dict(food),
+                        "version": food_version_to_dict(version),
+                    }
+                    for food, version in foods
+                ],
+            )
+
         if method == "POST" and path == "/api/foods":
             food, version = self.service.create_food_with_version(
                 household_id=body["household_id"],
