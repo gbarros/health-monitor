@@ -37,6 +37,7 @@ type FoodVersion = {
 };
 type Food = { id: string; name: string; brand: string | null; default_version_id: string };
 type FoodResponse = { food: Food; version: FoodVersion };
+type QuickCustomFoodResponse = FoodResponse & { entry: DiaryEntryRecord };
 type FoodLookupCandidate = {
   id: string;
   source_type: string;
@@ -728,6 +729,7 @@ function renderFoodLookup(): string {
 
 function renderManualLog(): string {
   const disabled = state.person && state.foods.length ? "" : "disabled";
+  const quickDisabled = state.household && state.person ? "" : "disabled";
   const options = state.foods
     .map((item) => `<option value="${item.version.id}">${escapeHtml(foodLabel(item))}</option>`)
     .join("");
@@ -739,6 +741,31 @@ function renderManualLog(): string {
       <label>Time <input name="logged_at_local" type="datetime-local" value="${today}T10:00" ${disabled} /></label>
       <label>Quantity <input name="quantity_g" type="number" step="0.1" value="100" ${disabled} /></label>
       <button type="submit" ${disabled}>Add entry</button>
+    </form>
+    <form id="quick-custom-log-form" class="panel">
+      <p class="eyebrow">Quick custom</p>
+      <h2>New food entry</h2>
+      <label>Name <input name="name" value="Pao de queijo caseiro" ${quickDisabled} /></label>
+      <label>Brand <input name="brand" placeholder="optional" ${quickDisabled} /></label>
+      <div class="grid-two">
+        <label>Time <input name="logged_at_local" type="datetime-local" value="${today}T16:00" ${quickDisabled} /></label>
+        <label>Quantity <input name="quantity_g" type="number" step="0.1" value="80" ${quickDisabled} /></label>
+        <label>Meal
+          <select name="meal_type" ${quickDisabled}>
+            ${mealOptions("snack")}
+          </select>
+        </label>
+        <label>Serving g <input name="serving_size_g" type="number" step="0.1" placeholder="optional" ${quickDisabled} /></label>
+      </div>
+      <div class="grid-two">
+        <label>Calories / 100g <input name="calories_kcal" type="number" step="0.1" value="280" ${quickDisabled} /></label>
+        <label>Protein / 100g <input name="protein_g" type="number" step="0.1" value="7" ${quickDisabled} /></label>
+        <label>Carbs / 100g <input name="carbs_g" type="number" step="0.1" value="35" ${quickDisabled} /></label>
+        <label>Fat / 100g <input name="fat_g" type="number" step="0.1" value="12" ${quickDisabled} /></label>
+      </div>
+      <label>Aliases <input name="aliases" value="pao de queijo" ${quickDisabled} /></label>
+      <label>Barcode <input name="barcode" placeholder="optional" ${quickDisabled} /></label>
+      <button type="submit" ${quickDisabled}>Create and log</button>
     </form>
   `;
 }
@@ -886,6 +913,7 @@ function bindEvents(): void {
   document.querySelector<HTMLFormElement>("#food-form")?.addEventListener("submit", onFood);
   document.querySelector<HTMLFormElement>("#food-lookup-form")?.addEventListener("submit", onFoodLookup);
   document.querySelector<HTMLFormElement>("#manual-log-form")?.addEventListener("submit", onManualLog);
+  document.querySelector<HTMLFormElement>("#quick-custom-log-form")?.addEventListener("submit", onQuickCustomLog);
   document.querySelector<HTMLFormElement>("#weight-form")?.addEventListener("submit", onWeight);
   document.querySelector<HTMLFormElement>("#text-meal-form")?.addEventListener("submit", onTextMeal);
   document.querySelector<HTMLFormElement>("#agent-chat-form")?.addEventListener("submit", onAgentChat);
@@ -1113,6 +1141,37 @@ async function onManualLog(event: SubmitEvent): Promise<void> {
     source: "manual"
   });
   state.notice = "Diary entry added.";
+  await refreshAllReadSurfaces();
+}
+
+async function onQuickCustomLog(event: SubmitEvent): Promise<void> {
+  event.preventDefault();
+  if (!state.household || !state.person) return;
+  const form = new FormData(event.currentTarget as HTMLFormElement);
+  const created = await apiPost<QuickCustomFoodResponse>("/api/diary/custom-food", {
+    household_id: state.household.id,
+    person_id: state.person.id,
+    name: requiredText(form, "name"),
+    brand: optionalText(form, "brand"),
+    version_label: "quick custom",
+    nutrients_per_100g: {
+      calories_kcal: numberField(form, "calories_kcal"),
+      protein_g: numberField(form, "protein_g"),
+      carbs_g: numberField(form, "carbs_g"),
+      fat_g: numberField(form, "fat_g")
+    },
+    logged_at_local: requiredText(form, "logged_at_local"),
+    quantity_g: numberField(form, "quantity_g"),
+    aliases: optionalText(form, "aliases")
+      ?.split(",")
+      .map((alias) => alias.trim())
+      .filter(Boolean),
+    serving_size_g: optionalNumber(form, "serving_size_g"),
+    barcode: optionalText(form, "barcode"),
+    meal_type: requiredText(form, "meal_type")
+  });
+  state.foods = [...state.foods, { food: created.food, version: created.version }];
+  state.notice = `${foodLabel(created)} created and logged.`;
   await refreshAllReadSurfaces();
 }
 

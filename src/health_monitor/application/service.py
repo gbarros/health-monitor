@@ -412,6 +412,55 @@ class HealthMonitorService:
         self._persist()
         return food, version
 
+    def create_custom_food_and_log_entry(
+        self,
+        *,
+        household_id: str,
+        person_id: str,
+        name: str,
+        brand: str | None,
+        version_label: str,
+        nutrients_per_100g: Nutrients,
+        logged_at_local: str,
+        quantity_g: float,
+        aliases: list[str] | None = None,
+        serving_size_g: float | None = None,
+        barcode: str | None = None,
+        meal_type: str | None = None,
+    ) -> tuple[Food, FoodVersion, DiaryEntry]:
+        self._require_household(household_id)
+        person = self._require_person(person_id)
+        if person.household_id != household_id:
+            raise ValueError("person belongs to a different household")
+        if quantity_g <= 0:
+            raise ValueError("quantity_g must be positive")
+
+        food, version = self._create_food_with_version(
+            household_id=household_id,
+            name=name,
+            brand=brand,
+            version_label=version_label,
+            nutrients_per_100g=nutrients_per_100g,
+            source="manual_quick_custom",
+            aliases=aliases,
+            barcode=barcode,
+            serving_size_g=serving_size_g,
+        )
+        logged_at = self._parse_person_datetime(logged_at_local, person)
+        entry = self.diary.add_entry(
+            DiaryEntry(
+                id=self._next_id("diary_entry"),
+                person_id=person_id,
+                logged_at=logged_at,
+                meal_type=meal_type or infer_meal_type(logged_at),
+                food_version_id=version.id,
+                quantity_g=float(quantity_g),
+                source="manual_quick_custom",
+            )
+        )
+        self._persist()
+        return food, version, entry
+
     def _create_food_with_version(
         self,
         *,

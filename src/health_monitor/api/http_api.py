@@ -162,6 +162,30 @@ class HttpApi:
             )
             return HttpResponse(201, diary_entry_to_dict(entry))
 
+        if method == "POST" and path == "/api/diary/custom-food":
+            food, version, entry = self.service.create_custom_food_and_log_entry(
+                household_id=body["household_id"],
+                person_id=body["person_id"],
+                name=body["name"],
+                brand=body.get("brand"),
+                version_label=body["version_label"],
+                nutrients_per_100g=nutrients_from_dict(body["nutrients_per_100g"]),
+                logged_at_local=body["logged_at_local"],
+                quantity_g=float(body["quantity_g"]),
+                aliases=body.get("aliases"),
+                serving_size_g=body.get("serving_size_g"),
+                barcode=body.get("barcode"),
+                meal_type=body.get("meal_type"),
+            )
+            return HttpResponse(
+                201,
+                {
+                    "food": food_to_dict(food),
+                    "version": food_version_to_dict(version),
+                    "entry": diary_entry_to_dict(entry),
+                },
+            )
+
         if method == "PATCH" and path.startswith("/api/diary/"):
             entry_id = path.removeprefix("/api/diary/")
             entry = self.service.update_diary_entry(

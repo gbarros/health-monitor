@@ -68,6 +68,63 @@ class HttpApiContractTest(unittest.TestCase):
         self.assertEqual(summary["totals"]["protein_g"], 15)
         self.assertEqual(summary["meals"]["breakfast"][0]["food_name"], "Iogurte Batavo")
 
+    def test_quick_custom_food_log_through_http_contract(self) -> None:
+        api = HttpApi(HealthMonitorService())
+        household = api.handle("POST", "/api/households", {"name": "Casa"}).body
+        person = api.handle(
+            "POST",
+            "/api/people",
+            {
+                "household_id": household["id"],
+                "name": "Gabriel",
+                "timezone": "America/Sao_Paulo",
+            },
+        ).body
+
+        created = api.handle(
+            "POST",
+            "/api/diary/custom-food",
+            {
+                "household_id": household["id"],
+                "person_id": person["id"],
+                "name": "Pao de queijo caseiro",
+                "brand": None,
+                "version_label": "quick custom",
+                "nutrients_per_100g": {
+                    "calories_kcal": 280,
+                    "protein_g": 7,
+                    "carbs_g": 35,
+                    "fat_g": 12,
+                },
+                "logged_at_local": "2026-07-01T16:00:00",
+                "quantity_g": 80,
+                "aliases": ["pao de queijo"],
+            },
+        )
+        summary = api.handle(
+            "GET",
+            f"/api/diary/day?person_id={person['id']}&day=2026-07-01",
+            None,
+        ).body
+        resolved = api.handle(
+            "GET",
+            (
+                f"/api/foods/resolve?household_id={household['id']}"
+                f"&person_id={person['id']}&phrase=pao+de+queijo"
+            ),
+            None,
+        ).body
+
+        self.assertEqual(created.status_code, 201)
+        self.assertEqual(created.body["food"]["default_version_id"], created.body["version"]["id"])
+        self.assertEqual(created.body["entry"]["food_version_id"], created.body["version"]["id"])
+        self.assertEqual(created.body["entry"]["meal_type"], "snack")
+        self.assertEqual(created.body["entry"]["source"], "manual_quick_custom")
+        self.assertEqual(summary["totals"]["calories_kcal"], 224)
+        self.assertEqual(summary["totals"]["protein_g"], 5.6)
+        self.assertEqual(summary["meals"]["snack"][0]["food_name"], "Pao de queijo caseiro")
+        self.assertEqual(resolved["food_version_id"], created.body["version"]["id"])
+
     def test_food_resolve_prefers_recently_logged_alias_through_http_contract(self) -> None:
         api = HttpApi(HealthMonitorService())
         household = api.handle("POST", "/api/households", {"name": "Casa"}).body

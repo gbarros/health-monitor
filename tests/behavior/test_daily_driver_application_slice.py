@@ -167,6 +167,40 @@ class DailyDriverApplicationSliceTest(unittest.TestCase):
             Nutrients(315, 23, 2.6, 23.5),
         )
 
+    def test_quick_custom_food_can_be_created_and_logged_in_one_flow(self) -> None:
+        service = HealthMonitorService()
+        household = service.create_household(name="Casa")
+        person = service.create_person(
+            household_id=household.id,
+            name="Gabriel",
+            timezone="America/Sao_Paulo",
+        )
+
+        food, version, entry = service.create_custom_food_and_log_entry(
+            household_id=household.id,
+            person_id=person.id,
+            name="Pao de queijo caseiro",
+            brand=None,
+            version_label="quick custom",
+            nutrients_per_100g=Nutrients(calories_kcal=280, protein_g=7, carbs_g=35, fat_g=12),
+            logged_at_local="2026-07-01T16:00:00",
+            quantity_g=80,
+            aliases=["pao de queijo"],
+        )
+        summary = service.day_summary(person.id, date(2026, 7, 1))
+        resolved = service.resolve_food_reference(
+            household_id=household.id,
+            person_id=person.id,
+            phrase="pao de queijo",
+        )
+
+        self.assertEqual(food.default_version_id, version.id)
+        self.assertEqual(entry.food_version_id, version.id)
+        self.assertEqual(entry.meal_type, "snack")
+        self.assertEqual(entry.source, "manual_quick_custom")
+        self.assertEqual(summary.totals.rounded(), Nutrients(224, 5.6, 28, 9.6))
+        self.assertEqual(resolved.food_version_id, version.id)
+
 
 if __name__ == "__main__":
     unittest.main()
