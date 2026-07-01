@@ -393,6 +393,8 @@ class HealthMonitorService:
         aliases: list[str] | None = None,
         barcode: str | None = None,
         serving_size_g: float | None = None,
+        food_id: str | None = None,
+        version_id: str | None = None,
     ) -> tuple[Food, FoodVersion]:
         food, version = self._create_food_with_version(
             household_id=household_id,
@@ -404,6 +406,8 @@ class HealthMonitorService:
             aliases=aliases,
             barcode=barcode,
             serving_size_g=serving_size_g,
+            food_id=food_id,
+            version_id=version_id,
         )
         self._persist()
         return food, version
@@ -1497,9 +1501,12 @@ class HealthMonitorService:
         set_as_default: bool = True,
         attachment_id: str | None = None,
         barcode: str | None = None,
+        logged_at_local: str | None = None,
+        quantity_g: float | None = None,
+        meal_type: str | None = None,
     ) -> CreateDiaryEntriesProposal:
         self._require_household(household_id)
-        self._require_person(person_id)
+        person = self._require_person(person_id)
         attachment = None
         if attachment_id is not None:
             attachment = self.get_attachment(attachment_id)
@@ -1525,11 +1532,50 @@ class HealthMonitorService:
         if scanned_barcode == "":
             scanned_barcode = None
         final_barcode = scanned_barcode or parsed.barcode
+        entries: tuple[DiaryEntry, ...] = ()
+        totals = Nutrients()
+        pending_food_versions: list[dict[str, Any]] = []
+        pending_food_id: str | None = None
+        pending_version_id: str | None = None
+        if logged_at_local is not None or quantity_g is not None:
+            if logged_at_local is None or quantity_g is None:
+                raise ValueError("logged_at_local and quantity_g must be provided together")
+            if quantity_g <= 0:
+                raise ValueError("quantity_g must be positive")
+            logged_at = self._parse_person_datetime(logged_at_local, person)
+            pending_food_id = self._next_id("food")
+            pending_version_id = self._next_id("food_version")
+            entry = DiaryEntry(
+                id=self._next_id("diary_entry"),
+                person_id=person_id,
+                logged_at=logged_at,
+                meal_type=meal_type or infer_meal_type(logged_at),
+                food_version_id=pending_version_id,
+                quantity_g=quantity_g,
+                source="label_scan",
+            )
+            entries = (entry,)
+            totals = parsed.nutrients_per_100g.scale(quantity_g / 100)
+            pending_food_versions.append(
+                {
+                    "food_id": pending_food_id,
+                    "food_version_id": pending_version_id,
+                    "household_id": household_id,
+                    "food_name": parsed.food_name,
+                    "brand": parsed.brand,
+                    "version_label": "label scan",
+                    "nutrients_per_100g": nutrients_to_snapshot(parsed.nutrients_per_100g.rounded()),
+                    "source": "label_scan",
+                    "confidence": 1.0,
+                }
+            )
         payload = {
             "household_id": household_id,
             "food_name": parsed.food_name,
             "brand": parsed.brand,
             "version_label": "label scan",
+            "food_id": pending_food_id,
+            "food_version_id": pending_version_id,
             "nutrients_per_100g": nutrients_to_snapshot(parsed.nutrients_per_100g.rounded()),
             "serving_size_g": parsed.serving_size_g,
             "barcode": final_barcode,
@@ -1542,15 +1588,24 @@ class HealthMonitorService:
             "ocr_source": extraction.source if extraction is not None else None,
             "ocr_confidence": extraction.confidence if extraction is not None else None,
             "ocr_warnings": list(extraction.warnings) if extraction is not None else [],
+            "logged_at_local": logged_at_local,
+            "quantity_g": quantity_g,
+            "meal_type": entries[0].meal_type if entries else None,
+            "estimated_food_versions": pending_food_versions,
         }
         proposal = self.proposals.create(
             CreateDiaryEntriesProposal(
                 id=self._next_id("proposal"),
                 person_id=person_id,
-                entries=(),
+                entries=entries,
                 proposal_type="food_version_from_label",
-                summary=f"Food version drafted from label: {parsed.food_name}",
+                summary=(
+                    f"Food version and diary entry drafted from label: {parsed.food_name}"
+                    if entries
+                    else f"Food version drafted from label: {parsed.food_name}"
+                ),
                 payload=payload,
+                totals=totals,
                 evidence=(
                     {
                         "source_type": "nutrition_label_text",
@@ -1561,6 +1616,7 @@ class HealthMonitorService:
                         "ocr_source": extraction.source if extraction is not None else None,
                         "ocr_confidence": extraction.confidence if extraction is not None else None,
                         "ocr_warnings": list(extraction.warnings) if extraction is not None else [],
+                        "logged_diary_entry": bool(entries),
                     },
                 ),
             )
@@ -1741,7 +1797,7 @@ class HealthMonitorService:
         if proposal.status == "rejected":
             raise ValueError("cannot apply rejected proposal")
         payload = proposal.payload
-        food, version = self.create_food_with_version(
+        food, version = self._create_food_with_version(
             household_id=str(payload["household_id"]),
             name=str(payload["food_name"]),
             brand=payload.get("brand") if payload.get("brand") is None else str(payload["brand"]),
@@ -1753,6 +1809,8 @@ class HealthMonitorService:
             aliases=[str(payload["food_name"]).casefold()],
             barcode=payload.get("barcode") if payload.get("barcode") is None else str(payload["barcode"]),
             serving_size_g=float(payload["serving_size_g"]),
+            food_id=str(payload["food_id"]) if payload.get("food_id") is not None else None,
+            version_id=str(payload["food_version_id"]) if payload.get("food_version_id") is not None else None,
         )
         applied_ids = [food.id, version.id]
         barcode = payload.get("barcode")
@@ -1768,6 +1826,20 @@ class HealthMonitorService:
                 linked_record_id=version.id,
             )
             applied_ids.append(str(attachment_id))
+        for entry in proposal.entries:
+            if entry.food_version_id != version.id:
+                entry = DiaryEntry(
+                    id=entry.id,
+                    person_id=entry.person_id,
+                    logged_at=entry.logged_at,
+                    meal_type=entry.meal_type,
+                    food_version_id=version.id,
+                    quantity_g=entry.quantity_g,
+                    source=entry.source,
+                    deleted_at=entry.deleted_at,
+                )
+            self.diary.add_entry(entry)
+            applied_ids.append(entry.id)
         return CreateDiaryEntriesProposal(
             id=proposal.id,
             person_id=proposal.person_id,

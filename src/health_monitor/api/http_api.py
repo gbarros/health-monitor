@@ -254,6 +254,9 @@ class HttpApi:
                 set_as_default=bool(body.get("set_as_default", True)),
                 attachment_id=body.get("attachment_id"),
                 barcode=body.get("barcode"),
+                logged_at_local=body.get("logged_at_local"),
+                quantity_g=float(body["quantity_g"]) if body.get("quantity_g") is not None else None,
+                meal_type=body.get("meal_type"),
             )
             return HttpResponse(201, proposal_to_dict(proposal, self.service))
 

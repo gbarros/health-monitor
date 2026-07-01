@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from datetime import date
 from pathlib import Path
 
 from health_monitor.application.service import HealthMonitorService
@@ -102,6 +103,36 @@ class LabelScanProposalFlowTest(unittest.TestCase):
 
         self.assertEqual(proposal.payload["barcode"], "7891000000000")
         self.assertEqual(applied.applied_record_ids[1], resolution.food_version_id)
+
+    def test_label_scan_can_save_food_and_log_portion_after_confirmation(self) -> None:
+        service = HealthMonitorService()
+        household = service.create_household(name="Casa")
+        person = service.create_person(
+            household_id=household.id,
+            name="Gabriel",
+            timezone="America/Sao_Paulo",
+        )
+
+        proposal = service.propose_label_scan(
+            household_id=household.id,
+            person_id=person.id,
+            table_text=LABEL_TEXT,
+            logged_at_local="2026-07-01T10:00:00",
+            quantity_g=170,
+            set_as_default=True,
+        )
+        before = service.day_summary(person.id, date(2026, 7, 1))
+        applied = service.confirm_proposal(proposal.id)
+        after = service.day_summary(person.id, date(2026, 7, 1))
+        entry_id = applied.applied_record_ids[-1]
+        entry = service.diary.entries[entry_id]
+
+        self.assertEqual(len(proposal.entries), 1)
+        self.assertEqual(proposal.entries[0].quantity_g, 170)
+        self.assertEqual(before.totals.calories_kcal, 0)
+        self.assertEqual(entry.food_version_id, applied.applied_record_ids[1])
+        self.assertEqual(entry.source, "label_scan")
+        self.assertEqual(after.totals.rounded(), Nutrients(120, 14.99, 10, 2.01))
 
     def test_pending_label_proposal_survives_restart_and_can_be_confirmed(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -807,6 +807,15 @@ function renderLabelScan(): string {
       <h2>Nutrition table</h2>
       <label>Image <input name="attachment" type="file" accept="image/*" ${disabled} /></label>
       <label>Barcode <input name="barcode" inputmode="numeric" placeholder="optional separate scan" ${disabled} /></label>
+      <div class="grid-two">
+        <label>Log time <input name="logged_at_local" type="datetime-local" value="${today}T10:00" ${disabled} /></label>
+        <label>Log grams <input name="quantity_g" type="number" step="0.1" placeholder="optional" ${disabled} /></label>
+        <label>Meal
+          <select name="meal_type" ${disabled}>
+            ${mealOptions("breakfast")}
+          </select>
+        </label>
+      </div>
       <textarea name="table_text" placeholder="Optional when an image is attached" ${disabled}>Produto: Iogurte Batavo Protein
 Marca: Batavo
 Porcao: 170 g
@@ -1144,13 +1153,17 @@ async function onLabelScan(event: SubmitEvent): Promise<void> {
   if (!state.household || !state.person) return;
   const form = new FormData(event.currentTarget as HTMLFormElement);
   const attachment = await uploadOptionalAttachment(form, "attachment", "nutrition_label_image");
+  const quantityG = optionalNumber(form, "quantity_g");
   state.proposal = await apiPost<Proposal>("/api/agent/label-scan", {
     household_id: state.household.id,
     person_id: state.person.id,
     table_text: optionalText(form, "table_text") ?? "",
     barcode: optionalText(form, "barcode"),
     set_as_default: true,
-    attachment_id: attachment?.id ?? null
+    attachment_id: attachment?.id ?? null,
+    logged_at_local: quantityG === null ? null : requiredText(form, "logged_at_local"),
+    quantity_g: quantityG,
+    meal_type: quantityG === null ? null : requiredText(form, "meal_type")
   });
   state.notice = attachment
     ? "Food version proposal drafted with attachment evidence."
