@@ -761,6 +761,111 @@ class HealthMonitorService:
         self._persist()
         return updated
 
+    def update_proposal_entry(
+        self,
+        *,
+        proposal_id: str,
+        entry_id: str,
+        quantity_g: float | None = None,
+        meal_type: str | None = None,
+    ) -> CreateDiaryEntriesProposal:
+        proposal = self.proposals.proposals[proposal_id]
+        if proposal.status != "draft":
+            raise ValueError("only draft proposals can be edited")
+        if not proposal.entries:
+            raise ValueError("proposal has no editable diary entries")
+        if quantity_g is not None and quantity_g <= 0:
+            raise ValueError("quantity_g must be positive")
+
+        found = False
+        updated_entries: list[DiaryEntry] = []
+        for entry in proposal.entries:
+            if entry.id != entry_id:
+                updated_entries.append(entry)
+                continue
+            found = True
+            updated_entries.append(
+                DiaryEntry(
+                    id=entry.id,
+                    person_id=entry.person_id,
+                    logged_at=entry.logged_at,
+                    meal_type=meal_type or entry.meal_type,
+                    food_version_id=entry.food_version_id,
+                    quantity_g=float(quantity_g) if quantity_g is not None else entry.quantity_g,
+                    source=entry.source,
+                    deleted_at=entry.deleted_at,
+                )
+            )
+        if not found:
+            raise ValueError(f"proposal entry not found: {entry_id}")
+
+        totals = self._proposal_entries_total(
+            tuple(updated_entries),
+            payload=proposal.payload,
+        )
+        evidence = tuple(
+            self._updated_proposal_evidence_item(item, tuple(updated_entries))
+            for item in proposal.evidence
+        )
+        payload = dict(proposal.payload)
+        if len(updated_entries) == 1:
+            payload["quantity_g"] = updated_entries[0].quantity_g
+            payload["meal_type"] = updated_entries[0].meal_type
+
+        updated = CreateDiaryEntriesProposal(
+            id=proposal.id,
+            person_id=proposal.person_id,
+            entries=tuple(updated_entries),
+            proposal_type=proposal.proposal_type,
+            status=proposal.status,
+            summary=proposal.summary,
+            payload=payload,
+            totals=totals,
+            evidence=evidence,
+            source_agent_run_id=proposal.source_agent_run_id,
+            applied_record_ids=proposal.applied_record_ids,
+            created_at=proposal.created_at,
+        )
+        self.proposals.proposals[proposal_id] = updated
+        self._persist()
+        return updated
+
+    def _proposal_entries_total(
+        self,
+        entries: tuple[DiaryEntry, ...],
+        *,
+        payload: dict[str, Any],
+    ) -> Nutrients:
+        total = Nutrients()
+        pending_versions = {
+            str(item["food_version_id"]): dict(item)
+            for item in payload.get("estimated_food_versions", [])
+        }
+        for entry in entries:
+            pending = pending_versions.get(entry.food_version_id)
+            if pending is not None:
+                nutrients = nutrients_from_snapshot(dict(pending["nutrients_per_100g"]))
+            else:
+                nutrients = self.catalog.get_version(entry.food_version_id).nutrients_per_100g
+            total += nutrients.scale(entry.quantity_g / 100)
+        return total
+
+    def _updated_proposal_evidence_item(
+        self,
+        item: dict[str, object],
+        entries: tuple[DiaryEntry, ...],
+    ) -> dict[str, object]:
+        updated = dict(item)
+        food_version_id = item.get("food_version_id")
+        if food_version_id is None:
+            return updated
+        for entry in entries:
+            if entry.food_version_id == food_version_id:
+                updated["quantity_g"] = entry.quantity_g
+                updated["meal_type"] = entry.meal_type
+                break
+        return updated
+
     def delete_diary_entry(self, entry_id: str) -> DiaryEntry:
         deleted = self.diary.delete_entry(
             entry_id,

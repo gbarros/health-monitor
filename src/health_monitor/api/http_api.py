@@ -285,6 +285,16 @@ class HttpApi:
             proposal = self.service.confirm_proposal(proposal_id)
             return HttpResponse(200, proposal_to_dict(proposal, self.service))
 
+        if method == "PATCH" and path.startswith("/api/proposals/") and "/entries/" in path:
+            proposal_part, entry_id = path.removeprefix("/api/proposals/").split("/entries/", maxsplit=1)
+            proposal = self.service.update_proposal_entry(
+                proposal_id=proposal_part,
+                entry_id=entry_id,
+                quantity_g=float(body["quantity_g"]) if body.get("quantity_g") is not None else None,
+                meal_type=body.get("meal_type"),
+            )
+            return HttpResponse(200, proposal_to_dict(proposal, self.service))
+
         if method == "POST" and path.startswith("/api/proposals/") and path.endswith("/reject"):
             proposal_id = path.removeprefix("/api/proposals/").removesuffix("/reject")
             proposal = self.service.reject_proposal(proposal_id)

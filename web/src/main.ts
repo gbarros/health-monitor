@@ -426,12 +426,24 @@ function renderProposal(): string {
   }
   const entries = state.proposal.entries
     .map(
-      (entry) => `
+      (entry) => {
+        const editable = state.proposal?.status === "draft";
+        return `
         <li>
           <strong>${escapeHtml(entry.food_name)}</strong>
           <span>${entry.quantity_g} g · ${entry.nutrients.calories_kcal} kcal · ${entry.nutrients.protein_g} g protein</span>
+          ${
+            editable
+              ? `<form class="proposal-entry-edit-form" data-entry-id="${entry.id}">
+                  <input name="quantity_g" type="number" step="0.1" value="${entry.quantity_g}" aria-label="Proposal quantity grams" />
+                  <select name="meal_type" aria-label="Proposal meal type">${mealOptions(entry.meal_type)}</select>
+                  <button type="submit">Update</button>
+                </form>`
+              : ""
+          }
         </li>
-      `
+      `;
+      }
     )
     .join("");
   const payloadDetails =
@@ -463,6 +475,7 @@ function renderProposal(): string {
         .map(([key, value]) => `${key}: ${String(value)}`)
         .join(" · ")
     : "no run settings";
+  const canConfirm = state.proposal.status === "draft";
   return `
     <section class="proposal">
       <div class="section-heading">
@@ -473,7 +486,7 @@ function renderProposal(): string {
         </div>
         <div class="button-row">
           <button id="reject-proposal" type="button">Reject</button>
-          <button id="confirm-proposal" class="primary-action" type="button">Confirm</button>
+          ${canConfirm ? `<button id="confirm-proposal" class="primary-action" type="button">Confirm</button>` : ""}
         </div>
       </div>
       <div class="metrics compact">
@@ -890,6 +903,9 @@ function bindEvents(): void {
     .querySelectorAll<HTMLFormElement>(".entry-edit-form")
     .forEach((form) => form.addEventListener("submit", onEntryEdit));
   document
+    .querySelectorAll<HTMLFormElement>(".proposal-entry-edit-form")
+    .forEach((form) => form.addEventListener("submit", onProposalEntryEdit));
+  document
     .querySelectorAll<HTMLButtonElement>(".entry-delete")
     .forEach((button) => button.addEventListener("click", onEntryDelete));
   document
@@ -991,6 +1007,21 @@ async function onEntryEdit(event: SubmitEvent): Promise<void> {
   state.lastDeletedEntry = null;
   state.notice = "Diary entry updated.";
   await refreshAllReadSurfaces();
+}
+
+async function onProposalEntryEdit(event: SubmitEvent): Promise<void> {
+  event.preventDefault();
+  if (!state.proposal) return;
+  const formElement = event.currentTarget as HTMLFormElement;
+  const entryId = formElement.dataset.entryId;
+  if (!entryId) return;
+  const form = new FormData(formElement);
+  state.proposal = await apiPatch<Proposal>(`/api/proposals/${state.proposal.id}/entries/${entryId}`, {
+    quantity_g: numberField(form, "quantity_g"),
+    meal_type: requiredText(form, "meal_type")
+  });
+  state.notice = "Proposal entry updated.";
+  render();
 }
 
 async function onEntryDelete(event: Event): Promise<void> {

@@ -104,6 +104,46 @@ class AgentTextMealFlowTest(unittest.TestCase):
         self.assertEqual(run.status, "needs_clarification")
         self.assertEqual(service.day_summary(person.id, date(2026, 7, 1)).totals, Nutrients())
 
+    def test_draft_text_meal_entry_can_be_edited_before_confirmation(self) -> None:
+        service = HealthMonitorService()
+        household = service.create_household(name="Casa")
+        person = service.create_person(
+            household_id=household.id,
+            name="Gabriel",
+            timezone="America/Sao_Paulo",
+        )
+        service.create_food_with_version(
+            household_id=household.id,
+            name="Queijo Minas",
+            brand=None,
+            version_label="current",
+            nutrients_per_100g=Nutrients(calories_kcal=315, protein_g=23, carbs_g=2.6, fat_g=23.5),
+            source="label_scan",
+            aliases=["queijo"],
+        )
+        proposal = service.propose_text_meal(
+            person_id=person.id,
+            logged_at_local="2026-07-01T10:00:00",
+            text="100g queijo",
+            agent_settings={"external_lookup": False},
+        )
+
+        edited = service.update_proposal_entry(
+            proposal_id=proposal.id,
+            entry_id=proposal.entries[0].id,
+            quantity_g=50,
+            meal_type="snack",
+        )
+        applied = service.confirm_proposal(edited.id)
+        summary = service.day_summary(person.id, date(2026, 7, 1))
+
+        self.assertEqual(edited.entries[0].quantity_g, 50)
+        self.assertEqual(edited.entries[0].meal_type, "snack")
+        self.assertEqual(edited.totals.rounded(), Nutrients(157.5, 11.5, 1.3, 11.75))
+        self.assertEqual(applied.applied_record_ids, (proposal.entries[0].id,))
+        self.assertEqual(summary.totals.rounded(), Nutrients(157.5, 11.5, 1.3, 11.75))
+        self.assertEqual(summary.meals["snack"][0].quantity_g, 50)
+
     def test_agent_run_and_pending_proposal_survive_restart(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "health-monitor.sqlite3"

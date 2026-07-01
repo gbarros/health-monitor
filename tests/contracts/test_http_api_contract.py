@@ -338,6 +338,65 @@ class HttpApiContractTest(unittest.TestCase):
         self.assertIn("needs clarification", rejected_apply.body["error"]["message"])
         self.assertEqual(summary["totals"]["calories_kcal"], 0)
 
+    def test_text_meal_proposal_entry_can_be_edited_through_http_contract(self) -> None:
+        api = HttpApi(HealthMonitorService())
+        household = api.handle("POST", "/api/households", {"name": "Casa"}).body
+        person = api.handle(
+            "POST",
+            "/api/people",
+            {
+                "household_id": household["id"],
+                "name": "Gabriel",
+                "timezone": "America/Sao_Paulo",
+            },
+        ).body
+        api.handle(
+            "POST",
+            "/api/foods",
+            {
+                "household_id": household["id"],
+                "name": "Queijo Minas",
+                "brand": None,
+                "version_label": "current",
+                "source": "label_scan",
+                "nutrients_per_100g": {
+                    "calories_kcal": 315,
+                    "protein_g": 23,
+                    "carbs_g": 2.6,
+                    "fat_g": 23.5,
+                },
+                "aliases": ["queijo"],
+            },
+        )
+        proposal = api.handle(
+            "POST",
+            "/api/agent/text-meal",
+            {
+                "person_id": person["id"],
+                "logged_at_local": "2026-07-01T10:00:00",
+                "text": "100g queijo",
+                "agent_settings": {"external_lookup": False},
+            },
+        ).body
+        edited = api.handle(
+            "PATCH",
+            f"/api/proposals/{proposal['id']}/entries/{proposal['entries'][0]['id']}",
+            {"quantity_g": 50, "meal_type": "snack"},
+        ).body
+        applied = api.handle("POST", f"/api/proposals/{proposal['id']}/confirm", None).body
+        summary = api.handle(
+            "GET",
+            f"/api/diary/day?person_id={person['id']}&day=2026-07-01",
+            None,
+        ).body
+
+        self.assertEqual(edited["entries"][0]["quantity_g"], 50)
+        self.assertEqual(edited["entries"][0]["meal_type"], "snack")
+        self.assertEqual(edited["totals"]["calories_kcal"], 157.5)
+        self.assertEqual(applied["status"], "applied")
+        self.assertEqual(summary["meals"]["snack"][0]["quantity_g"], 50)
+        self.assertEqual(summary["totals"]["calories_kcal"], 157.5)
+
     def test_diary_entry_correction_round_trip_through_http_contract(self) -> None:
         api = HttpApi(HealthMonitorService())
         household = api.handle("POST", "/api/households", {"name": "Casa"}).body

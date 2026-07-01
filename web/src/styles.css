@@ -229,7 +229,8 @@ td:first-child {
   gap: 2px;
 }
 
-.entry-edit-form {
+.entry-edit-form,
+.proposal-entry-edit-form {
   display: grid;
   grid-template-columns: 90px minmax(110px, 1fr) auto auto;
   gap: 8px;
@@ -246,6 +247,7 @@ td:first-child {
 }
 
 .entry-edit-form button,
+.proposal-entry-edit-form button,
 .weight-edit-form button {
   min-height: 36px;
 }
@@ -459,6 +461,7 @@ textarea {
   .grid-two,
   .payload-grid,
   .entry-edit-form,
+  .proposal-entry-edit-form,
   .weight-edit-form {
     grid-template-columns: 1fr;
   }
