@@ -819,6 +819,88 @@ class HttpApiContractTest(unittest.TestCase):
         self.assertEqual(rejected_apply.status_code, 400)
         self.assertEqual(summary["totals"]["calories_kcal"], 0)
 
+    def test_text_meal_ambiguous_food_clarification_can_be_resolved_through_http_contract(self) -> None:
+        api = HttpApi(HealthMonitorService())
+        household = api.handle("POST", "/api/households", {"name": "Casa"}).body
+        person = api.handle(
+            "POST",
+            "/api/people",
+            {
+                "household_id": household["id"],
+                "name": "Gabriel",
+                "timezone": "America/Sao_Paulo",
+            },
+        ).body
+        natural = api.handle(
+            "POST",
+            "/api/foods",
+            {
+                "household_id": household["id"],
+                "name": "Iogurte Natural",
+                "brand": "Batavo",
+                "version_label": "current",
+                "source": "label_scan",
+                "nutrients_per_100g": {
+                    "calories_kcal": 80,
+                    "protein_g": 5,
+                    "carbs_g": 7,
+                    "fat_g": 1,
+                },
+                "aliases": ["iogurte"],
+            },
+        ).body
+        protein = api.handle(
+            "POST",
+            "/api/foods",
+            {
+                "household_id": household["id"],
+                "name": "Iogurte Protein",
+                "brand": "Batavo",
+                "version_label": "current",
+                "source": "label_scan",
+                "nutrients_per_100g": {
+                    "calories_kcal": 70,
+                    "protein_g": 10,
+                    "carbs_g": 6,
+                    "fat_g": 1,
+                },
+                "aliases": ["iogurte"],
+            },
+        ).body
+        clarification = api.handle(
+            "POST",
+            "/api/agent/text-meal",
+            {
+                "person_id": person["id"],
+                "logged_at_local": "2026-07-01T10:00:00",
+                "text": "100g iogurte",
+                "agent_settings": {"external_lookup": False},
+            },
+        ).body
+
+        resolved = api.handle(
+            "POST",
+            f"/api/proposals/{clarification['id']}/resolve-food",
+            {
+                "unresolved_index": 0,
+                "food_version_id": protein["version"]["id"],
+            },
+        ).body
+        applied = api.handle("POST", f"/api/proposals/{resolved['id']}/confirm", None).body
+        summary = api.handle(
+            "GET",
+            f"/api/diary/day?person_id={person['id']}&day=2026-07-01",
+            None,
+        ).body
+
+        self.assertEqual(resolved["status"], "draft")
+        self.assertEqual(resolved["payload"]["resolved_from_proposal_id"], clarification["id"])
+        self.assertEqual(resolved["entries"][0]["food_version_id"], protein["version"]["id"])
+        self.assertNotEqual(resolved["entries"][0]["food_version_id"], natural["version"]["id"])
+        self.assertEqual(resolved["totals"]["calories_kcal"], 70)
+        self.assertEqual(applied["status"], "applied")
+        self.assertEqual(summary["totals"]["calories_kcal"], 70)
+
     def test_text_meal_proposal_entry_can_be_edited_through_http_contract(self) -> None:
         api = HttpApi(HealthMonitorService())
         household = api.handle("POST", "/api/households", {"name": "Casa"}).body

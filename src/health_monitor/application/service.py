@@ -1002,6 +1002,88 @@ class HealthMonitorService:
         self._persist()
         return updated
 
+    def resolve_text_meal_food_clarification(
+        self,
+        *,
+        proposal_id: str,
+        unresolved_index: int,
+        food_version_id: str,
+    ) -> CreateDiaryEntriesProposal:
+        proposal = self.proposals.proposals[proposal_id]
+        if proposal.status != "needs_clarification":
+            raise ValueError("only clarification proposals can be resolved")
+        unresolved_items = list(proposal.payload.get("unresolved_items", []))
+        if unresolved_index < 0 or unresolved_index >= len(unresolved_items):
+            raise ValueError("unresolved_index is out of range")
+        unresolved = dict(unresolved_items[unresolved_index])
+        candidates = [dict(item) for item in unresolved.get("candidates", [])]
+        candidate = next(
+            (item for item in candidates if str(item.get("food_version_id")) == food_version_id),
+            None,
+        )
+        if candidate is None:
+            raise ValueError("food_version_id is not a candidate for this clarification")
+        if unresolved.get("quantity_basis") not in {None, "grams"}:
+            raise ValueError("only gram-based food clarifications can be resolved here")
+
+        version = self.catalog.get_version(food_version_id)
+        food = self.catalog.foods[version.food_id]
+        logged_at = datetime.fromisoformat(str(proposal.payload["logged_at_local"]))
+        quantity_g = float(unresolved["quantity"])
+        if quantity_g <= 0:
+            raise ValueError("quantity_g must be positive")
+        entry = DiaryEntry(
+            id=self._next_id("diary_entry"),
+            person_id=proposal.person_id,
+            logged_at=logged_at,
+            meal_type=infer_meal_type(logged_at),
+            food_version_id=version.id,
+            quantity_g=quantity_g,
+            source="agent_clarification_proposal",
+        )
+        totals = version.nutrients_per_100g.scale(quantity_g / 100)
+        resolved = self.proposals.create(
+            CreateDiaryEntriesProposal(
+                id=self._next_id("proposal"),
+                person_id=proposal.person_id,
+                entries=(entry,),
+                proposal_type="diary_entries",
+                status="draft",
+                summary=f"1 diary entry drafted after clarification: {food.name}",
+                payload={
+                    "resolved_from_proposal_id": proposal.id,
+                    "raw_text": proposal.payload.get("raw_text"),
+                    "quantity_g": quantity_g,
+                    "meal_type": entry.meal_type,
+                },
+                totals=totals,
+                evidence=(
+                    {
+                        "source_type": "text_meal_clarification",
+                        "source_proposal_id": proposal.id,
+                        "phrase": unresolved.get("phrase"),
+                        "quantity_g": quantity_g,
+                        "food_version_id": version.id,
+                        "resolution_reason": "user_selected_candidate",
+                    },
+                ),
+                source_agent_run_id=proposal.source_agent_run_id,
+            )
+        )
+        if proposal.source_agent_run_id is not None and proposal.source_agent_run_id in self.agent_runs:
+            run = self.agent_runs[proposal.source_agent_run_id]
+            self.agent_runs[run.id] = AgentRun(
+                id=run.id,
+                person_id=run.person_id,
+                input_text=run.input_text,
+                settings=run.settings,
+                status="proposal_created",
+                proposal_id=resolved.id,
+                created_at=run.created_at,
+            )
+        self._persist()
+        return resolved
+
     def _proposal_entries_total(
         self,
         entries: tuple[DiaryEntry, ...],

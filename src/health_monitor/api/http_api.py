@@ -332,6 +332,15 @@ class HttpApi:
             proposal = self.service.confirm_proposal(proposal_id)
             return HttpResponse(200, proposal_to_dict(proposal, self.service))
 
+        if method == "POST" and path.startswith("/api/proposals/") and path.endswith("/resolve-food"):
+            proposal_id = path.removeprefix("/api/proposals/").removesuffix("/resolve-food")
+            proposal = self.service.resolve_text_meal_food_clarification(
+                proposal_id=proposal_id,
+                unresolved_index=int(body["unresolved_index"]),
+                food_version_id=body["food_version_id"],
+            )
+            return HttpResponse(200, proposal_to_dict(proposal, self.service))
+
         if method == "PATCH" and path.startswith("/api/proposals/") and "/entries/" in path:
             proposal_part, entry_id = path.removeprefix("/api/proposals/").split("/entries/", maxsplit=1)
             proposal = self.service.update_proposal_entry(

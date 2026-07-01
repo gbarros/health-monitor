@@ -460,6 +460,8 @@ function renderProposal(): string {
         ? renderEstimateProposalPayload(state.proposal)
       : state.proposal.proposal_type === "review_note"
         ? renderReviewNoteProposalPayload(state.proposal)
+      : state.proposal.status === "needs_clarification"
+        ? renderClarificationProposalPayload(state.proposal)
       : "";
   const evidence = state.proposal.evidence
     .map(
@@ -536,6 +538,42 @@ function renderEstimateProposalPayload(proposal: Proposal): string {
     })
     .join("");
   return `<dl class="payload-grid">${items}</dl>`;
+}
+
+function renderClarificationProposalPayload(proposal: Proposal): string {
+  const unresolvedItems = proposal.payload.unresolved_items as
+    | Array<Record<string, unknown>>
+    | undefined;
+  if (!unresolvedItems?.length) return "";
+  return unresolvedItems
+    .map((item, index) => {
+      const candidates = item.candidates as Array<Record<string, unknown>> | undefined;
+      const candidateRows = candidates
+        ?.map((candidate) => {
+          const nutrients = candidate.nutrients_per_100g as Partial<Nutrients> | undefined;
+          return `
+            <li>
+              <strong>${escapeHtml(String(candidate.food_name ?? ""))}</strong>
+              <span>${escapeHtml(String(candidate.brand ?? ""))} · ${escapeHtml(String(candidate.version_label ?? ""))}</span>
+              <span>${nutrients?.calories_kcal ?? 0} kcal · ${nutrients?.protein_g ?? 0} g protein / 100g</span>
+              <button
+                class="clarification-candidate"
+                type="button"
+                data-unresolved-index="${index}"
+                data-food-version-id="${escapeHtml(String(candidate.food_version_id ?? ""))}"
+              >Use this food</button>
+            </li>
+          `;
+        })
+        .join("");
+      return `
+        <section class="meal-band">
+          <h3>${escapeHtml(String(item.phrase ?? item.source_text ?? "Clarification"))}</h3>
+          ${candidateRows ? `<ul class="lookup-list">${candidateRows}</ul>` : `<p class="empty">No candidate choices available.</p>`}
+        </section>
+      `;
+    })
+    .join("");
 }
 
 function renderDiaryUpdateProposalPayload(proposal: Proposal): string {
@@ -961,6 +999,9 @@ function bindEvents(): void {
   document
     .querySelectorAll<HTMLButtonElement>(".lookup-propose")
     .forEach((button) => button.addEventListener("click", onLookupPropose));
+  document
+    .querySelectorAll<HTMLButtonElement>(".clarification-candidate")
+    .forEach((button) => button.addEventListener("click", onClarificationCandidate));
 }
 
 async function onSetup(event: SubmitEvent): Promise<void> {
@@ -1157,6 +1198,20 @@ async function onLookupPropose(event: Event): Promise<void> {
     candidate_id: candidateId
   });
   state.notice = "Lookup proposal drafted.";
+  render();
+}
+
+async function onClarificationCandidate(event: Event): Promise<void> {
+  if (!state.proposal) return;
+  const button = event.currentTarget as HTMLButtonElement;
+  const unresolvedIndex = Number(button.dataset.unresolvedIndex);
+  const foodVersionId = button.dataset.foodVersionId;
+  if (!foodVersionId || Number.isNaN(unresolvedIndex)) return;
+  state.proposal = await apiPost<Proposal>(`/api/proposals/${state.proposal.id}/resolve-food`, {
+    unresolved_index: unresolvedIndex,
+    food_version_id: foodVersionId
+  });
+  state.notice = "Clarification resolved. Review before applying.";
   render();
 }
 
