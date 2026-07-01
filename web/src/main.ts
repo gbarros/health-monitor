@@ -35,7 +35,7 @@ type FoodVersion = {
   nutrients_per_100g: Nutrients;
   serving_size_g: number | null;
 };
-type Food = { id: string; name: string; brand: string | null; default_version_id: string };
+type Food = { id: string; name: string; brand: string | null; default_version_id: string; archived?: boolean };
 type FoodResponse = { food: Food; version: FoodVersion };
 type QuickCustomFoodResponse = FoodResponse & { entry: DiaryEntryRecord };
 type FoodLookupCandidate = {
@@ -672,8 +672,16 @@ function renderGoalForm(): string {
 
 function renderFoodForm(): string {
   const disabled = state.household ? "" : "disabled";
-  const options = state.foods
-    .map((item) => `<option value="${item.version.id}">${escapeHtml(foodLabel(item))}</option>`)
+  const foods = state.foods
+    .map(
+      (item) => `
+        <li>
+          <strong>${escapeHtml(foodLabel(item))}</strong>
+          <span>${item.version.nutrients_per_100g.calories_kcal} kcal · ${item.version.nutrients_per_100g.protein_g} g protein / 100g</span>
+          <button class="food-archive" type="button" data-food-id="${item.food.id}">Archive</button>
+        </li>
+      `
+    )
     .join("");
   return `
     <form id="food-form" class="panel">
@@ -692,7 +700,7 @@ function renderFoodForm(): string {
       <label>Aliases <input name="aliases" value="queijo, queijo minas" ${disabled} /></label>
       <label>Barcode <input name="barcode" placeholder="optional" ${disabled} /></label>
       <button type="submit" ${disabled}>Save food</button>
-      ${options ? `<p class="hint">${state.foods.length} food version saved locally.</p>` : ""}
+      ${foods ? `<ul class="lookup-list">${foods}</ul>` : `<p class="hint">No saved food versions yet.</p>`}
     </form>
   `;
 }
@@ -937,6 +945,9 @@ function bindEvents(): void {
     .querySelectorAll<HTMLButtonElement>(".entry-delete")
     .forEach((button) => button.addEventListener("click", onEntryDelete));
   document
+    .querySelectorAll<HTMLButtonElement>(".food-archive")
+    .forEach((button) => button.addEventListener("click", onFoodArchive));
+  document
     .querySelectorAll<HTMLFormElement>(".weight-edit-form")
     .forEach((form) => form.addEventListener("submit", onWeightEdit));
   document
@@ -1113,6 +1124,18 @@ async function onFoodLookup(event: SubmitEvent): Promise<void> {
   if (phrase) params.set("phrase", phrase);
   state.lookupCandidates = await apiGet<FoodLookupCandidate[]>(`/api/lookups/foods?${params.toString()}`);
   state.notice = `${state.lookupCandidates.length} lookup candidate${state.lookupCandidates.length === 1 ? "" : "s"} found.`;
+  render();
+}
+
+async function onFoodArchive(event: Event): Promise<void> {
+  const foodId = (event.currentTarget as HTMLButtonElement).dataset.foodId;
+  if (!foodId) return;
+  if (!window.confirm("Archive this food for future logging? Historical diary entries stay unchanged.")) {
+    return;
+  }
+  await apiPost<Food>(`/api/foods/${foodId}/archive`, {});
+  state.notice = "Food archived. Historical diary entries are unchanged.";
+  await refreshFoodLibrary();
   render();
 }
 

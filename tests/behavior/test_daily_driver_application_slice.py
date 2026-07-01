@@ -201,6 +201,53 @@ class DailyDriverApplicationSliceTest(unittest.TestCase):
         self.assertEqual(summary.totals.rounded(), Nutrients(224, 5.6, 28, 9.6))
         self.assertEqual(resolved.food_version_id, version.id)
 
+    def test_archived_food_leaves_history_but_stops_future_resolution(self) -> None:
+        service = HealthMonitorService()
+        household = service.create_household(name="Casa")
+        person = service.create_person(
+            household_id=household.id,
+            name="Gabriel",
+            timezone="America/Sao_Paulo",
+        )
+        food, version = service.create_food_with_version(
+            household_id=household.id,
+            name="Iogurte antigo",
+            brand="Batavo",
+            version_label="old label",
+            nutrients_per_100g=Nutrients(calories_kcal=80, protein_g=5, carbs_g=9, fat_g=2),
+            source="label_scan",
+            aliases=["iogurte antigo"],
+            barcode="7891000000000",
+        )
+        service.log_diary_entry(
+            person_id=person.id,
+            logged_at_local="2026-07-01T10:00:00",
+            food_version_id=version.id,
+            quantity_g=100,
+            source="manual",
+        )
+
+        archived = service.archive_food(food.id)
+        summary = service.day_summary(person.id, date(2026, 7, 1))
+        listed = service.list_food_versions(household_id=household.id, person_id=person.id)
+
+        self.assertTrue(archived.archived)
+        self.assertEqual(summary.meals["breakfast"][0].food_name, "Iogurte antigo")
+        self.assertEqual(summary.totals.rounded(), Nutrients(80, 5, 9, 2))
+        self.assertEqual(listed, ())
+        with self.assertRaisesRegex(ValueError, "food reference could not be resolved"):
+            service.resolve_food_reference(
+                household_id=household.id,
+                person_id=person.id,
+                phrase="iogurte antigo",
+            )
+        with self.assertRaisesRegex(ValueError, "food reference could not be resolved"):
+            service.resolve_food_reference(
+                household_id=household.id,
+                person_id=person.id,
+                barcode="7891000000000",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

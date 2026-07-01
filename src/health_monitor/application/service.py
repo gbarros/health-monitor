@@ -519,6 +519,26 @@ class HealthMonitorService:
         )
         return any(normalized_query in value.casefold() for value in haystacks)
 
+    def archive_food(self, food_id: str) -> Food:
+        food = self.catalog.foods[food_id]
+        archived = self.catalog.archive_food(food_id)
+        for barcode, association in list(self.catalog.barcode_associations.items()):
+            if association.food_id != food.id:
+                continue
+            self.catalog.barcode_associations[barcode] = BarcodeAssociation(
+                id=association.id,
+                household_id=association.household_id,
+                barcode=association.barcode,
+                food_id=association.food_id,
+                food_version_id=association.food_version_id,
+                source=association.source,
+                confidence=association.confidence,
+                confirmed_at=association.confirmed_at,
+                archived=True,
+            )
+        self._persist()
+        return archived
+
     def _create_food_with_version(
         self,
         *,

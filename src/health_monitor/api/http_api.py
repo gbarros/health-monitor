@@ -142,6 +142,11 @@ class HttpApi:
                 {"food": food_to_dict(food), "version": food_version_to_dict(version)},
             )
 
+        if method == "POST" and path.startswith("/api/foods/") and path.endswith("/archive"):
+            food_id = path.removeprefix("/api/foods/").removesuffix("/archive")
+            food = self.service.archive_food(food_id)
+            return HttpResponse(200, food_to_dict(food))
+
         if method == "GET" and path == "/api/foods/resolve":
             resolution = self.service.resolve_food_reference(
                 household_id=query["household_id"],

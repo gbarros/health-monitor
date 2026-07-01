@@ -115,3 +115,16 @@ class FoodCatalog:
         if food.default_version_id is None:
             raise ValueError(f"food has no default version: {food_id}")
         return self.versions[food.default_version_id]
+
+    def archive_food(self, food_id: str) -> Food:
+        food = self.foods[food_id]
+        archived = Food(
+            id=food.id,
+            household_id=food.household_id,
+            name=food.name,
+            brand=food.brand,
+            default_version_id=food.default_version_id,
+            archived=True,
+        )
+        self.foods[food_id] = archived
+        return archived

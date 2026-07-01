@@ -214,6 +214,76 @@ class HttpApiContractTest(unittest.TestCase):
         self.assertEqual(filtered[0]["food"]["name"], "Iogurte Batavo")
         self.assertEqual(filtered[0]["version"]["nutrients_per_100g"]["protein_g"], 10)
 
+    def test_food_archive_hides_library_entry_but_keeps_diary_history_through_http_contract(self) -> None:
+        api = HttpApi(HealthMonitorService())
+        household = api.handle("POST", "/api/households", {"name": "Casa"}).body
+        person = api.handle(
+            "POST",
+            "/api/people",
+            {
+                "household_id": household["id"],
+                "name": "Gabriel",
+                "timezone": "America/Sao_Paulo",
+            },
+        ).body
+        food = api.handle(
+            "POST",
+            "/api/foods",
+            {
+                "household_id": household["id"],
+                "name": "Iogurte antigo",
+                "brand": "Batavo",
+                "version_label": "old label",
+                "source": "label_scan",
+                "nutrients_per_100g": {
+                    "calories_kcal": 80,
+                    "protein_g": 5,
+                    "carbs_g": 9,
+                    "fat_g": 2,
+                },
+                "aliases": ["iogurte antigo"],
+                "barcode": "7891000000000",
+            },
+        ).body
+        api.handle(
+            "POST",
+            "/api/diary",
+            {
+                "person_id": person["id"],
+                "logged_at_local": "2026-07-01T10:00:00",
+                "food_version_id": food["version"]["id"],
+                "quantity_g": 100,
+                "source": "manual",
+            },
+        )
+
+        archived = api.handle("POST", f"/api/foods/{food['food']['id']}/archive", None)
+        listed = api.handle(
+            "GET",
+            f"/api/foods?household_id={household['id']}&person_id={person['id']}",
+            None,
+        ).body
+        summary = api.handle(
+            "GET",
+            f"/api/diary/day?person_id={person['id']}&day=2026-07-01",
+            None,
+        ).body
+        resolved = api.handle(
+            "GET",
+            (
+                f"/api/foods/resolve?household_id={household['id']}"
+                f"&person_id={person['id']}&phrase=iogurte+antigo"
+            ),
+            None,
+        )
+
+        self.assertEqual(archived.status_code, 200)
+        self.assertTrue(archived.body["archived"])
+        self.assertEqual(listed, [])
+        self.assertEqual(summary["meals"]["breakfast"][0]["food_name"], "Iogurte antigo")
+        self.assertEqual(summary["totals"]["calories_kcal"], 80)
+        self.assertEqual(resolved.status_code, 400)
+
     def test_food_resolve_prefers_recently_logged_alias_through_http_contract(self) -> None:
         api = HttpApi(HealthMonitorService())
         household = api.handle("POST", "/api/households", {"name": "Casa"}).body

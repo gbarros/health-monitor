@@ -32,6 +32,9 @@ class FoodResolver:
         if best_alias is None:
             return None
 
+        food = self.catalog.foods.get(best_alias.food_id)
+        if food is None or food.archived:
+            return None
         version: FoodVersion = self.catalog.get_default_version(best_alias.food_id)
         return FoodResolution(
             food_id=best_alias.food_id,
@@ -44,10 +47,12 @@ class FoodResolver:
         association = self.catalog.resolve_barcode(barcode)
         if association is None:
             return None
+        food = self.catalog.foods.get(association.food_id)
+        if food is None or food.archived:
+            return None
         return FoodResolution(
             food_id=association.food_id,
             food_version_id=association.food_version_id,
             reason="confirmed_barcode_association",
             confidence=association.confidence,
         )
-
