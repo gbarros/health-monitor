@@ -377,7 +377,26 @@ Test candidates:
 - Import valid data into an empty database.
 - Import conflicting data and verify conflict handling.
 
-### F-015: Privacy And Deployment
+### F-015: Background Jobs And Worker
+
+Long-running or retryable app work should not require a blocking browser request.
+
+Behaviors:
+
+- B-133: The API can enqueue background jobs for agent-assisted meal logging, label scans, recipes, and chat.
+- B-134: Jobs are durable application records with type, status, payload, result, error, attempt count, and timestamps.
+- B-135: The worker processes pending jobs into structured results such as proposal IDs or agent run IDs.
+- B-136: Agent jobs still produce proposals or answers; they do not directly apply diary mutations.
+- B-137: The API can list and fetch jobs so the UI can poll progress.
+- B-138: Pending and completed jobs survive service restart.
+
+Test candidates:
+
+- Enqueue a text meal job, process it, and verify it produces a draft proposal without diary mutation.
+- Restart the service before processing a pending job and verify the worker can complete it.
+- List pending jobs by person and verify completed job result metadata.
+
+### F-016: Privacy And Deployment
 
 The app is intended for private household use on home infrastructure.
 
@@ -402,7 +421,7 @@ Test candidates:
 - Change per-run model/effort settings and verify they are stored on the agent run.
 - Emit representative API, worker, agent, proposal, and lookup events and verify the NexusLog event shape.
 
-### F-016: Food Reference Resolution
+### F-017: Food Reference Resolution
 
 The app should resolve natural user references to the correct food and food version without exposing internal version churn.
 
@@ -433,7 +452,7 @@ Test candidates:
 - Add a new label for an existing food and verify future vague references prefer the new default while old diary entries remain unchanged.
 - Verify the user-facing UI never requires choosing "v2", "v3", or similar version names as the primary label.
 
-### F-017: One-Off ChatGPT History Migration Evidence
+### F-018: One-Off ChatGPT History Migration Evidence
 
 The project should support using prior ChatGPT nutrition logs as evidence for feature design, tests, and one-off migration. This does not need to become a polished end-user import surface in the MVP.
 
@@ -454,7 +473,7 @@ Test candidates:
 - Generate agent fixture cases from real or synthetic logs without writing diary records.
 - Verify ignored raw imports are not included in source control.
 
-### F-018: Controlled Research-Agent Lookup
+### F-019: Controlled Research-Agent Lookup
 
 The app may use an external one-off research agent as a lookup source when direct food databases are insufficient.
 

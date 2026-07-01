@@ -28,6 +28,7 @@ Examples:
 - Rejected agent proposal does not create diary entries.
 - Confirmed proposal applies transactionally.
 - Natural food aliases resolve through confirmed signals.
+- Background jobs survive restart and produce proposal-gated results.
 
 ### Contract Tests
 
@@ -72,4 +73,3 @@ The project is configured so the suite can later run with pytest-xdist:
 ```bash
 PYTHONPATH=src pytest -n auto
 ```
-

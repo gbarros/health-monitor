@@ -123,6 +123,21 @@ class AgentRun:
 
 
 @dataclass(frozen=True)
+class BackgroundJob:
+    id: str
+    job_type: str
+    status: str
+    payload: dict[str, Any]
+    result: dict[str, Any] = field(default_factory=dict)
+    last_error: str | None = None
+    attempts: int = 0
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+
+
+@dataclass(frozen=True)
 class AgentChatResponse:
     run_id: str
     person_id: str
@@ -222,6 +237,7 @@ class HealthMonitorService:
         self.review_notes: dict[str, ReviewNote] = {}
         self.lookup_candidates: dict[str, FoodLookupCandidate] = {}
         self.attachments: dict[str, AttachmentObject] = {}
+        self.jobs: dict[str, BackgroundJob] = {}
         self._ids: dict[str, int] = {}
         if self.repository is not None:
             snapshot = self.repository.load()
@@ -1183,6 +1199,7 @@ class HealthMonitorService:
             "weight_entries": len(self.weights),
             "proposals": len(self.proposals.proposals),
             "agent_runs": len(self.agent_runs),
+            "jobs": len(self.jobs),
             "review_notes": len(self.review_notes),
             "attachment_objects": len(self.attachments),
         }
@@ -2509,6 +2526,159 @@ class HealthMonitorService:
     def get_agent_run(self, agent_run_id: str) -> AgentRun:
         return self.agent_runs[agent_run_id]
 
+    def enqueue_job(self, *, job_type: str, payload: dict[str, Any]) -> BackgroundJob:
+        if job_type not in {"agent_text_meal", "agent_label_scan", "agent_recipe", "agent_chat"}:
+            raise ValueError(f"unsupported job type: {job_type}")
+        job = BackgroundJob(
+            id=self._next_id("job"),
+            job_type=job_type,
+            status="pending",
+            payload=dict(payload),
+        )
+        self.jobs[job.id] = job
+        self._persist()
+        return job
+
+    def get_job(self, job_id: str) -> BackgroundJob:
+        return self.jobs[job_id]
+
+    def list_jobs(
+        self,
+        *,
+        person_id: str | None = None,
+        status: str | None = None,
+    ) -> tuple[BackgroundJob, ...]:
+        jobs = list(self.jobs.values())
+        if person_id is not None:
+            jobs = [job for job in jobs if job.payload.get("person_id") == person_id]
+        if status is not None:
+            jobs = [job for job in jobs if job.status == status]
+        jobs.sort(key=lambda job: (job.created_at, job.id))
+        return tuple(jobs)
+
+    def process_next_job(self) -> BackgroundJob | None:
+        pending = self.list_jobs(status="pending")
+        if not pending:
+            return None
+        return self.process_job(pending[0].id)
+
+    def process_job(self, job_id: str) -> BackgroundJob:
+        job = self.jobs[job_id]
+        if job.status != "pending":
+            return job
+        now = datetime.now(timezone.utc)
+        running = BackgroundJob(
+            id=job.id,
+            job_type=job.job_type,
+            status="running",
+            payload=job.payload,
+            result=job.result,
+            last_error=None,
+            attempts=job.attempts + 1,
+            created_at=job.created_at,
+            updated_at=now,
+            started_at=now,
+            completed_at=None,
+        )
+        self.jobs[job.id] = running
+        self._persist()
+        try:
+            result = self._execute_job(running)
+        except Exception as exc:
+            failed_at = datetime.now(timezone.utc)
+            failed = BackgroundJob(
+                id=running.id,
+                job_type=running.job_type,
+                status="failed",
+                payload=running.payload,
+                result=running.result,
+                last_error=str(exc),
+                attempts=running.attempts,
+                created_at=running.created_at,
+                updated_at=failed_at,
+                started_at=running.started_at,
+                completed_at=failed_at,
+            )
+            self.jobs[job.id] = failed
+            self._persist()
+            return failed
+        completed_at = datetime.now(timezone.utc)
+        succeeded = BackgroundJob(
+            id=running.id,
+            job_type=running.job_type,
+            status="succeeded",
+            payload=running.payload,
+            result=result,
+            last_error=None,
+            attempts=running.attempts,
+            created_at=running.created_at,
+            updated_at=completed_at,
+            started_at=running.started_at,
+            completed_at=completed_at,
+        )
+        self.jobs[job.id] = succeeded
+        self._persist()
+        return succeeded
+
+    def _execute_job(self, job: BackgroundJob) -> dict[str, Any]:
+        payload = dict(job.payload)
+        if job.job_type == "agent_text_meal":
+            proposal = self.propose_text_meal(
+                person_id=str(payload["person_id"]),
+                logged_at_local=str(payload["logged_at_local"]),
+                text=str(payload["text"]),
+                agent_settings=payload.get("agent_settings"),
+            )
+            return {
+                "proposal_id": proposal.id,
+                "proposal_type": proposal.proposal_type,
+                "proposal_status": proposal.status,
+            }
+        if job.job_type == "agent_label_scan":
+            proposal = self.propose_label_scan(
+                household_id=str(payload["household_id"]),
+                person_id=str(payload["person_id"]),
+                table_text=payload.get("table_text"),
+                set_as_default=bool(payload.get("set_as_default", True)),
+                attachment_id=payload.get("attachment_id"),
+                barcode=payload.get("barcode"),
+                logged_at_local=payload.get("logged_at_local"),
+                quantity_g=float(payload["quantity_g"]) if payload.get("quantity_g") is not None else None,
+                meal_type=payload.get("meal_type"),
+            )
+            return {
+                "proposal_id": proposal.id,
+                "proposal_type": proposal.proposal_type,
+                "proposal_status": proposal.status,
+            }
+        if job.job_type == "agent_recipe":
+            proposal = self.propose_recipe(
+                household_id=str(payload["household_id"]),
+                person_id=str(payload["person_id"]),
+                recipe_text=str(payload["recipe_text"]),
+                logged_at_local=payload.get("logged_at_local"),
+                quantity_g=float(payload["quantity_g"]) if payload.get("quantity_g") is not None else None,
+                meal_type=payload.get("meal_type"),
+            )
+            return {
+                "proposal_id": proposal.id,
+                "proposal_type": proposal.proposal_type,
+                "proposal_status": proposal.status,
+            }
+        if job.job_type == "agent_chat":
+            response = self.chat(
+                person_id=str(payload["person_id"]),
+                message=str(payload["message"]),
+                today=date.fromisoformat(str(payload["today"])) if payload.get("today") else date.today(),
+                agent_settings=payload.get("agent_settings"),
+            )
+            return {
+                "run_id": response.run_id,
+                "behavior_label": response.behavior_label,
+                "proposal_id": response.proposal_id,
+            }
+        raise ValueError(f"unsupported job type: {job.job_type}")
+
     def confirm_proposal(self, proposal_id: str) -> CreateDiaryEntriesProposal:
         proposal = self.proposals.proposals[proposal_id]
         if proposal.status == "rejected":
@@ -2884,6 +3054,7 @@ class HealthMonitorService:
                 self.weights,
                 self.proposals.proposals,
                 self.agent_runs,
+                self.jobs,
                 self.review_notes,
                 self.attachments,
             )
@@ -2913,6 +3084,7 @@ class HealthMonitorService:
                 proposal_to_snapshot(item) for item in self.proposals.proposals.values()
             ],
             "agent_runs": [agent_run_to_snapshot(item) for item in self.agent_runs.values()],
+            "jobs": [background_job_to_snapshot(item) for item in self.jobs.values()],
             "review_notes": [
                 review_note_to_snapshot(item) for item in self.review_notes.values()
             ],
@@ -2958,6 +3130,10 @@ class HealthMonitorService:
             self.proposals.proposals[proposal.id] = proposal
         self.agent_runs = {
             item["id"]: agent_run_from_snapshot(item) for item in snapshot.get("agent_runs", [])
+        }
+        self.jobs = {
+            item["id"]: background_job_from_snapshot(item)
+            for item in snapshot.get("jobs", [])
         }
         self.review_notes = {
             item["id"]: review_note_from_snapshot(item)
@@ -3630,6 +3806,38 @@ def agent_run_from_snapshot(value: dict[str, Any]) -> AgentRun:
         status=value["status"],
         proposal_id=value.get("proposal_id"),
         created_at=datetime.fromisoformat(value["created_at"]),
+    )
+
+
+def background_job_to_snapshot(job: BackgroundJob) -> dict[str, Any]:
+    return {
+        "id": job.id,
+        "job_type": job.job_type,
+        "status": job.status,
+        "payload": job.payload,
+        "result": job.result,
+        "last_error": job.last_error,
+        "attempts": job.attempts,
+        "created_at": job.created_at.isoformat(),
+        "updated_at": job.updated_at.isoformat(),
+        "started_at": job.started_at.isoformat() if job.started_at is not None else None,
+        "completed_at": job.completed_at.isoformat() if job.completed_at is not None else None,
+    }
+
+
+def background_job_from_snapshot(value: dict[str, Any]) -> BackgroundJob:
+    return BackgroundJob(
+        id=value["id"],
+        job_type=value["job_type"],
+        status=value["status"],
+        payload=dict(value.get("payload", {})),
+        result=dict(value.get("result", {})),
+        last_error=value.get("last_error"),
+        attempts=int(value.get("attempts", 0)),
+        created_at=datetime.fromisoformat(value["created_at"]),
+        updated_at=datetime.fromisoformat(value.get("updated_at", value["created_at"])),
+        started_at=datetime.fromisoformat(value["started_at"]) if value.get("started_at") else None,
+        completed_at=datetime.fromisoformat(value["completed_at"]) if value.get("completed_at") else None,
     )
 
 

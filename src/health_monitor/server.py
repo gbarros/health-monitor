@@ -15,6 +15,10 @@ from health_monitor.persistence.sqlite_state import SQLiteStateRepository
 
 
 def build_api() -> HttpApi:
+    return HttpApi(build_service())
+
+
+def build_service() -> HealthMonitorService:
     config = load_config()
     if config.persistence_backend == "sqlite":
         repository = SQLiteStateRepository(config.sqlite_path)
@@ -39,13 +43,11 @@ def build_api() -> HttpApi:
     elif config.label_text_extractor != "none":
         raise ValueError(f"unsupported label text extractor: {config.label_text_extractor}")
     food_lookup_provider = OpenFoodFactsLookupProvider() if config.openfoodfacts_enabled else None
-    return HttpApi(
-        HealthMonitorService(
-            repository=repository,
-            estimator=estimator,
-            food_lookup_provider=food_lookup_provider,
-            label_text_extractor=label_text_extractor,
-        )
+    return HealthMonitorService(
+        repository=repository,
+        estimator=estimator,
+        food_lookup_provider=food_lookup_provider,
+        label_text_extractor=label_text_extractor,
     )
 
 

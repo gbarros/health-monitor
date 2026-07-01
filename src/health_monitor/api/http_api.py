@@ -9,6 +9,7 @@ from urllib.parse import parse_qs, urlparse
 from health_monitor.application.service import (
     AgentChatResponse,
     AttachmentObject,
+    BackgroundJob,
     DaySummary,
     DaySummaryEntry,
     GoalProfile,
@@ -293,6 +294,30 @@ class HttpApi:
         if method == "POST" and path == "/api/imports/full":
             imported = self.service.import_data(body)
             return HttpResponse(201, {"imported": imported})
+
+        if method == "POST" and path == "/api/jobs":
+            job = self.service.enqueue_job(
+                job_type=body["job_type"],
+                payload=body.get("payload", {}),
+            )
+            return HttpResponse(201, job_to_dict(job))
+
+        if method == "GET" and path == "/api/jobs":
+            jobs = self.service.list_jobs(
+                person_id=query.get("person_id"),
+                status=query.get("status"),
+            )
+            return HttpResponse(200, [job_to_dict(job) for job in jobs])
+
+        if method == "GET" and path.startswith("/api/jobs/"):
+            job_id = path.removeprefix("/api/jobs/")
+            job = self.service.get_job(job_id)
+            return HttpResponse(200, job_to_dict(job))
+
+        if method == "POST" and path.startswith("/api/jobs/") and path.endswith("/process"):
+            job_id = path.removeprefix("/api/jobs/").removesuffix("/process")
+            job = self.service.process_job(job_id)
+            return HttpResponse(200, job_to_dict(job))
 
         if method == "POST" and path == "/api/agent/text-meal":
             proposal = self.service.propose_text_meal(
@@ -667,6 +692,22 @@ def agent_run_to_dict(
         "status": run.status,
         "proposal_id": run.proposal_id,
         "created_at": run.created_at.isoformat(),
+    }
+
+
+def job_to_dict(job: BackgroundJob) -> dict[str, Any]:
+    return {
+        "id": job.id,
+        "job_type": job.job_type,
+        "status": job.status,
+        "payload": job.payload,
+        "result": job.result,
+        "last_error": job.last_error,
+        "attempts": job.attempts,
+        "created_at": job.created_at.isoformat(),
+        "updated_at": job.updated_at.isoformat(),
+        "started_at": job.started_at.isoformat() if job.started_at is not None else None,
+        "completed_at": job.completed_at.isoformat() if job.completed_at is not None else None,
     }
 
 

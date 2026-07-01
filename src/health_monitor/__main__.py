@@ -14,13 +14,14 @@ def main() -> None:
     api_parser.add_argument("--port", default=8765, type=int)
     worker_parser = subparsers.add_parser("worker")
     worker_parser.add_argument("--interval-seconds", default=30, type=int)
+    worker_parser.add_argument("--once", action="store_true")
     args = parser.parse_args()
 
     if args.command == "api":
         run(host=args.host, port=args.port)
         return
     if args.command == "worker":
-        run_worker(interval_seconds=args.interval_seconds)
+        run_worker(interval_seconds=args.interval_seconds, once=args.once)
         return
 
     parser.print_help()
