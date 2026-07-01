@@ -438,7 +438,8 @@ function renderProposal(): string {
     state.proposal.proposal_type === "food_version_from_label" ||
     state.proposal.proposal_type === "food_version_from_lookup"
       ? renderFoodVersionProposalPayload(state.proposal)
-      : state.proposal.proposal_type === "recipe_food_version"
+      : state.proposal.proposal_type === "recipe_food_version" ||
+          state.proposal.proposal_type === "recipe_draft"
         ? renderRecipeProposalPayload(state.proposal)
       : state.proposal.proposal_type === "diary_entry_update"
         ? renderDiaryUpdateProposalPayload(state.proposal)
@@ -551,7 +552,10 @@ function renderReviewNoteProposalPayload(proposal: Proposal): string {
 
 function renderRecipeProposalPayload(proposal: Proposal): string {
   const nutrients = proposal.payload.nutrients_per_100g as Partial<Nutrients> | undefined;
+  const total = proposal.payload.nutrients_total as Partial<Nutrients> | undefined;
   const ingredients = proposal.payload.ingredients as Array<Record<string, unknown>> | undefined;
+  const missingFields = proposal.payload.missing_fields as string[] | undefined;
+  const preciseLoggingEnabled = proposal.payload.precise_logging_enabled !== false;
   const ingredientRows = ingredients
     ?.map(
       (ingredient) => `
@@ -565,10 +569,12 @@ function renderRecipeProposalPayload(proposal: Proposal): string {
   return `
     <dl class="payload-grid">
       <div><dt>Food</dt><dd>${escapeHtml(String(proposal.payload.food_name ?? ""))}</dd></div>
-      <div><dt>Yield</dt><dd>${escapeHtml(String(proposal.payload.yield_g ?? ""))} g</dd></div>
-      <div><dt>Calories / 100g</dt><dd>${nutrients?.calories_kcal ?? 0}</dd></div>
-      <div><dt>Protein / 100g</dt><dd>${nutrients?.protein_g ?? 0} g</dd></div>
+      <div><dt>Status</dt><dd>${preciseLoggingEnabled ? "Precise logging enabled" : "Draft only"}</dd></div>
+      <div><dt>Yield</dt><dd>${proposal.payload.yield_g ? `${escapeHtml(String(proposal.payload.yield_g))} g` : "Missing"}</dd></div>
+      <div><dt>Calories</dt><dd>${nutrients?.calories_kcal ?? total?.calories_kcal ?? 0}${nutrients ? " / 100g" : " total"}</dd></div>
+      <div><dt>Protein</dt><dd>${nutrients?.protein_g ?? total?.protein_g ?? 0} g${nutrients ? " / 100g" : " total"}</dd></div>
     </dl>
+    ${missingFields?.length ? `<p class="hint">Missing: ${missingFields.map(escapeHtml).join(", ")}</p>` : ""}
     ${ingredientRows ? `<ul class="evidence-list">${ingredientRows}</ul>` : ""}
   `;
 }

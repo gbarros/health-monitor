@@ -595,6 +595,54 @@ class HttpApiContractTest(unittest.TestCase):
         self.assertEqual(applied["status"], "applied")
         self.assertEqual(resolved["food_version_id"], applied["applied_record_ids"][1])
 
+    def test_recipe_missing_yield_draft_through_http_contract(self) -> None:
+        api = HttpApi(HealthMonitorService())
+        household = api.handle("POST", "/api/households", {"name": "Casa"}).body
+        person = api.handle(
+            "POST",
+            "/api/people",
+            {
+                "household_id": household["id"],
+                "name": "Gabriel",
+                "timezone": "America/Sao_Paulo",
+            },
+        ).body
+        api.handle(
+            "POST",
+            "/api/foods",
+            {
+                "household_id": household["id"],
+                "brand": None,
+                "source": "reference",
+                "name": "Queijo Minas",
+                "version_label": "current",
+                "nutrients_per_100g": {
+                    "calories_kcal": 315,
+                    "protein_g": 23,
+                    "carbs_g": 2.6,
+                    "fat_g": 23.5,
+                },
+                "aliases": ["queijo"],
+            },
+        )
+
+        proposal = api.handle(
+            "POST",
+            "/api/agent/recipe",
+            {
+                "household_id": household["id"],
+                "person_id": person["id"],
+                "recipe_text": "Recipe: No yield\nIngredients:\n500g queijo",
+            },
+        ).body
+        applied = api.handle("POST", f"/api/proposals/{proposal['id']}/confirm", None).body
+
+        self.assertEqual(proposal["proposal_type"], "recipe_draft")
+        self.assertEqual(proposal["payload"]["precise_logging_enabled"], False)
+        self.assertEqual(proposal["payload"]["missing_fields"], ["yield_g"])
+        self.assertEqual(applied["status"], "applied")
+        self.assertEqual(applied["applied_record_ids"], [])
+
     def test_unknown_food_estimate_round_trip_through_http_contract(self) -> None:
         api = HttpApi(
             HealthMonitorService(

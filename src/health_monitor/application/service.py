@@ -188,7 +188,7 @@ class ParsedRecipeIngredient:
 @dataclass(frozen=True)
 class ParsedRecipe:
     name: str
-    yield_g: float
+    yield_g: float | None
     ingredients: tuple[ParsedRecipeIngredient, ...]
 
 
@@ -1557,6 +1557,39 @@ class HealthMonitorService:
                     "nutrients": nutrients_to_snapshot(nutrients.rounded()),
                 }
             )
+        if parsed.yield_g is None:
+            payload = {
+                "household_id": household_id,
+                "food_name": parsed.name,
+                "brand": None,
+                "version_label": "recipe draft",
+                "yield_g": None,
+                "nutrients_total": nutrients_to_snapshot(total.rounded()),
+                "ingredients": ingredient_payloads,
+                "source": "recipe",
+                "precise_logging_enabled": False,
+                "missing_fields": ["yield_g"],
+            }
+            proposal = self.proposals.create(
+                CreateDiaryEntriesProposal(
+                    id=self._next_id("proposal"),
+                    person_id=person_id,
+                    entries=(),
+                    proposal_type="recipe_draft",
+                    summary=f"Recipe draft saved without yield: {parsed.name}",
+                    payload=payload,
+                    evidence=(
+                        {
+                            "source_type": "recipe_text",
+                            "raw_text": recipe_text,
+                            "ingredient_count": len(parsed.ingredients),
+                            "missing_fields": ["yield_g"],
+                        },
+                    ),
+                )
+            )
+            self._persist()
+            return proposal
         nutrients_per_100g = total.scale(100 / parsed.yield_g).rounded()
         payload = {
             "household_id": household_id,
@@ -1603,6 +1636,11 @@ class HealthMonitorService:
             return applied
         if proposal.proposal_type == "recipe_food_version":
             applied = self._apply_recipe_food_version_proposal(proposal)
+            self.proposals.proposals[proposal_id] = applied
+            self._persist()
+            return applied
+        if proposal.proposal_type == "recipe_draft":
+            applied = self._apply_recipe_draft_proposal(proposal)
             self.proposals.proposals[proposal_id] = applied
             self._persist()
             return applied
@@ -1734,6 +1772,27 @@ class HealthMonitorService:
             evidence=proposal.evidence,
             source_agent_run_id=proposal.source_agent_run_id,
             applied_record_ids=(food.id, version.id),
+            created_at=proposal.created_at,
+        )
+
+    def _apply_recipe_draft_proposal(
+        self,
+        proposal: CreateDiaryEntriesProposal,
+    ) -> CreateDiaryEntriesProposal:
+        if proposal.status == "rejected":
+            raise ValueError("cannot apply rejected proposal")
+        return CreateDiaryEntriesProposal(
+            id=proposal.id,
+            person_id=proposal.person_id,
+            entries=proposal.entries,
+            proposal_type=proposal.proposal_type,
+            status="applied",
+            summary=proposal.summary,
+            payload=proposal.payload,
+            totals=proposal.totals,
+            evidence=proposal.evidence,
+            source_agent_run_id=proposal.source_agent_run_id,
+            applied_record_ids=(),
             created_at=proposal.created_at,
         )
 
@@ -2199,9 +2258,7 @@ def parse_recipe_text(text: str) -> ParsedRecipe:
 
     if not name:
         raise ValueError("recipe is missing name")
-    if yield_g is None:
-        raise ValueError("recipe is missing yield")
-    if yield_g <= 0:
+    if yield_g is not None and yield_g <= 0:
         raise ValueError("recipe yield must be positive")
     ingredients = tuple(parse_recipe_ingredient(line) for line in ingredient_lines)
     if not ingredients:

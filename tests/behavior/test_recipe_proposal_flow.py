@@ -84,15 +84,24 @@ class RecipeProposalFlowTest(unittest.TestCase):
         self.assertEqual(len(applied.applied_record_ids), 2)
         self.assertEqual(resolution.food_version_id, applied.applied_record_ids[1])
 
-    def test_recipe_missing_yield_is_rejected_before_precise_proposal(self) -> None:
+    def test_recipe_missing_yield_creates_draft_without_reusable_food_version(self) -> None:
         service, household_id, person_id = self.make_service_with_ingredients()
 
-        with self.assertRaisesRegex(ValueError, "recipe is missing yield"):
-            service.propose_recipe(
-                household_id=household_id,
-                person_id=person_id,
-                recipe_text="Recipe: No yield\nIngredients:\n500g queijo",
-            )
+        proposal = service.propose_recipe(
+            household_id=household_id,
+            person_id=person_id,
+            recipe_text="Recipe: No yield\nIngredients:\n500g queijo",
+        )
+        applied = service.confirm_proposal(proposal.id)
+
+        self.assertEqual(proposal.proposal_type, "recipe_draft")
+        self.assertEqual(proposal.payload["food_name"], "No yield")
+        self.assertEqual(proposal.payload["yield_g"], None)
+        self.assertEqual(proposal.payload["precise_logging_enabled"], False)
+        self.assertEqual(proposal.payload["missing_fields"], ["yield_g"])
+        self.assertEqual(applied.status, "applied")
+        self.assertEqual(applied.applied_record_ids, ())
+        self.assertIsNone(service.resolver.resolve_phrase("no yield", person_id=person_id))
 
     def test_pending_recipe_proposal_survives_restart_and_can_be_confirmed(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
