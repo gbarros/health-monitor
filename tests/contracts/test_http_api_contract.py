@@ -468,6 +468,85 @@ class HttpApiContractTest(unittest.TestCase):
         self.assertEqual(len(applied["applied_record_ids"]), 3)
         self.assertEqual(resolved["food_version_id"], proposal["entries"][0]["food_version_id"])
 
+    def test_agent_chat_answer_and_correction_proposal_through_http_contract(self) -> None:
+        api = HttpApi(HealthMonitorService())
+        household = api.handle("POST", "/api/households", {"name": "Casa"}).body
+        person = api.handle(
+            "POST",
+            "/api/people",
+            {
+                "household_id": household["id"],
+                "name": "Gabriel",
+                "timezone": "America/Sao_Paulo",
+            },
+        ).body
+        food = api.handle(
+            "POST",
+            "/api/foods",
+            {
+                "household_id": household["id"],
+                "name": "Queijo Minas",
+                "brand": None,
+                "version_label": "current",
+                "source": "label_scan",
+                "nutrients_per_100g": {
+                    "calories_kcal": 315,
+                    "protein_g": 23,
+                    "carbs_g": 2.6,
+                    "fat_g": 23.5,
+                },
+                "aliases": ["queijo"],
+            },
+        ).body
+        api.handle(
+            "POST",
+            "/api/diary",
+            {
+                "person_id": person["id"],
+                "logged_at_local": "2026-07-01T10:00:00",
+                "food_version_id": food["version"]["id"],
+                "quantity_g": 100,
+                "source": "manual",
+            },
+        )
+
+        answer = api.handle(
+            "POST",
+            "/api/agent/chat",
+            {
+                "person_id": person["id"],
+                "message": "Why was 2026-07-01 high in calories?",
+                "today": "2026-07-02",
+                "agent_settings": {"model_profile": "deterministic-test"},
+            },
+        ).body
+        correction = api.handle(
+            "POST",
+            "/api/agent/chat",
+            {
+                "person_id": person["id"],
+                "message": "Change queijo on 2026-07-01 to 50g",
+                "today": "2026-07-02",
+            },
+        ).body
+        applied = api.handle(
+            "POST",
+            f"/api/proposals/{correction['proposal']['id']}/confirm",
+            None,
+        ).body
+        summary = api.handle(
+            "GET",
+            f"/api/diary/day?person_id={person['id']}&day=2026-07-01",
+            None,
+        ).body
+
+        self.assertEqual(answer["behavior_label"], "explain_day")
+        self.assertIn("Queijo Minas", answer["message"])
+        self.assertEqual(correction["behavior_label"], "draft_diary_correction")
+        self.assertEqual(correction["proposal"]["proposal_type"], "diary_entry_update")
+        self.assertEqual(applied["status"], "applied")
+        self.assertEqual(summary["totals"]["calories_kcal"], 157.5)
+
     def test_weight_trend_and_week_summary_through_http_contract(self) -> None:
         api = HttpApi(HealthMonitorService())
         household = api.handle("POST", "/api/households", {"name": "Casa"}).body

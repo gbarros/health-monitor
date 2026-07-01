@@ -6,6 +6,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from health_monitor.application.service import (
+    AgentChatResponse,
     DaySummary,
     DaySummaryEntry,
     GoalProfile,
@@ -209,6 +210,15 @@ class HttpApi:
                 recipe_text=body["recipe_text"],
             )
             return HttpResponse(201, proposal_to_dict(proposal, self.service))
+
+        if method == "POST" and path == "/api/agent/chat":
+            response = self.service.chat(
+                person_id=body["person_id"],
+                message=body["message"],
+                today=date.fromisoformat(body["today"]) if body.get("today") else date.today(),
+                agent_settings=body.get("agent_settings"),
+            )
+            return HttpResponse(201, agent_chat_response_to_dict(response, self.service))
 
         if method == "POST" and path.startswith("/api/proposals/") and path.endswith("/confirm"):
             proposal_id = path.removeprefix("/api/proposals/").removesuffix("/confirm")
@@ -430,6 +440,22 @@ def proposal_to_dict(
         "applied_record_ids": list(proposal.applied_record_ids),
         "created_at": proposal.created_at.isoformat(),
         "entries": entries,
+    }
+
+
+def agent_chat_response_to_dict(
+    response: AgentChatResponse,
+    service: HealthMonitorService,
+) -> dict[str, Any]:
+    proposal = service.get_proposal(response.proposal_id) if response.proposal_id else None
+    return {
+        "run_id": response.run_id,
+        "person_id": response.person_id,
+        "message": response.message,
+        "behavior_label": response.behavior_label,
+        "citations": list(response.citations),
+        "proposal_id": response.proposal_id,
+        "proposal": proposal_to_dict(proposal, service) if proposal is not None else None,
     }
 
 

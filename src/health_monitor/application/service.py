@@ -113,6 +113,16 @@ class AgentRun:
 
 
 @dataclass(frozen=True)
+class AgentChatResponse:
+    run_id: str
+    person_id: str
+    message: str
+    behavior_label: str
+    citations: tuple[dict[str, str], ...] = ()
+    proposal_id: str | None = None
+
+
+@dataclass(frozen=True)
 class ParsedMealItem:
     phrase: str
     quantity_g: float
@@ -583,6 +593,68 @@ class HealthMonitorService:
             weight_delta_kg=trend.delta_kg,
         )
 
+    def chat(
+        self,
+        *,
+        person_id: str,
+        message: str,
+        today: date,
+        agent_settings: dict[str, Any] | None = None,
+    ) -> AgentChatResponse:
+        settings = dict(agent_settings or {})
+        self._require_person(person_id)
+        run = AgentRun(
+            id=self._next_id("agent_run"),
+            person_id=person_id,
+            input_text=message,
+            settings=settings,
+            status="started",
+        )
+        self.agent_runs[run.id] = run
+
+        correction = parse_chat_quantity_correction(message)
+        if correction is not None:
+            response = self._chat_draft_diary_correction(
+                person_id=person_id,
+                message=message,
+                today=today,
+                run=run,
+                correction=correction,
+            )
+            self._persist()
+            return response
+
+        requested_day = parse_chat_day_reference(message, today=today)
+        if requested_day is not None:
+            response = self._chat_explain_day(
+                person_id=person_id,
+                message=message,
+                run=run,
+                day=requested_day,
+            )
+            self._persist()
+            return response
+
+        response = AgentChatResponse(
+            run_id=run.id,
+            person_id=person_id,
+            message=(
+                "I can answer diary summary questions and draft diary quantity corrections from "
+                "structured app data. I do not have enough context for that request yet."
+            ),
+            behavior_label="answer_question",
+        )
+        self.agent_runs[run.id] = AgentRun(
+            id=run.id,
+            person_id=run.person_id,
+            input_text=run.input_text,
+            settings=run.settings,
+            status="answered",
+            created_at=run.created_at,
+        )
+        self._persist()
+        return response
+
     def propose_text_meal(
         self,
         *,
@@ -710,6 +782,141 @@ class HealthMonitorService:
         self._persist()
         return proposal
 
+    def _chat_explain_day(
+        self,
+        *,
+        person_id: str,
+        message: str,
+        run: AgentRun,
+        day: date,
+    ) -> AgentChatResponse:
+        summary = self.day_summary(person_id, day)
+        entries = [entry for entries in summary.meals.values() for entry in entries]
+        if not entries:
+            answer = (
+                f"There is not enough diary data for {day.isoformat()} to explain that day. "
+                "Log meals first, or ask about a date that has entries."
+            )
+            behavior_label = "answer_question"
+            citations: tuple[dict[str, str], ...] = ()
+        else:
+            entries.sort(key=lambda entry: entry.nutrients.calories_kcal, reverse=True)
+            top = entries[0]
+            totals = summary.totals.rounded()
+            answer = (
+                f"{day.isoformat()} totals were {totals.calories_kcal} kcal, "
+                f"{totals.protein_g} g protein, {totals.carbs_g} g carbs, and "
+                f"{totals.fat_g} g fat. The biggest logged contributor was "
+                f"{top.food_name}: {top.quantity_g} g for {top.nutrients.rounded().calories_kcal} kcal. "
+                "This answer is based on deterministic diary records, not a model estimate."
+            )
+            behavior_label = "explain_day"
+            citations = tuple(
+                {"record_type": "diary_entry", "record_id": entry.id}
+                for entry in entries
+            )
+        self.agent_runs[run.id] = AgentRun(
+            id=run.id,
+            person_id=run.person_id,
+            input_text=run.input_text,
+            settings=run.settings,
+            status="answered",
+            created_at=run.created_at,
+        )
+        return AgentChatResponse(
+            run_id=run.id,
+            person_id=person_id,
+            message=answer,
+            behavior_label=behavior_label,
+            citations=citations,
+        )
+
+    def _chat_draft_diary_correction(
+        self,
+        *,
+        person_id: str,
+        message: str,
+        today: date,
+        run: AgentRun,
+        correction: dict[str, object],
+    ) -> AgentChatResponse:
+        correction_day = correction.get("day")
+        day = correction_day if isinstance(correction_day, date) else today
+        phrase = str(correction["phrase"]).casefold().strip()
+        quantity_g = float(correction["quantity_g"])
+        matches = [
+            entry
+            for entries in self.day_summary(person_id, day).meals.values()
+            for entry in entries
+            if phrase in entry.food_name.casefold()
+            or phrase in (entry.brand or "").casefold()
+        ]
+        if not matches:
+            self.agent_runs[run.id] = AgentRun(
+                id=run.id,
+                person_id=run.person_id,
+                input_text=run.input_text,
+                settings=run.settings,
+                status="answered",
+                created_at=run.created_at,
+            )
+            return AgentChatResponse(
+                run_id=run.id,
+                person_id=person_id,
+                message=(
+                    f"I could not find a diary entry matching '{phrase}' on {day.isoformat()}, "
+                    "so I did not draft a correction."
+                ),
+                behavior_label="answer_question",
+            )
+        matches.sort(key=lambda entry: entry.logged_at)
+        selected = matches[0]
+        payload = {
+            "entry_id": selected.id,
+            "quantity_g": quantity_g,
+            "previous_quantity_g": selected.quantity_g,
+            "day": day.isoformat(),
+            "food_name": selected.food_name,
+        }
+        proposal = self.proposals.create(
+            CreateDiaryEntriesProposal(
+                id=self._next_id("proposal"),
+                person_id=person_id,
+                entries=(),
+                proposal_type="diary_entry_update",
+                summary=f"Update {selected.food_name} on {day.isoformat()} to {quantity_g:g} g",
+                payload=payload,
+                evidence=(
+                    {
+                        "source_type": "agent_chat",
+                        "raw_text": message,
+                        "entry_id": selected.id,
+                    },
+                ),
+                source_agent_run_id=run.id,
+            )
+        )
+        self.agent_runs[run.id] = AgentRun(
+            id=run.id,
+            person_id=run.person_id,
+            input_text=run.input_text,
+            settings=run.settings,
+            status="proposal_created",
+            proposal_id=proposal.id,
+            created_at=run.created_at,
+        )
+        return AgentChatResponse(
+            run_id=run.id,
+            person_id=person_id,
+            message=(
+                f"I drafted a correction for {selected.food_name}: "
+                f"{selected.quantity_g:g} g -> {quantity_g:g} g. Confirm the proposal to apply it."
+            ),
+            behavior_label="draft_diary_correction",
+            citations=({"record_type": "diary_entry", "record_id": selected.id},),
+            proposal_id=proposal.id,
+        )
+
     def propose_label_scan(
         self,
         *,
@@ -833,6 +1040,11 @@ class HealthMonitorService:
             self.proposals.proposals[proposal_id] = applied
             self._persist()
             return applied
+        if proposal.proposal_type == "diary_entry_update":
+            applied = self._apply_diary_entry_update_proposal(proposal)
+            self.proposals.proposals[proposal_id] = applied
+            self._persist()
+            return applied
         if proposal.proposal_type == "diary_entries_with_estimates":
             applied = self._apply_diary_entries_with_estimates(proposal)
             self.proposals.proposals[proposal_id] = applied
@@ -943,6 +1155,36 @@ class HealthMonitorService:
             evidence=proposal.evidence,
             source_agent_run_id=proposal.source_agent_run_id,
             applied_record_ids=(food.id, version.id),
+            created_at=proposal.created_at,
+        )
+
+    def _apply_diary_entry_update_proposal(
+        self,
+        proposal: CreateDiaryEntriesProposal,
+    ) -> CreateDiaryEntriesProposal:
+        if proposal.status == "rejected":
+            raise ValueError("cannot apply rejected proposal")
+        payload = proposal.payload
+        updated = self.diary.update_entry(
+            str(payload["entry_id"]),
+            quantity_g=float(payload["quantity_g"]) if payload.get("quantity_g") is not None else None,
+            meal_type=str(payload["meal_type"]) if payload.get("meal_type") is not None else None,
+            food_version_id=str(payload["food_version_id"])
+            if payload.get("food_version_id") is not None
+            else None,
+        )
+        return CreateDiaryEntriesProposal(
+            id=proposal.id,
+            person_id=proposal.person_id,
+            entries=proposal.entries,
+            proposal_type=proposal.proposal_type,
+            status="applied",
+            summary=proposal.summary,
+            payload=proposal.payload,
+            totals=proposal.totals,
+            evidence=proposal.evidence,
+            source_agent_run_id=proposal.source_agent_run_id,
+            applied_record_ids=(updated.id,),
             created_at=proposal.created_at,
         )
 
@@ -1163,6 +1405,35 @@ def parse_text_meal_item(fragment: str) -> ParsedMealItem:
 
 def normalize_food_phrase(value: str) -> str:
     return value.strip().casefold()
+
+
+def parse_chat_day_reference(message: str, *, today: date) -> date | None:
+    dated = re.search(r"\b(\d{4}-\d{2}-\d{2})\b", message)
+    if dated is not None:
+        return date.fromisoformat(dated.group(1))
+    lowered = message.casefold()
+    if "yesterday" in lowered or "ontem" in lowered:
+        return today - timedelta(days=1)
+    if "today" in lowered or "hoje" in lowered:
+        return today
+    return None
+
+
+def parse_chat_quantity_correction(message: str) -> dict[str, object] | None:
+    match = re.search(
+        r"\b(?:change|correct|update|alterar|corrigir|mudar)\s+(.+?)\s+"
+        r"(?:on|em)\s+(\d{4}-\d{2}-\d{2})\s+"
+        r"(?:to|para)\s+(\d+(?:[,.]\d+)?)\s*g\b",
+        message,
+        re.I,
+    )
+    if match is None:
+        return None
+    return {
+        "phrase": normalize_food_phrase(match.group(1)),
+        "day": date.fromisoformat(match.group(2)),
+        "quantity_g": float(match.group(3).replace(",", ".")),
+    }
 
 
 def parse_nutrition_label_text(text: str) -> ParsedNutritionLabel:

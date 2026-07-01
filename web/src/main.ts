@@ -109,6 +109,15 @@ type Proposal = {
   } | null;
   entries: ProposalEntry[];
 };
+type AgentChatResponse = {
+  run_id: string;
+  person_id: string;
+  message: string;
+  behavior_label: string;
+  citations: Array<Record<string, string>>;
+  proposal_id: string | null;
+  proposal: Proposal | null;
+};
 
 type AppState = {
   household: Household | null;
@@ -120,6 +129,7 @@ type AppState = {
   week: WeekSummary | null;
   weightTrend: WeightTrend | null;
   proposal: Proposal | null;
+  chatResponse: AgentChatResponse | null;
   lastDeletedEntry: DiaryEntryRecord | null;
   exportText: string;
   notice: string | null;
@@ -137,6 +147,7 @@ const state: AppState = {
   week: null,
   weightTrend: null,
   proposal: null,
+  chatResponse: null,
   lastDeletedEntry: null,
   exportText: "",
   notice: null
@@ -181,6 +192,7 @@ function render(): void {
           ${renderManualLog()}
           ${renderWeightForm()}
           ${renderTextMeal()}
+          ${renderAgentChat()}
           ${renderLabelScan()}
           ${renderRecipeForm()}
           ${renderDataPortability()}
@@ -359,6 +371,8 @@ function renderProposal(): string {
       ? renderFoodVersionProposalPayload(state.proposal)
       : state.proposal.proposal_type === "recipe_food_version"
         ? renderRecipeProposalPayload(state.proposal)
+      : state.proposal.proposal_type === "diary_entry_update"
+        ? renderDiaryUpdateProposalPayload(state.proposal)
       : state.proposal.proposal_type === "diary_entries_with_estimates"
         ? renderEstimateProposalPayload(state.proposal)
       : "";
@@ -436,6 +450,17 @@ function renderEstimateProposalPayload(proposal: Proposal): string {
     })
     .join("");
   return `<dl class="payload-grid">${items}</dl>`;
+}
+
+function renderDiaryUpdateProposalPayload(proposal: Proposal): string {
+  return `
+    <dl class="payload-grid">
+      <div><dt>Food</dt><dd>${escapeHtml(String(proposal.payload.food_name ?? ""))}</dd></div>
+      <div><dt>Day</dt><dd>${escapeHtml(String(proposal.payload.day ?? ""))}</dd></div>
+      <div><dt>Previous</dt><dd>${escapeHtml(String(proposal.payload.previous_quantity_g ?? ""))} g</dd></div>
+      <div><dt>New</dt><dd>${escapeHtml(String(proposal.payload.quantity_g ?? ""))} g</dd></div>
+    </dl>
+  `;
 }
 
 function renderRecipeProposalPayload(proposal: Proposal): string {
@@ -612,6 +637,32 @@ function renderTextMeal(): string {
   `;
 }
 
+function renderAgentChat(): string {
+  const disabled = state.person ? "" : "disabled";
+  const response = state.chatResponse;
+  return `
+    <form id="agent-chat-form" class="panel">
+      <p class="eyebrow">Agent chat</p>
+      <h2>Ask / correct</h2>
+      <textarea name="message" ${disabled}>Why was 2026-07-01 high in calories?</textarea>
+      <div class="grid-two">
+        <label>Model profile <input name="model_profile" value="deterministic-local" ${disabled} /></label>
+        <label>Max loops <input name="max_tool_loops" type="number" value="4" min="1" max="12" ${disabled} /></label>
+      </div>
+      <button type="submit" ${disabled}>Send</button>
+      ${
+        response
+          ? `<section class="chat-answer">
+              <strong>${escapeHtml(response.behavior_label)}</strong>
+              <p>${escapeHtml(response.message)}</p>
+              <span>${response.citations.length} citation${response.citations.length === 1 ? "" : "s"}</span>
+            </section>`
+          : ""
+      }
+    </form>
+  `;
+}
+
 function renderLabelScan(): string {
   const disabled = state.household && state.person ? "" : "disabled";
   return `
@@ -667,6 +718,7 @@ function bindEvents(): void {
   document.querySelector<HTMLFormElement>("#manual-log-form")?.addEventListener("submit", onManualLog);
   document.querySelector<HTMLFormElement>("#weight-form")?.addEventListener("submit", onWeight);
   document.querySelector<HTMLFormElement>("#text-meal-form")?.addEventListener("submit", onTextMeal);
+  document.querySelector<HTMLFormElement>("#agent-chat-form")?.addEventListener("submit", onAgentChat);
   document.querySelector<HTMLFormElement>("#label-scan-form")?.addEventListener("submit", onLabelScan);
   document.querySelector<HTMLFormElement>("#recipe-form")?.addEventListener("submit", onRecipe);
   document.querySelector<HTMLFormElement>("#import-form")?.addEventListener("submit", onImportData);
@@ -870,6 +922,28 @@ async function onTextMeal(event: SubmitEvent): Promise<void> {
     }
   });
   state.notice = "Proposal drafted. Review before applying.";
+  render();
+}
+
+async function onAgentChat(event: SubmitEvent): Promise<void> {
+  event.preventDefault();
+  if (!state.person) return;
+  const form = new FormData(event.currentTarget as HTMLFormElement);
+  state.chatResponse = await apiPost<AgentChatResponse>("/api/agent/chat", {
+    person_id: state.person.id,
+    message: requiredText(form, "message"),
+    today,
+    agent_settings: {
+      model_profile: requiredText(form, "model_profile"),
+      max_tool_loops: numberField(form, "max_tool_loops")
+    }
+  });
+  if (state.chatResponse.proposal) {
+    state.proposal = state.chatResponse.proposal;
+    state.notice = "Chat drafted a proposal. Review before applying.";
+  } else {
+    state.notice = "Chat answered from app data.";
+  }
   render();
 }
 

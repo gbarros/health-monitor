@@ -360,6 +360,26 @@ textarea {
   margin: 3px 0 0;
 }
 
+.chat-answer {
+  border: 1px solid #d9ded5;
+  border-radius: 6px;
+  background: #f8faf7;
+  padding: 10px;
+  display: grid;
+  gap: 5px;
+}
+
+.chat-answer p {
+  color: #394139;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.chat-answer span {
+  color: #657064;
+  font-size: 13px;
+}
+
 .target-strip {
   display: flex;
   flex-wrap: wrap;
