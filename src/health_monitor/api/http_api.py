@@ -103,6 +103,16 @@ class HttpApi:
             )
             return HttpResponse(201, attachment_to_dict(attachment))
 
+        if method == "GET" and path == "/api/attachments":
+            attachments = self.service.attachments_for_record(
+                linked_record_type=query["linked_record_type"],
+                linked_record_id=query["linked_record_id"],
+            )
+            return HttpResponse(
+                200,
+                [attachment_to_dict(attachment, include_content=False) for attachment in attachments],
+            )
+
         if method == "GET" and path.startswith("/api/attachments/"):
             attachment_id = path.removeprefix("/api/attachments/")
             attachment = self.service.get_attachment(attachment_id)
@@ -396,8 +406,8 @@ def goal_profile_to_dict(goal: GoalProfile) -> dict[str, Any]:
     }
 
 
-def attachment_to_dict(attachment: AttachmentObject) -> dict[str, Any]:
-    return {
+def attachment_to_dict(attachment: AttachmentObject, *, include_content: bool = True) -> dict[str, Any]:
+    payload = {
         "id": attachment.id,
         "household_id": attachment.household_id,
         "created_by_person_id": attachment.created_by_person_id,
@@ -405,7 +415,6 @@ def attachment_to_dict(attachment: AttachmentObject) -> dict[str, Any]:
         "mime_type": attachment.mime_type,
         "byte_size": attachment.byte_size,
         "sha256": attachment.sha256,
-        "content_base64": base64.b64encode(attachment.content).decode("ascii"),
         "filename": attachment.filename,
         "storage_status": attachment.storage_status,
         "retention_policy": attachment.retention_policy,
@@ -413,6 +422,9 @@ def attachment_to_dict(attachment: AttachmentObject) -> dict[str, Any]:
         "linked_record_id": attachment.linked_record_id,
         "created_at": attachment.created_at.isoformat(),
     }
+    if include_content:
+        payload["content_base64"] = base64.b64encode(attachment.content).decode("ascii")
+    return payload
 
 
 def food_to_dict(food: Food) -> dict[str, Any]:

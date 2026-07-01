@@ -360,6 +360,24 @@ class HealthMonitorService:
     def get_attachment(self, attachment_id: str) -> AttachmentObject:
         return self.attachments[attachment_id]
 
+    def attachments_for_record(
+        self,
+        *,
+        linked_record_type: str,
+        linked_record_id: str,
+    ) -> tuple[AttachmentObject, ...]:
+        return tuple(
+            sorted(
+                (
+                    attachment
+                    for attachment in self.attachments.values()
+                    if attachment.linked_record_type == linked_record_type
+                    and attachment.linked_record_id == linked_record_id
+                ),
+                key=lambda attachment: attachment.created_at,
+            )
+        )
+
     def _link_attachment(
         self,
         attachment_id: str,
