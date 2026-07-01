@@ -24,7 +24,7 @@ services:
       LABEL_TEXT_EXTRACTOR: ${LABEL_TEXT_EXTRACTOR:-ollama}
       OPENFOODFACTS_ENABLED: ${OPENFOODFACTS_ENABLED:-true}
       CLOUD_MODEL_CALLS_ENABLED: ${CLOUD_MODEL_CALLS_ENABLED:-false}
-      PERSISTENCE_BACKEND: ${PERSISTENCE_BACKEND:-sqlite}
+      PERSISTENCE_BACKEND: ${PERSISTENCE_BACKEND:-postgres}
       SQLITE_PATH: ${SQLITE_PATH:-/app/data/health-monitor.sqlite3}
     volumes:
       - app-data:/app/data
@@ -48,7 +48,7 @@ services:
       LABEL_TEXT_EXTRACTOR: ${LABEL_TEXT_EXTRACTOR:-ollama}
       OPENFOODFACTS_ENABLED: ${OPENFOODFACTS_ENABLED:-true}
       CLOUD_MODEL_CALLS_ENABLED: ${CLOUD_MODEL_CALLS_ENABLED:-false}
-      PERSISTENCE_BACKEND: ${PERSISTENCE_BACKEND:-sqlite}
+      PERSISTENCE_BACKEND: ${PERSISTENCE_BACKEND:-postgres}
       SQLITE_PATH: ${SQLITE_PATH:-/app/data/health-monitor.sqlite3}
     volumes:
       - app-data:/app/data

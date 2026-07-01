@@ -10,14 +10,18 @@ from health_monitor.config import load_config
 from health_monitor.lookup.estimates import OllamaFoodEstimator
 from health_monitor.lookup.foods import OpenFoodFactsLookupProvider
 from health_monitor.lookup.labels import OllamaLabelTextExtractor
+from health_monitor.persistence.postgres_state import PostgresStateRepository
 from health_monitor.persistence.sqlite_state import SQLiteStateRepository
 
 
 def build_api() -> HttpApi:
     config = load_config()
-    if config.persistence_backend != "sqlite":
+    if config.persistence_backend == "sqlite":
+        repository = SQLiteStateRepository(config.sqlite_path)
+    elif config.persistence_backend == "postgres":
+        repository = PostgresStateRepository(config.database_url)
+    else:
         raise ValueError(f"unsupported persistence backend: {config.persistence_backend}")
-    repository = SQLiteStateRepository(config.sqlite_path)
     estimator = None
     if config.food_estimator == "ollama":
         estimator = OllamaFoodEstimator(

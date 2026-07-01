@@ -67,7 +67,7 @@ Run `make dev-api` in another terminal so Vite can proxy `/api/*`.
 
 ## Docker Shape
 
-The first Compose topology is present:
+The Compose topology uses Postgres as the default deployable data store:
 
 ```bash
 docker compose config
@@ -79,6 +79,6 @@ Services:
 - `web`: Vite build served by nginx, public entrypoint on `${WEB_PORT:-8080}`
 - `api`: Python API server on the internal Compose network
 - `worker`: placeholder background worker process
-- `db`: Postgres 17 volume for the upcoming durable repositories
+- `db`: Postgres 17 volume for app state and attachment blobs
 
-The current API service persists a full application snapshot to SQLite through a repository boundary. Postgres is included in the deployment shape so the next implementation slice can replace the snapshot backend with normalized Postgres repositories without changing the API/UI behavior.
+For local dependency-light development, `make dev-api` still defaults to SQLite. In Compose, `PERSISTENCE_BACKEND=postgres` stores the application snapshot in Postgres and stores attachment binary content in the `attachment_objects` table as `bytea` rows.

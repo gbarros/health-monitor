@@ -9,6 +9,7 @@ from pathlib import Path
 class AppConfig:
     persistence_backend: str = "sqlite"
     sqlite_path: Path = Path("data/local/health-monitor.sqlite3")
+    database_url: str = "postgresql://health_monitor:health_monitor@127.0.0.1:5432/health_monitor"
     log_format: str = "text"
     nexuslog_mode: str = "stdout"
     food_estimator: str = "ollama"
@@ -24,6 +25,10 @@ def load_config() -> AppConfig:
         persistence_backend=os.environ.get("PERSISTENCE_BACKEND", "sqlite"),
         sqlite_path=Path(
             os.environ.get("SQLITE_PATH", "data/local/health-monitor.sqlite3")
+        ),
+        database_url=os.environ.get(
+            "DATABASE_URL",
+            "postgresql://health_monitor:health_monitor@127.0.0.1:5432/health_monitor",
         ),
         log_format=os.environ.get("LOG_FORMAT", "text"),
         nexuslog_mode=os.environ.get("NEXUSLOG_MODE", "stdout"),
