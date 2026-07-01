@@ -107,6 +107,11 @@ h3 {
   margin: 16px 0 0;
   border-color: #83a8c8;
   color: #173b55;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .workspace {
@@ -222,6 +227,18 @@ th {
 td:first-child {
   display: grid;
   gap: 2px;
+}
+
+.entry-edit-form {
+  display: grid;
+  grid-template-columns: 90px minmax(110px, 1fr) auto auto;
+  gap: 8px;
+  margin-top: 8px;
+  align-items: center;
+}
+
+.entry-edit-form button {
+  min-height: 36px;
 }
 
 .empty {
@@ -390,7 +407,8 @@ textarea {
   .metrics,
   .side,
   .grid-two,
-  .payload-grid {
+  .payload-grid,
+  .entry-edit-form {
     grid-template-columns: 1fr;
   }
 

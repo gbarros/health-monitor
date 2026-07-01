@@ -396,6 +396,45 @@ class HealthMonitorService:
         self._persist()
         return created
 
+    def update_diary_entry(
+        self,
+        *,
+        entry_id: str,
+        logged_at_local: str | None = None,
+        food_version_id: str | None = None,
+        quantity_g: float | None = None,
+        meal_type: str | None = None,
+    ) -> DiaryEntry:
+        entry = self.diary.entries[entry_id]
+        person = self._require_person(entry.person_id)
+        logged_at = (
+            self._parse_person_datetime(logged_at_local, person)
+            if logged_at_local is not None
+            else None
+        )
+        updated = self.diary.update_entry(
+            entry_id,
+            logged_at=logged_at,
+            meal_type=meal_type,
+            food_version_id=food_version_id,
+            quantity_g=quantity_g,
+        )
+        self._persist()
+        return updated
+
+    def delete_diary_entry(self, entry_id: str) -> DiaryEntry:
+        deleted = self.diary.delete_entry(
+            entry_id,
+            deleted_at=datetime.now(timezone.utc),
+        )
+        self._persist()
+        return deleted
+
+    def restore_diary_entry(self, entry_id: str) -> DiaryEntry:
+        restored = self.diary.restore_entry(entry_id)
+        self._persist()
+        return restored
+
     def day_summary(self, person_id: str, day: date) -> DaySummary:
         self._require_person(person_id)
         meals: dict[str, list[DaySummaryEntry]] = {}
@@ -1412,6 +1451,7 @@ def diary_entry_to_snapshot(entry: DiaryEntry) -> dict[str, Any]:
         "food_version_id": entry.food_version_id,
         "quantity_g": entry.quantity_g,
         "source": entry.source,
+        "deleted_at": entry.deleted_at.isoformat() if entry.deleted_at is not None else None,
     }
 
 
@@ -1424,6 +1464,7 @@ def diary_entry_from_snapshot(value: dict[str, Any]) -> DiaryEntry:
         food_version_id=value["food_version_id"],
         quantity_g=float(value["quantity_g"]),
         source=value["source"],
+        deleted_at=datetime.fromisoformat(value["deleted_at"]) if value.get("deleted_at") else None,
     )
 
 

@@ -39,13 +39,26 @@ type Food = { id: string; name: string; brand: string | null; default_version_id
 type FoodResponse = { food: Food; version: FoodVersion };
 type SummaryEntry = {
   id: string;
+  logged_at: string;
   meal_type: string;
+  food_id: string;
+  food_version_id: string;
   food_name: string;
   brand: string | null;
   food_version_label: string;
   quantity_g: number;
   nutrients: Nutrients;
   source: string;
+};
+type DiaryEntryRecord = {
+  id: string;
+  person_id: string;
+  logged_at: string;
+  meal_type: string;
+  food_version_id: string;
+  quantity_g: number;
+  source: string;
+  deleted_at: string | null;
 };
 type DaySummary = {
   person_id: string;
@@ -107,6 +120,7 @@ type AppState = {
   week: WeekSummary | null;
   weightTrend: WeightTrend | null;
   proposal: Proposal | null;
+  lastDeletedEntry: DiaryEntryRecord | null;
   notice: string | null;
 };
 
@@ -122,6 +136,7 @@ const state: AppState = {
   week: null,
   weightTrend: null,
   proposal: null,
+  lastDeletedEntry: null,
   notice: null
 };
 
@@ -141,7 +156,15 @@ function render(): void {
         <div class="person-switch">${state.person ? escapeHtml(state.person.name) : "No profile"}</div>
       </header>
 
-      ${state.notice ? `<p class="notice">${escapeHtml(state.notice)}</p>` : ""}
+      ${
+        state.notice
+          ? `<div class="notice">${escapeHtml(state.notice)}${
+              state.lastDeletedEntry
+                ? ` <button id="undo-delete" type="button">Undo</button>`
+                : ""
+            }</div>`
+          : ""
+      }
 
       <section class="workspace">
         <div class="primary">
@@ -188,6 +211,12 @@ function renderToday(): string {
               <td>
                 <strong>${escapeHtml(entry.food_name)}</strong>
                 <span>${escapeHtml(entry.food_version_label)} · ${escapeHtml(entry.source)}</span>
+                <form class="entry-edit-form" data-entry-id="${entry.id}">
+                  <input name="quantity_g" type="number" step="0.1" value="${entry.quantity_g}" aria-label="Quantity grams" />
+                  <select name="meal_type" aria-label="Meal type">${mealOptions(entry.meal_type)}</select>
+                  <button type="submit">Update</button>
+                  <button class="entry-delete" type="button" data-entry-id="${entry.id}">Delete</button>
+                </form>
               </td>
               <td>${entry.quantity_g} g</td>
               <td>${entry.nutrients.calories_kcal} kcal</td>
@@ -630,6 +659,13 @@ function bindEvents(): void {
   document.querySelector<HTMLButtonElement>("#refresh-review")?.addEventListener("click", refreshReview);
   document.querySelector<HTMLButtonElement>("#confirm-proposal")?.addEventListener("click", confirmProposal);
   document.querySelector<HTMLButtonElement>("#reject-proposal")?.addEventListener("click", rejectProposal);
+  document.querySelector<HTMLButtonElement>("#undo-delete")?.addEventListener("click", undoLastDelete);
+  document
+    .querySelectorAll<HTMLFormElement>(".entry-edit-form")
+    .forEach((form) => form.addEventListener("submit", onEntryEdit));
+  document
+    .querySelectorAll<HTMLButtonElement>(".entry-delete")
+    .forEach((button) => button.addEventListener("click", onEntryDelete));
 }
 
 async function onSetup(event: SubmitEvent): Promise<void> {
@@ -707,6 +743,40 @@ async function onGoal(event: SubmitEvent): Promise<void> {
     notes: optionalText(form, "notes")
   });
   state.notice = "Targets saved.";
+  await refreshAllReadSurfaces();
+}
+
+async function onEntryEdit(event: SubmitEvent): Promise<void> {
+  event.preventDefault();
+  const formElement = event.currentTarget as HTMLFormElement;
+  const entryId = formElement.dataset.entryId;
+  if (!entryId) return;
+  const form = new FormData(formElement);
+  await apiPatch<DiaryEntryRecord>(`/api/diary/${entryId}`, {
+    quantity_g: numberField(form, "quantity_g"),
+    meal_type: requiredText(form, "meal_type")
+  });
+  state.lastDeletedEntry = null;
+  state.notice = "Diary entry updated.";
+  await refreshAllReadSurfaces();
+}
+
+async function onEntryDelete(event: Event): Promise<void> {
+  const entryId = (event.currentTarget as HTMLButtonElement).dataset.entryId;
+  if (!entryId) return;
+  state.lastDeletedEntry = await apiDelete<DiaryEntryRecord>(`/api/diary/${entryId}`);
+  state.notice = "Diary entry deleted.";
+  await refreshAllReadSurfaces();
+}
+
+async function undoLastDelete(): Promise<void> {
+  if (!state.lastDeletedEntry) return;
+  const restored = await apiPost<DiaryEntryRecord>(
+    `/api/diary/${state.lastDeletedEntry.id}/restore`,
+    {}
+  );
+  state.lastDeletedEntry = null;
+  state.notice = `Restored ${restored.quantity_g} g entry.`;
   await refreshAllReadSurfaces();
 }
 
@@ -940,6 +1010,20 @@ async function apiPost<T = unknown>(path: string, body: Record<string, unknown>)
   );
 }
 
+async function apiPatch<T = unknown>(path: string, body: Record<string, unknown>): Promise<T> {
+  return parseResponse<T>(
+    await fetch(path, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body)
+    })
+  );
+}
+
+async function apiDelete<T = unknown>(path: string): Promise<T> {
+  return parseResponse<T>(await fetch(path, { method: "DELETE" }));
+}
+
 async function parseResponse<T>(response: Response): Promise<T> {
   const body = await response.json();
   if (!response.ok) {
@@ -983,6 +1067,12 @@ function metric(label: string, value: string, unit: string): string {
 function foodLabel(item: FoodResponse): string {
   const brand = item.food.brand ? `${item.food.brand} ` : "";
   return `${brand}${item.food.name} · ${item.version.label}`;
+}
+
+function mealOptions(selected: string): string {
+  return ["breakfast", "lunch", "snack", "dinner", "late"]
+    .map((meal) => `<option value="${meal}" ${meal === selected ? "selected" : ""}>${titleCase(meal)}</option>`)
+    .join("");
 }
 
 function addAppliedFoodProposalToLocalLibrary(proposal: Proposal): void {

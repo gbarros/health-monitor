@@ -197,6 +197,73 @@ class HttpApiContractTest(unittest.TestCase):
         self.assertEqual(applied["status"], "applied")
         self.assertEqual(after["totals"]["calories_kcal"], 315)
 
+    def test_diary_entry_correction_round_trip_through_http_contract(self) -> None:
+        api = HttpApi(HealthMonitorService())
+        household = api.handle("POST", "/api/households", {"name": "Casa"}).body
+        person = api.handle(
+            "POST",
+            "/api/people",
+            {
+                "household_id": household["id"],
+                "name": "Gabriel",
+                "timezone": "America/Sao_Paulo",
+            },
+        ).body
+        food_response = api.handle(
+            "POST",
+            "/api/foods",
+            {
+                "household_id": household["id"],
+                "name": "Queijo Minas",
+                "brand": None,
+                "version_label": "current",
+                "source": "label_scan",
+                "nutrients_per_100g": {
+                    "calories_kcal": 315,
+                    "protein_g": 23,
+                    "carbs_g": 2.6,
+                    "fat_g": 23.5,
+                },
+                "aliases": ["queijo"],
+            },
+        ).body
+        entry = api.handle(
+            "POST",
+            "/api/diary",
+            {
+                "person_id": person["id"],
+                "logged_at_local": "2026-07-01T10:00:00",
+                "food_version_id": food_response["version"]["id"],
+                "quantity_g": 100,
+                "source": "manual",
+            },
+        ).body
+
+        updated = api.handle(
+            "PATCH",
+            f"/api/diary/{entry['id']}",
+            {"quantity_g": 50, "meal_type": "snack"},
+        ).body
+        deleted = api.handle("DELETE", f"/api/diary/{entry['id']}", None).body
+        after_delete = api.handle(
+            "GET",
+            f"/api/diary/day?person_id={person['id']}&day=2026-07-01",
+            None,
+        ).body
+        restored = api.handle("POST", f"/api/diary/{entry['id']}/restore", None).body
+        after_restore = api.handle(
+            "GET",
+            f"/api/diary/day?person_id={person['id']}&day=2026-07-01",
+            None,
+        ).body
+
+        self.assertEqual(updated["quantity_g"], 50)
+        self.assertEqual(updated["meal_type"], "snack")
+        self.assertIsNotNone(deleted["deleted_at"])
+        self.assertEqual(after_delete["totals"]["calories_kcal"], 0)
+        self.assertIsNone(restored["deleted_at"])
+        self.assertEqual(after_restore["totals"]["calories_kcal"], 157.5)
+
     def test_errors_are_json_contracts(self) -> None:
         api = HttpApi(HealthMonitorService())
 

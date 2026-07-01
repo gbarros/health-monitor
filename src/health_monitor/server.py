@@ -36,6 +36,12 @@ class HealthMonitorRequestHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         self._handle_request(self._read_json_body())
 
+    def do_PATCH(self) -> None:
+        self._handle_request(self._read_json_body())
+
+    def do_DELETE(self) -> None:
+        self._handle_request(None)
+
     def log_message(self, format: str, *args: Any) -> None:
         return
 

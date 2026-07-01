@@ -123,6 +123,27 @@ class HttpApi:
             )
             return HttpResponse(201, diary_entry_to_dict(entry))
 
+        if method == "PATCH" and path.startswith("/api/diary/"):
+            entry_id = path.removeprefix("/api/diary/")
+            entry = self.service.update_diary_entry(
+                entry_id=entry_id,
+                logged_at_local=body.get("logged_at_local"),
+                food_version_id=body.get("food_version_id"),
+                quantity_g=float(body["quantity_g"]) if body.get("quantity_g") is not None else None,
+                meal_type=body.get("meal_type"),
+            )
+            return HttpResponse(200, diary_entry_to_dict(entry))
+
+        if method == "DELETE" and path.startswith("/api/diary/"):
+            entry_id = path.removeprefix("/api/diary/")
+            entry = self.service.delete_diary_entry(entry_id)
+            return HttpResponse(200, diary_entry_to_dict(entry))
+
+        if method == "POST" and path.startswith("/api/diary/") and path.endswith("/restore"):
+            entry_id = path.removeprefix("/api/diary/").removesuffix("/restore")
+            entry = self.service.restore_diary_entry(entry_id)
+            return HttpResponse(200, diary_entry_to_dict(entry))
+
         if method == "GET" and path == "/api/diary/day":
             summary = self.service.day_summary(
                 person_id=query["person_id"],
@@ -275,6 +296,7 @@ def diary_entry_to_dict(entry: DiaryEntry) -> dict[str, Any]:
         "food_version_id": entry.food_version_id,
         "quantity_g": entry.quantity_g,
         "source": entry.source,
+        "deleted_at": entry.deleted_at.isoformat() if entry.deleted_at is not None else None,
     }
 
 
