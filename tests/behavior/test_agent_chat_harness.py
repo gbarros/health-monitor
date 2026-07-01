@@ -145,6 +145,27 @@ class AgentChatHarnessTest(unittest.TestCase):
             response.citations,
         )
 
+    def test_micronutrient_question_states_uncertainty_and_data_needed(self) -> None:
+        service, person_id, entry_id = self.make_service_with_entry()
+
+        response = service.chat(
+            person_id=person_id,
+            message="What micronutrients look consistently low this week?",
+            today=date(2026, 7, 2),
+        )
+
+        self.assertEqual(response.behavior_label, "micronutrient_analysis")
+        self.assertIn("limited", response.message.casefold())
+        self.assertIn("fiber", response.message.casefold())
+        self.assertIn("sodium", response.message.casefold())
+        self.assertIn("vitamins and minerals are not stored", response.message.casefold())
+        self.assertIn("not a diagnosis", response.message.casefold())
+        self.assertIn("attach labels", response.message.casefold())
+        self.assertIn(
+            {"record_type": "diary_entry", "record_id": entry_id},
+            response.citations,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -877,6 +877,16 @@ class HealthMonitorService:
             self._persist()
             return response
 
+        if parse_chat_micronutrient_question(message):
+            response = self._chat_analyze_micronutrients(
+                person_id=person_id,
+                message=message,
+                today=today,
+                run=run,
+            )
+            self._persist()
+            return response
+
         requested_week = parse_chat_week_reference(message, today=today)
         if requested_week is not None:
             start, end = requested_week
@@ -1177,6 +1187,81 @@ class HealthMonitorService:
                     {"record_type": "weight_entry", "record_id": entry.id}
                     for entry in trend.entries
                 ]
+            )
+        self.agent_runs[run.id] = AgentRun(
+            id=run.id,
+            person_id=run.person_id,
+            input_text=run.input_text,
+            settings=run.settings,
+            status="answered",
+            created_at=run.created_at,
+        )
+        return AgentChatResponse(
+            run_id=run.id,
+            person_id=person_id,
+            message=answer,
+            behavior_label=behavior_label,
+            citations=citations,
+        )
+
+    def _chat_analyze_micronutrients(
+        self,
+        *,
+        person_id: str,
+        message: str,
+        today: date,
+        run: AgentRun,
+    ) -> AgentChatResponse:
+        requested_week = parse_chat_week_reference(message, today=today)
+        if requested_week is not None:
+            start, end = requested_week
+        else:
+            end = today
+            start = today - timedelta(days=13)
+        current = start
+        entries: list[DaySummaryEntry] = []
+        totals = Nutrients()
+        logged_days = 0
+        while current <= end:
+            summary = self.day_summary(person_id, current)
+            day_entries = [
+                entry for meal_entries in summary.meals.values() for entry in meal_entries
+            ]
+            if day_entries:
+                logged_days += 1
+            entries.extend(day_entries)
+            totals += summary.totals
+            current += timedelta(days=1)
+        if not entries:
+            answer = (
+                f"There is not enough diary data from {start.isoformat()} to {end.isoformat()} "
+                "to analyze micronutrient patterns. Log meals with labels or reference foods first."
+            )
+            behavior_label = "answer_question"
+            citations: tuple[dict[str, str], ...] = ()
+        else:
+            rounded = totals.rounded()
+            avg_fiber = round(rounded.fiber_g / logged_days, 2) if logged_days else 0
+            avg_sodium = round(rounded.sodium_mg / logged_days, 2) if logged_days else 0
+            source_foods = sorted({entry.food_name for entry in entries})
+            food_hint = ", ".join(source_foods[:4])
+            answer = (
+                f"Micronutrient confidence is limited for {start.isoformat()} to "
+                f"{end.isoformat()}: the app currently stores macros plus fiber and sodium, "
+                "but vitamins and minerals are not stored in diary totals yet. "
+                f"From {logged_days} logged day(s), tracked fiber totals {rounded.fiber_g} g "
+                f"({avg_fiber} g/day) and tracked sodium totals {rounded.sodium_mg} mg "
+                f"({avg_sodium} mg/day). "
+                "A low or zero value can mean the label/reference did not include that field, "
+                "not necessarily that intake was truly low. "
+                f"Logged foods considered include {food_hint}. "
+                "This is not a diagnosis or treatment recommendation. To improve confidence, "
+                "attach labels, prefer food sources with micronutrient fields, and log vegetables, "
+                "fruit, dairy, supplements, and fortified foods when relevant."
+            )
+            behavior_label = "micronutrient_analysis"
+            citations = tuple(
+                {"record_type": "diary_entry", "record_id": entry.id} for entry in entries
             )
         self.agent_runs[run.id] = AgentRun(
             id=run.id,
@@ -1957,6 +2042,23 @@ def parse_chat_week_reference(message: str, *, today: date) -> tuple[date, date]
     if "last week" in lowered or "semana passada" in lowered:
         start -= timedelta(days=7)
     return start, start + timedelta(days=6)
+
+
+def parse_chat_micronutrient_question(message: str) -> bool:
+    lowered = message.casefold()
+    return any(
+        marker in lowered
+        for marker in (
+            "micronutrient",
+            "vitamin",
+            "mineral",
+            "nutrient gap",
+            "nutritional gap",
+            "nutrientes",
+            "vitamina",
+            "mineral",
+        )
+    )
 
 
 def parse_chat_quantity_correction(message: str) -> dict[str, object] | None:

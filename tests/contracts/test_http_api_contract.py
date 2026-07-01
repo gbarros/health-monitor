@@ -845,6 +845,64 @@ class HttpApiContractTest(unittest.TestCase):
         self.assertIn("472.5 kcal", response["message"])
         self.assertGreaterEqual(len(response["citations"]), 2)
 
+    def test_agent_chat_micronutrient_side_quest_through_http_contract(self) -> None:
+        api = HttpApi(HealthMonitorService())
+        household = api.handle("POST", "/api/households", {"name": "Casa"}).body
+        person = api.handle(
+            "POST",
+            "/api/people",
+            {
+                "household_id": household["id"],
+                "name": "Gabriel",
+                "timezone": "America/Sao_Paulo",
+            },
+        ).body
+        food = api.handle(
+            "POST",
+            "/api/foods",
+            {
+                "household_id": household["id"],
+                "name": "Queijo Minas",
+                "brand": None,
+                "version_label": "current",
+                "source": "label_scan",
+                "nutrients_per_100g": {
+                    "calories_kcal": 315,
+                    "protein_g": 23,
+                    "carbs_g": 2.6,
+                    "fat_g": 23.5,
+                    "fiber_g": 0,
+                    "sodium_mg": 0,
+                },
+                "aliases": ["queijo"],
+            },
+        ).body
+        api.handle(
+            "POST",
+            "/api/diary",
+            {
+                "person_id": person["id"],
+                "logged_at_local": "2026-07-01T10:00:00",
+                "food_version_id": food["version"]["id"],
+                "quantity_g": 100,
+                "source": "manual",
+            },
+        )
+
+        response = api.handle(
+            "POST",
+            "/api/agent/chat",
+            {
+                "person_id": person["id"],
+                "message": "What micronutrients look consistently low this week?",
+                "today": "2026-07-02",
+            },
+        ).body
+
+        self.assertEqual(response["behavior_label"], "micronutrient_analysis")
+        self.assertIn("vitamins and minerals are not stored", response["message"].casefold())
+        self.assertGreaterEqual(len(response["citations"]), 1)
+
     def test_weight_trend_and_week_summary_through_http_contract(self) -> None:
         api = HttpApi(HealthMonitorService())
         household = api.handle("POST", "/api/households", {"name": "Casa"}).body
