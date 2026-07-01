@@ -424,14 +424,19 @@ class HealthMonitorService:
         version_id: str | None = None,
     ) -> tuple[Food, FoodVersion]:
         self._require_household(household_id)
-        food = self.catalog.add_food(
-            Food(
-                id=food_id or self._next_id("food"),
-                household_id=household_id,
-                name=name,
-                brand=brand,
+        if food_id is not None and food_id in self.catalog.foods:
+            food = self.catalog.foods[food_id]
+            if food.household_id != household_id:
+                raise ValueError("food belongs to a different household")
+        else:
+            food = self.catalog.add_food(
+                Food(
+                    id=food_id or self._next_id("food"),
+                    household_id=household_id,
+                    name=name,
+                    brand=brand,
+                )
             )
-        )
         version = self.catalog.add_version(
             FoodVersion(
                 id=version_id or self._next_id("food_version"),
@@ -445,13 +450,10 @@ class HealthMonitorService:
         )
         food = self.catalog.foods[food.id]
         for phrase in aliases or []:
-            self.catalog.add_alias(
-                FoodAlias(
-                    id=self._next_id("food_alias"),
-                    household_id=household_id,
-                    phrase=phrase,
-                    food_id=food.id,
-                )
+            self._add_alias_if_missing(
+                household_id=household_id,
+                phrase=phrase,
+                food_id=food.id,
             )
         if barcode is not None:
             self.catalog.associate_barcode(
@@ -466,6 +468,41 @@ class HealthMonitorService:
                 )
             )
         return food, version
+
+    def _add_alias_if_missing(self, *, household_id: str, phrase: str, food_id: str) -> None:
+        normalized = phrase.casefold().strip()
+        for alias in self.catalog.aliases.values():
+            if alias.household_id != household_id:
+                continue
+            if alias.food_id != food_id:
+                continue
+            if alias.phrase.casefold().strip() == normalized:
+                return
+        self.catalog.add_alias(
+            FoodAlias(
+                id=self._next_id("food_alias"),
+                household_id=household_id,
+                phrase=phrase,
+                food_id=food_id,
+            )
+        )
+
+    def _find_food_by_name(
+        self,
+        *,
+        household_id: str,
+        name: str,
+        brand: str | None,
+    ) -> Food | None:
+        normalized_name = name.casefold().strip()
+        normalized_brand = brand.casefold().strip() if brand is not None else None
+        for food in self.catalog.foods.values():
+            if food.household_id != household_id or food.archived:
+                continue
+            food_brand = food.brand.casefold().strip() if food.brand is not None else None
+            if food.name.casefold().strip() == normalized_name and food_brand == normalized_brand:
+                return food
+        return None
 
     def resolve_food_reference(
         self,
@@ -1747,18 +1784,27 @@ class HealthMonitorService:
         if proposal.status == "rejected":
             raise ValueError("cannot apply rejected proposal")
         payload = proposal.payload
+        household_id = str(payload["household_id"])
+        food_name = str(payload["food_name"])
+        brand = payload.get("brand") if payload.get("brand") is None else str(payload["brand"])
+        existing_food = self._find_food_by_name(
+            household_id=household_id,
+            name=food_name,
+            brand=brand,
+        )
         food, version = self._create_food_with_version(
-            household_id=str(payload["household_id"]),
-            name=str(payload["food_name"]),
-            brand=payload.get("brand") if payload.get("brand") is None else str(payload["brand"]),
+            household_id=household_id,
+            name=food_name,
+            brand=brand,
             version_label=str(payload["version_label"]),
             nutrients_per_100g=nutrients_from_snapshot(
                 dict(payload["nutrients_per_100g"])
             ),
             source=str(payload.get("source", "recipe")),
-            aliases=[str(payload["food_name"]).casefold()],
+            aliases=[food_name.casefold()],
             barcode=None,
             serving_size_g=None,
+            food_id=existing_food.id if existing_food is not None else None,
         )
         return CreateDiaryEntriesProposal(
             id=proposal.id,

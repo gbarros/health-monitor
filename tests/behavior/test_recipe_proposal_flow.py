@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from datetime import date
 from pathlib import Path
 
 from health_monitor.application.service import HealthMonitorService
@@ -102,6 +103,50 @@ class RecipeProposalFlowTest(unittest.TestCase):
         self.assertEqual(applied.status, "applied")
         self.assertEqual(applied.applied_record_ids, ())
         self.assertIsNone(service.resolver.resolve_phrase("no yield", person_id=person_id))
+
+    def test_recipe_update_creates_new_default_version_without_rewriting_old_logs(self) -> None:
+        service, household_id, person_id = self.make_service_with_ingredients()
+        first = service.propose_recipe(
+            household_id=household_id,
+            person_id=person_id,
+            recipe_text=RECIPE_TEXT,
+        )
+        first_applied = service.confirm_proposal(first.id)
+        first_version_id = first_applied.applied_record_ids[1]
+        service.log_diary_entry(
+            person_id=person_id,
+            logged_at_local="2026-07-01T10:00:00",
+            food_version_id=first_version_id,
+            quantity_g=100,
+            source="manual",
+        )
+
+        second = service.propose_recipe(
+            household_id=household_id,
+            person_id=person_id,
+            recipe_text="\n".join(
+                [
+                    "Recipe: Batch breakfast mix",
+                    "Yield: 800 g",
+                    "Ingredients:",
+                    "500g queijo",
+                    "500g banana",
+                ]
+            ),
+        )
+        second_applied = service.confirm_proposal(second.id)
+        second_version_id = second_applied.applied_record_ids[1]
+        resolved = service.resolve_food_reference(
+            household_id=household_id,
+            person_id=person_id,
+            phrase="batch breakfast mix",
+        )
+        old_day = service.day_summary(person_id, date(2026, 7, 1))
+
+        self.assertEqual(second_applied.applied_record_ids[0], first_applied.applied_record_ids[0])
+        self.assertNotEqual(second_version_id, first_version_id)
+        self.assertEqual(resolved.food_version_id, second_version_id)
+        self.assertEqual(old_day.totals.rounded(), Nutrients(202, 12.05, 12.7, 11.9))
 
     def test_pending_recipe_proposal_survives_restart_and_can_be_confirmed(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
