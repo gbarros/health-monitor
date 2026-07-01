@@ -10,7 +10,24 @@ type Nutrients = {
 };
 
 type Household = { id: string; name: string };
-type Person = { id: string; household_id: string; name: string; timezone: string };
+type Person = {
+  id: string;
+  household_id: string;
+  name: string;
+  timezone: string;
+  birth_date: string | null;
+  sex: string | null;
+  height_cm: number | null;
+  activity_level: string | null;
+};
+type GoalProfile = {
+  id: string;
+  person_id: string;
+  starts_on: string;
+  ends_on: string | null;
+  targets: Nutrients;
+  notes: string | null;
+};
 type FoodVersion = {
   id: string;
   food_id: string;
@@ -34,6 +51,8 @@ type DaySummary = {
   person_id: string;
   day: string;
   totals: Nutrients;
+  target: Nutrients | null;
+  target_delta: Nutrients | null;
   meals: Record<string, SummaryEntry[]>;
 };
 type WeightEntry = {
@@ -54,6 +73,7 @@ type WeekSummary = {
   start: string;
   end: string;
   daily: Record<string, Nutrients>;
+  daily_targets: Record<string, Nutrients>;
   totals: Nutrients;
   averages: Nutrients;
   weight_delta_kg: number | null;
@@ -79,7 +99,9 @@ type Proposal = {
 
 type AppState = {
   household: Household | null;
+  people: Person[];
   person: Person | null;
+  activeGoal: GoalProfile | null;
   foods: FoodResponse[];
   summary: DaySummary | null;
   week: WeekSummary | null;
@@ -89,9 +111,12 @@ type AppState = {
 };
 
 const today = "2026-07-01";
+const sessionStorageKey = "health-monitor.session.v1";
 const state: AppState = {
   household: null,
+  people: [],
   person: null,
+  activeGoal: null,
   foods: [],
   summary: null,
   week: null,
@@ -103,6 +128,7 @@ const state: AppState = {
 const appRoot = requireAppRoot();
 
 render();
+void hydrateStoredSession();
 
 function render(): void {
   appRoot.innerHTML = `
@@ -125,6 +151,7 @@ function render(): void {
         </div>
         <aside class="side">
           ${renderSetup()}
+          ${renderGoalForm()}
           ${renderFoodForm()}
           ${renderManualLog()}
           ${renderWeightForm()}
@@ -149,6 +176,8 @@ function requireAppRoot(): HTMLDivElement {
 function renderToday(): string {
   const summary = state.summary;
   const totals = summary?.totals ?? zeroNutrients();
+  const target = summary?.target;
+  const delta = summary?.target_delta;
   const meals = summary?.meals ?? {};
   const mealSections = Object.entries(meals)
     .map(([meal, entries]) => {
@@ -194,6 +223,15 @@ function renderToday(): string {
         ${metric("Carbs", `${totals.carbs_g}`, "g")}
         ${metric("Fat", `${totals.fat_g}`, "g")}
       </div>
+      ${
+        target && delta
+          ? `<div class="target-strip">
+              <span>Target ${target.calories_kcal} kcal</span>
+              <span>${signed(delta.calories_kcal)} kcal</span>
+              <span>${signed(delta.protein_g)} g protein</span>
+            </div>`
+          : ""
+      }
       ${mealSections || `<p class="empty">No diary entries for this day yet.</p>`}
     </section>
   `;
@@ -207,15 +245,19 @@ function renderReview(): string {
   const dailyRows = week
     ? Object.entries(week.daily)
         .map(
-          ([day, nutrients]) => `
+          ([day, nutrients]) => {
+            const target = week.daily_targets[day];
+            return `
             <tr>
               <td>${escapeHtml(day)}</td>
               <td>${nutrients.calories_kcal}</td>
               <td>${nutrients.protein_g} g</td>
+              <td>${target ? `${target.calories_kcal}` : ""}</td>
               <td>${nutrients.carbs_g} g</td>
               <td>${nutrients.fat_g} g</td>
             </tr>
-          `
+          `;
+          }
         )
         .join("")
     : "";
@@ -249,7 +291,7 @@ function renderReview(): string {
       </div>
       ${
         dailyRows
-          ? `<table><thead><tr><th>Day</th><th>Calories</th><th>Protein</th><th>Carbs</th><th>Fat</th></tr></thead><tbody>${dailyRows}</tbody></table>`
+          ? `<table><thead><tr><th>Day</th><th>Calories</th><th>Protein</th><th>Target</th><th>Carbs</th><th>Fat</th></tr></thead><tbody>${dailyRows}</tbody></table>`
           : `<p class="empty">No weekly review loaded yet.</p>`
       }
       ${
@@ -390,12 +432,34 @@ function renderRecipeProposalPayload(proposal: Proposal): string {
 
 function renderSetup(): string {
   if (state.household && state.person) {
+    const options = state.people
+      .map(
+        (person) =>
+          `<option value="${person.id}" ${person.id === state.person?.id ? "selected" : ""}>${escapeHtml(person.name)}</option>`
+      )
+      .join("");
     return `
       <section class="panel">
         <p class="eyebrow">Profile</p>
         <h2>${escapeHtml(state.household.name)}</h2>
-        <p>${escapeHtml(state.person.name)} · ${escapeHtml(state.person.timezone)}</p>
+        <label>Active person <select id="profile-select">${options}</select></label>
+        <p>${escapeHtml(state.person.timezone)}${state.person.height_cm ? ` · ${state.person.height_cm} cm` : ""}</p>
       </section>
+      <form id="add-person-form" class="panel">
+        <p class="eyebrow">Household</p>
+        <h2>Add person</h2>
+        <label>Name <input name="name" /></label>
+        <label>Timezone <input name="timezone" value="${escapeHtml(state.person.timezone)}" /></label>
+        <div class="grid-two">
+          <label>Birth date <input name="birth_date" type="date" /></label>
+          <label>Height cm <input name="height_cm" type="number" step="0.1" /></label>
+        </div>
+        <div class="grid-two">
+          <label>Sex <input name="sex" /></label>
+          <label>Activity <input name="activity_level" /></label>
+        </div>
+        <button type="submit">Add profile</button>
+      </form>
     `;
   }
   return `
@@ -405,7 +469,40 @@ function renderSetup(): string {
       <label>Household <input name="household" value="Casa" /></label>
       <label>Name <input name="name" value="Gabriel" /></label>
       <label>Timezone <input name="timezone" value="America/Sao_Paulo" /></label>
+      <div class="grid-two">
+        <label>Birth date <input name="birth_date" type="date" /></label>
+        <label>Height cm <input name="height_cm" type="number" step="0.1" /></label>
+      </div>
+      <div class="grid-two">
+        <label>Sex <input name="sex" /></label>
+        <label>Activity <input name="activity_level" value="moderate" /></label>
+      </div>
+      <div class="grid-two">
+        <label>Target kcal <input name="target_calories_kcal" type="number" value="2000" /></label>
+        <label>Protein g <input name="target_protein_g" type="number" value="150" /></label>
+        <label>Carbs g <input name="target_carbs_g" type="number" value="180" /></label>
+        <label>Fat g <input name="target_fat_g" type="number" value="70" /></label>
+      </div>
       <button class="primary-action" type="submit">Create profile</button>
+    </form>
+  `;
+}
+
+function renderGoalForm(): string {
+  const disabled = state.person ? "" : "disabled";
+  return `
+    <form id="goal-form" class="panel">
+      <p class="eyebrow">Targets</p>
+      <h2>Macro plan</h2>
+      <label>Starts on <input name="starts_on" type="date" value="${today}" ${disabled} /></label>
+      <div class="grid-two">
+        <label>Calories <input name="calories_kcal" type="number" value="${state.activeGoal?.targets.calories_kcal ?? 2000}" ${disabled} /></label>
+        <label>Protein <input name="protein_g" type="number" value="${state.activeGoal?.targets.protein_g ?? 150}" ${disabled} /></label>
+        <label>Carbs <input name="carbs_g" type="number" value="${state.activeGoal?.targets.carbs_g ?? 180}" ${disabled} /></label>
+        <label>Fat <input name="fat_g" type="number" value="${state.activeGoal?.targets.fat_g ?? 70}" ${disabled} /></label>
+      </div>
+      <label>Notes <input name="notes" value="${escapeHtml(state.activeGoal?.notes ?? "")}" ${disabled} /></label>
+      <button type="submit" ${disabled}>Save targets</button>
     </form>
   `;
 }
@@ -520,12 +617,15 @@ Ingredients:
 
 function bindEvents(): void {
   document.querySelector<HTMLFormElement>("#setup-form")?.addEventListener("submit", onSetup);
+  document.querySelector<HTMLFormElement>("#add-person-form")?.addEventListener("submit", onAddPerson);
+  document.querySelector<HTMLFormElement>("#goal-form")?.addEventListener("submit", onGoal);
   document.querySelector<HTMLFormElement>("#food-form")?.addEventListener("submit", onFood);
   document.querySelector<HTMLFormElement>("#manual-log-form")?.addEventListener("submit", onManualLog);
   document.querySelector<HTMLFormElement>("#weight-form")?.addEventListener("submit", onWeight);
   document.querySelector<HTMLFormElement>("#text-meal-form")?.addEventListener("submit", onTextMeal);
   document.querySelector<HTMLFormElement>("#label-scan-form")?.addEventListener("submit", onLabelScan);
   document.querySelector<HTMLFormElement>("#recipe-form")?.addEventListener("submit", onRecipe);
+  document.querySelector<HTMLSelectElement>("#profile-select")?.addEventListener("change", onProfileSelect);
   document.querySelector<HTMLButtonElement>("#refresh-summary")?.addEventListener("click", refreshSummary);
   document.querySelector<HTMLButtonElement>("#refresh-review")?.addEventListener("click", refreshReview);
   document.querySelector<HTMLButtonElement>("#confirm-proposal")?.addEventListener("click", confirmProposal);
@@ -539,11 +639,74 @@ async function onSetup(event: SubmitEvent): Promise<void> {
   const person = await apiPost<Person>("/api/people", {
     household_id: household.id,
     name: requiredText(form, "name"),
-    timezone: requiredText(form, "timezone")
+    timezone: requiredText(form, "timezone"),
+    birth_date: optionalText(form, "birth_date"),
+    sex: optionalText(form, "sex"),
+    height_cm: optionalNumber(form, "height_cm"),
+    activity_level: optionalText(form, "activity_level")
+  });
+  const goal = await createGoalFromFields(person.id, {
+    starts_on: today,
+    calories_kcal: numberField(form, "target_calories_kcal"),
+    protein_g: numberField(form, "target_protein_g"),
+    carbs_g: numberField(form, "target_carbs_g"),
+    fat_g: numberField(form, "target_fat_g"),
+    notes: "initial plan"
   });
   state.household = household;
+  state.people = [person];
   state.person = person;
+  state.activeGoal = goal;
+  saveSession();
   state.notice = "Profile created.";
+  await refreshAllReadSurfaces();
+}
+
+async function onAddPerson(event: SubmitEvent): Promise<void> {
+  event.preventDefault();
+  if (!state.household) return;
+  const form = new FormData(event.currentTarget as HTMLFormElement);
+  const person = await apiPost<Person>("/api/people", {
+    household_id: state.household.id,
+    name: requiredText(form, "name"),
+    timezone: requiredText(form, "timezone"),
+    birth_date: optionalText(form, "birth_date"),
+    sex: optionalText(form, "sex"),
+    height_cm: optionalNumber(form, "height_cm"),
+    activity_level: optionalText(form, "activity_level")
+  });
+  state.people = [...state.people, person];
+  state.person = person;
+  state.activeGoal = null;
+  saveSession();
+  state.notice = `${person.name} added.`;
+  await refreshAllReadSurfaces();
+}
+
+async function onProfileSelect(event: Event): Promise<void> {
+  const selectedId = (event.currentTarget as HTMLSelectElement).value;
+  const selected = state.people.find((person) => person.id === selectedId);
+  if (!selected) return;
+  state.person = selected;
+  state.proposal = null;
+  saveSession();
+  state.notice = `Switched to ${selected.name}.`;
+  await refreshAllReadSurfaces();
+}
+
+async function onGoal(event: SubmitEvent): Promise<void> {
+  event.preventDefault();
+  if (!state.person) return;
+  const form = new FormData(event.currentTarget as HTMLFormElement);
+  state.activeGoal = await createGoalFromFields(state.person.id, {
+    starts_on: requiredText(form, "starts_on"),
+    calories_kcal: numberField(form, "calories_kcal"),
+    protein_g: numberField(form, "protein_g"),
+    carbs_g: numberField(form, "carbs_g"),
+    fat_g: numberField(form, "fat_g"),
+    notes: optionalText(form, "notes")
+  });
+  state.notice = "Targets saved.";
   await refreshAllReadSurfaces();
 }
 
@@ -676,6 +839,7 @@ async function refreshSummary(): Promise<void> {
     return;
   }
   state.summary = await apiGet<DaySummary>(`/api/diary/day?person_id=${state.person.id}&day=${today}`);
+  state.activeGoal = await fetchActiveGoal(state.person.id, today);
   render();
 }
 
@@ -685,6 +849,7 @@ async function refreshReview(): Promise<void> {
     return;
   }
   state.weightTrend = await apiGet<WeightTrend>(`/api/weights/trend?person_id=${state.person.id}`);
+  state.activeGoal = await fetchActiveGoal(state.person.id, today);
   state.week = await apiGet<WeekSummary>(
     `/api/summaries/week?person_id=${state.person.id}&start=2026-07-01&end=2026-07-07`
   );
@@ -698,10 +863,67 @@ async function refreshAllReadSurfaces(): Promise<void> {
   }
   state.summary = await apiGet<DaySummary>(`/api/diary/day?person_id=${state.person.id}&day=${today}`);
   state.weightTrend = await apiGet<WeightTrend>(`/api/weights/trend?person_id=${state.person.id}`);
+  state.activeGoal = await fetchActiveGoal(state.person.id, today);
   state.week = await apiGet<WeekSummary>(
     `/api/summaries/week?person_id=${state.person.id}&start=2026-07-01&end=2026-07-07`
   );
   render();
+}
+
+async function hydrateStoredSession(): Promise<void> {
+  const raw = localStorage.getItem(sessionStorageKey);
+  if (!raw) return;
+  try {
+    const saved = JSON.parse(raw) as { household: Household; person_id: string | null };
+    state.household = saved.household;
+    state.people = await apiGet<Person[]>(`/api/people?household_id=${saved.household.id}`);
+    state.person =
+      state.people.find((person) => person.id === saved.person_id) ?? state.people[0] ?? null;
+    if (state.person) {
+      await refreshAllReadSurfaces();
+      return;
+    }
+  } catch {
+    localStorage.removeItem(sessionStorageKey);
+  }
+  render();
+}
+
+function saveSession(): void {
+  if (!state.household) return;
+  localStorage.setItem(
+    sessionStorageKey,
+    JSON.stringify({ household: state.household, person_id: state.person?.id ?? null })
+  );
+}
+
+async function fetchActiveGoal(personId: string, day: string): Promise<GoalProfile | null> {
+  const goal = await apiGet<Partial<GoalProfile>>(`/api/goals/active?person_id=${personId}&day=${day}`);
+  return goal.id ? (goal as GoalProfile) : null;
+}
+
+async function createGoalFromFields(
+  personId: string,
+  fields: {
+    starts_on: string;
+    calories_kcal: number;
+    protein_g: number;
+    carbs_g: number;
+    fat_g: number;
+    notes: string | null;
+  }
+): Promise<GoalProfile> {
+  return apiPost<GoalProfile>("/api/goals", {
+    person_id: personId,
+    starts_on: fields.starts_on,
+    targets: {
+      calories_kcal: fields.calories_kcal,
+      protein_g: fields.protein_g,
+      carbs_g: fields.carbs_g,
+      fat_g: fields.fat_g
+    },
+    notes: fields.notes
+  });
 }
 
 async function apiGet<T>(path: string): Promise<T> {
@@ -797,6 +1019,10 @@ function zeroNutrients(): Nutrients {
 
 function titleCase(value: string): string {
   return value.slice(0, 1).toUpperCase() + value.slice(1);
+}
+
+function signed(value: number): string {
+  return value > 0 ? `+${value}` : `${value}`;
 }
 
 function escapeHtml(value: string): string {

@@ -24,7 +24,7 @@ select {
 }
 
 button {
-  min-height: 38px;
+  min-height: 44px;
   border: 1px solid #b8c0b4;
   border-radius: 6px;
   background: #ffffff;
@@ -300,7 +300,7 @@ input,
 select,
 textarea {
   width: 100%;
-  min-height: 38px;
+  min-height: 44px;
   border: 1px solid #cbd3c8;
   border-radius: 6px;
   color: #1e2420;
@@ -341,6 +341,23 @@ textarea {
 
 .payload-grid dd {
   margin: 3px 0 0;
+}
+
+.target-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: -4px 0 16px;
+}
+
+.target-strip span {
+  border: 1px solid #cbd3c8;
+  border-radius: 6px;
+  background: #f8faf7;
+  color: #394139;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 7px 10px;
 }
 
 .grid-two {

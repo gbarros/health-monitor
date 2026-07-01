@@ -66,6 +66,70 @@ class HttpApiContractTest(unittest.TestCase):
         self.assertEqual(summary["totals"]["protein_g"], 15)
         self.assertEqual(summary["meals"]["breakfast"][0]["food_name"], "Iogurte Batavo")
 
+    def test_people_and_goal_targets_through_http_contract(self) -> None:
+        api = HttpApi(HealthMonitorService())
+        household = api.handle("POST", "/api/households", {"name": "Casa"}).body
+        gabriel = api.handle(
+            "POST",
+            "/api/people",
+            {
+                "household_id": household["id"],
+                "name": "Gabriel",
+                "timezone": "America/Sao_Paulo",
+                "birth_date": "1990-05-04",
+                "sex": "male",
+                "height_cm": 180,
+                "activity_level": "moderate",
+            },
+        ).body
+        partner = api.handle(
+            "POST",
+            "/api/people",
+            {
+                "household_id": household["id"],
+                "name": "Partner",
+                "timezone": "America/Sao_Paulo",
+                "birth_date": "1992-08-10",
+                "sex": "female",
+                "height_cm": 165,
+                "activity_level": "light",
+            },
+        ).body
+        target = api.handle(
+            "POST",
+            "/api/goals",
+            {
+                "person_id": gabriel["id"],
+                "starts_on": "2026-07-01",
+                "targets": {
+                    "calories_kcal": 2000,
+                    "protein_g": 150,
+                    "carbs_g": 180,
+                    "fat_g": 70,
+                },
+                "notes": "initial plan",
+            },
+        ).body
+
+        people = api.handle("GET", f"/api/people?household_id={household['id']}", None).body
+        active_target = api.handle(
+            "GET",
+            f"/api/goals/active?person_id={gabriel['id']}&day=2026-07-01",
+            None,
+        ).body
+        summary = api.handle(
+            "GET",
+            f"/api/diary/day?person_id={gabriel['id']}&day=2026-07-01",
+            None,
+        ).body
+
+        self.assertEqual([person["name"] for person in people], ["Gabriel", "Partner"])
+        self.assertEqual(partner["height_cm"], 165)
+        self.assertEqual(target["targets"]["protein_g"], 150)
+        self.assertEqual(active_target["id"], target["id"])
+        self.assertEqual(summary["target"]["calories_kcal"], 2000)
+        self.assertEqual(summary["target_delta"]["calories_kcal"], -2000)
+
     def test_text_meal_proposal_round_trip_through_http_contract(self) -> None:
         api = HttpApi(HealthMonitorService())
         household = api.handle("POST", "/api/households", {"name": "Casa"}).body

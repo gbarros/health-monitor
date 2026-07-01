@@ -8,6 +8,7 @@ from urllib.parse import parse_qs, urlparse
 from health_monitor.application.service import (
     DaySummary,
     DaySummaryEntry,
+    GoalProfile,
     HealthMonitorService,
     Household,
     Person,
@@ -58,8 +59,32 @@ class HttpApi:
                 household_id=body["household_id"],
                 name=body["name"],
                 timezone=body["timezone"],
+                birth_date=date.fromisoformat(body["birth_date"]) if body.get("birth_date") else None,
+                sex=body.get("sex"),
+                height_cm=body.get("height_cm"),
+                activity_level=body.get("activity_level"),
             )
             return HttpResponse(201, person_to_dict(person))
+
+        if method == "GET" and path == "/api/people":
+            people = self.service.people_for_household(query["household_id"])
+            return HttpResponse(200, [person_to_dict(person) for person in people])
+
+        if method == "POST" and path == "/api/goals":
+            goal = self.service.create_goal_profile(
+                person_id=body["person_id"],
+                starts_on=date.fromisoformat(body["starts_on"]),
+                targets=nutrients_from_dict(body["targets"]),
+                notes=body.get("notes"),
+            )
+            return HttpResponse(201, goal_profile_to_dict(goal))
+
+        if method == "GET" and path == "/api/goals/active":
+            goal = self.service.active_goal_profile(
+                person_id=query["person_id"],
+                day=date.fromisoformat(query["day"]),
+            )
+            return HttpResponse(200, goal_profile_to_dict(goal) if goal is not None else {})
 
         if method == "POST" and path == "/api/foods":
             food, version = self.service.create_food_with_version(
@@ -187,7 +212,23 @@ def person_to_dict(person: Person) -> dict[str, Any]:
         "household_id": person.household_id,
         "name": person.name,
         "timezone": person.timezone,
+        "birth_date": person.birth_date.isoformat() if person.birth_date is not None else None,
+        "sex": person.sex,
+        "height_cm": person.height_cm,
+        "activity_level": person.activity_level,
         "created_at": person.created_at.isoformat(),
+    }
+
+
+def goal_profile_to_dict(goal: GoalProfile) -> dict[str, Any]:
+    return {
+        "id": goal.id,
+        "person_id": goal.person_id,
+        "starts_on": goal.starts_on.isoformat(),
+        "ends_on": goal.ends_on.isoformat() if goal.ends_on is not None else None,
+        "targets": nutrients_to_dict(goal.targets),
+        "notes": goal.notes,
+        "created_at": goal.created_at.isoformat(),
     }
 
 
@@ -242,6 +283,10 @@ def day_summary_to_dict(summary: DaySummary) -> dict[str, Any]:
         "person_id": summary.person_id,
         "day": summary.day.isoformat(),
         "totals": nutrients_to_dict(summary.totals.rounded()),
+        "target": nutrients_to_dict(summary.target) if summary.target is not None else None,
+        "target_delta": nutrients_to_dict(summary.target_delta.rounded())
+        if summary.target_delta is not None
+        else None,
         "meals": {
             meal_type: [day_summary_entry_to_dict(entry) for entry in entries]
             for meal_type, entries in summary.meals.items()
@@ -293,6 +338,10 @@ def week_summary_to_dict(summary: WeekSummary) -> dict[str, Any]:
         "daily": {
             day.isoformat(): nutrients_to_dict(nutrients.rounded())
             for day, nutrients in summary.daily.items()
+        },
+        "daily_targets": {
+            day.isoformat(): nutrients_to_dict(nutrients)
+            for day, nutrients in summary.daily_targets.items()
         },
         "totals": nutrients_to_dict(summary.totals.rounded()),
         "averages": nutrients_to_dict(summary.averages.rounded()),

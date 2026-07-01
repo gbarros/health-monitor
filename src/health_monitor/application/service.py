@@ -28,6 +28,21 @@ class Person:
     household_id: str
     name: str
     timezone: str
+    birth_date: date | None = None
+    sex: str | None = None
+    height_cm: float | None = None
+    activity_level: str | None = None
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+@dataclass(frozen=True)
+class GoalProfile:
+    id: str
+    person_id: str
+    starts_on: date
+    targets: Nutrients
+    notes: str | None = None
+    ends_on: date | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -52,6 +67,8 @@ class DaySummary:
     day: date
     totals: Nutrients
     meals: dict[str, list[DaySummaryEntry]]
+    target: Nutrients | None = None
+    target_delta: Nutrients | None = None
 
 
 @dataclass(frozen=True)
@@ -78,6 +95,7 @@ class WeekSummary:
     start: date
     end: date
     daily: dict[date, Nutrients]
+    daily_targets: dict[date, Nutrients]
     totals: Nutrients
     averages: Nutrients
     weight_delta_kg: float | None
@@ -136,6 +154,7 @@ class HealthMonitorService:
         self.estimator = estimator
         self.households: dict[str, Household] = {}
         self.people: dict[str, Person] = {}
+        self.goal_profiles: dict[str, GoalProfile] = {}
         self.catalog = FoodCatalog()
         self.diary = Diary(self.catalog)
         self.weights: dict[str, WeightEntry] = {}
@@ -154,7 +173,17 @@ class HealthMonitorService:
         self._persist()
         return household
 
-    def create_person(self, *, household_id: str, name: str, timezone: str) -> Person:
+    def create_person(
+        self,
+        *,
+        household_id: str,
+        name: str,
+        timezone: str,
+        birth_date: date | None = None,
+        sex: str | None = None,
+        height_cm: float | None = None,
+        activity_level: str | None = None,
+    ) -> Person:
         self._require_household(household_id)
         ZoneInfo(timezone)
         person = Person(
@@ -162,10 +191,77 @@ class HealthMonitorService:
             household_id=household_id,
             name=name,
             timezone=timezone,
+            birth_date=birth_date,
+            sex=sex,
+            height_cm=float(height_cm) if height_cm is not None else None,
+            activity_level=activity_level,
         )
         self.people[person.id] = person
         self._persist()
         return person
+
+    def people_for_household(self, household_id: str) -> tuple[Person, ...]:
+        self._require_household(household_id)
+        people = [person for person in self.people.values() if person.household_id == household_id]
+        people.sort(key=lambda person: person.created_at)
+        return tuple(people)
+
+    def create_goal_profile(
+        self,
+        *,
+        person_id: str,
+        starts_on: date,
+        targets: Nutrients,
+        notes: str | None = None,
+    ) -> GoalProfile:
+        self._require_person(person_id)
+        if targets.calories_kcal <= 0:
+            raise ValueError("daily calorie target must be positive")
+        updated_profiles: dict[str, GoalProfile] = {}
+        previous_day = starts_on - timedelta(days=1)
+        for profile in self.goal_profiles.values():
+            if profile.person_id != person_id:
+                updated_profiles[profile.id] = profile
+                continue
+            if profile.starts_on < starts_on and (
+                profile.ends_on is None or profile.ends_on >= starts_on
+            ):
+                updated_profiles[profile.id] = GoalProfile(
+                    id=profile.id,
+                    person_id=profile.person_id,
+                    starts_on=profile.starts_on,
+                    targets=profile.targets,
+                    notes=profile.notes,
+                    ends_on=previous_day,
+                    created_at=profile.created_at,
+                )
+            else:
+                updated_profiles[profile.id] = profile
+        self.goal_profiles = updated_profiles
+        profile = GoalProfile(
+            id=self._next_id("goal_profile"),
+            person_id=person_id,
+            starts_on=starts_on,
+            targets=targets,
+            notes=notes,
+        )
+        self.goal_profiles[profile.id] = profile
+        self._persist()
+        return profile
+
+    def active_goal_profile(self, *, person_id: str, day: date) -> GoalProfile | None:
+        self._require_person(person_id)
+        candidates = [
+            profile
+            for profile in self.goal_profiles.values()
+            if profile.person_id == person_id
+            and profile.starts_on <= day
+            and (profile.ends_on is None or profile.ends_on >= day)
+        ]
+        if not candidates:
+            return None
+        candidates.sort(key=lambda profile: profile.starts_on, reverse=True)
+        return candidates[0]
 
     def create_food_with_version(
         self,
@@ -324,7 +420,17 @@ class HealthMonitorService:
                     source=entry.source,
                 )
             )
-        return DaySummary(person_id=person_id, day=day, totals=totals, meals=meals)
+        target_profile = self.active_goal_profile(person_id=person_id, day=day)
+        target = target_profile.targets if target_profile is not None else None
+        target_delta = totals + target.scale(-1) if target is not None else None
+        return DaySummary(
+            person_id=person_id,
+            day=day,
+            totals=totals,
+            meals=meals,
+            target=target,
+            target_delta=target_delta,
+        )
 
     def log_weight(
         self,
@@ -379,12 +485,16 @@ class HealthMonitorService:
         if end < start:
             raise ValueError("end date must be on or after start date")
         daily: dict[date, Nutrients] = {}
+        daily_targets: dict[date, Nutrients] = {}
         totals = Nutrients()
         current = start
         day_count = 0
         while current <= end:
-            day_total = self.day_summary(person_id, current).totals
+            day_summary = self.day_summary(person_id, current)
+            day_total = day_summary.totals
             daily[current] = day_total
+            if day_summary.target is not None:
+                daily_targets[current] = day_summary.target
             totals += day_total
             day_count += 1
             current += timedelta(days=1)
@@ -394,6 +504,7 @@ class HealthMonitorService:
             start=start,
             end=end,
             daily=daily,
+            daily_targets=daily_targets,
             totals=totals,
             averages=totals.scale(1 / day_count if day_count else 0),
             weight_delta_kg=trend.delta_kg,
@@ -815,6 +926,9 @@ class HealthMonitorService:
             "ids": self._ids,
             "households": [household_to_snapshot(item) for item in self.households.values()],
             "people": [person_to_snapshot(item) for item in self.people.values()],
+            "goal_profiles": [
+                goal_profile_to_snapshot(item) for item in self.goal_profiles.values()
+            ],
             "foods": [food_to_snapshot(item) for item in self.catalog.foods.values()],
             "food_versions": [
                 food_version_to_snapshot(item) for item in self.catalog.versions.values()
@@ -838,6 +952,10 @@ class HealthMonitorService:
             item["id"]: household_from_snapshot(item) for item in snapshot.get("households", [])
         }
         self.people = {item["id"]: person_from_snapshot(item) for item in snapshot.get("people", [])}
+        self.goal_profiles = {
+            item["id"]: goal_profile_from_snapshot(item)
+            for item in snapshot.get("goal_profiles", [])
+        }
         self.catalog = FoodCatalog()
         for item in snapshot.get("foods", []):
             self.catalog.add_food(food_from_snapshot(item))
@@ -1116,6 +1234,10 @@ def person_to_snapshot(person: Person) -> dict[str, Any]:
         "household_id": person.household_id,
         "name": person.name,
         "timezone": person.timezone,
+        "birth_date": person.birth_date.isoformat() if person.birth_date is not None else None,
+        "sex": person.sex,
+        "height_cm": person.height_cm,
+        "activity_level": person.activity_level,
         "created_at": person.created_at.isoformat(),
     }
 
@@ -1126,6 +1248,34 @@ def person_from_snapshot(value: dict[str, Any]) -> Person:
         household_id=value["household_id"],
         name=value["name"],
         timezone=value["timezone"],
+        birth_date=date.fromisoformat(value["birth_date"]) if value.get("birth_date") else None,
+        sex=value.get("sex"),
+        height_cm=float(value["height_cm"]) if value.get("height_cm") is not None else None,
+        activity_level=value.get("activity_level"),
+        created_at=datetime.fromisoformat(value["created_at"]),
+    )
+
+
+def goal_profile_to_snapshot(profile: GoalProfile) -> dict[str, Any]:
+    return {
+        "id": profile.id,
+        "person_id": profile.person_id,
+        "starts_on": profile.starts_on.isoformat(),
+        "ends_on": profile.ends_on.isoformat() if profile.ends_on is not None else None,
+        "targets": nutrients_to_snapshot(profile.targets),
+        "notes": profile.notes,
+        "created_at": profile.created_at.isoformat(),
+    }
+
+
+def goal_profile_from_snapshot(value: dict[str, Any]) -> GoalProfile:
+    return GoalProfile(
+        id=value["id"],
+        person_id=value["person_id"],
+        starts_on=date.fromisoformat(value["starts_on"]),
+        ends_on=date.fromisoformat(value["ends_on"]) if value.get("ends_on") else None,
+        targets=nutrients_from_snapshot(value["targets"]),
+        notes=value.get("notes"),
         created_at=datetime.fromisoformat(value["created_at"]),
     )
 
