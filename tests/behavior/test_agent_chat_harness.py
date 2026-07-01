@@ -41,10 +41,17 @@ class AgentChatHarnessTest(unittest.TestCase):
             person_id=person_id,
             message="Why was 2026-07-01 high in calories?",
             today=date(2026, 7, 2),
-            agent_settings={"model_profile": "deterministic-test"},
+            agent_settings={
+                "model_profile": "deterministic-test",
+                "effort": "medium",
+                "max_tool_loops": 4,
+            },
         )
+        run = service.get_agent_run(response.run_id)
 
         self.assertEqual(response.behavior_label, "explain_day")
+        self.assertEqual(run.settings["effort"], "medium")
+        self.assertEqual(run.settings["max_tool_loops"], 4)
         self.assertIn("315", response.message)
         self.assertIn("Queijo Minas", response.message)
         self.assertEqual(response.proposal_id, None)

@@ -752,6 +752,13 @@ function renderTextMeal(): string {
       <h2>Text meal</h2>
       <label>Text <input name="text" value="10am, 100g queijo" ${disabled} /></label>
       <label>Model profile <input name="model_profile" value="ollama-local" ${disabled} /></label>
+      <label>Effort
+        <select name="effort" ${disabled}>
+          <option value="low">Low</option>
+          <option value="medium" selected>Medium</option>
+          <option value="high">High</option>
+        </select>
+      </label>
       <label>Max loops <input name="max_tool_loops" type="number" value="4" min="1" max="12" ${disabled} /></label>
       <label class="check-row"><input name="external_lookup" type="checkbox" checked ${disabled} /> External lookup</label>
       <button type="submit" ${disabled}>Draft proposal</button>
@@ -769,6 +776,13 @@ function renderAgentChat(): string {
       <textarea name="message" ${disabled}>Why was 2026-07-01 high in calories?</textarea>
       <div class="grid-two">
         <label>Model profile <input name="model_profile" value="deterministic-local" ${disabled} /></label>
+        <label>Effort
+          <select name="effort" ${disabled}>
+            <option value="low">Low</option>
+            <option value="medium" selected>Medium</option>
+            <option value="high">High</option>
+          </select>
+        </label>
         <label>Max loops <input name="max_tool_loops" type="number" value="4" min="1" max="12" ${disabled} /></label>
       </div>
       <button type="submit" ${disabled}>Send</button>
@@ -1093,6 +1107,7 @@ async function onTextMeal(event: SubmitEvent): Promise<void> {
     text: requiredText(form, "text"),
     agent_settings: {
       model_profile: requiredText(form, "model_profile"),
+      effort: requiredText(form, "effort"),
       max_tool_loops: numberField(form, "max_tool_loops"),
       external_lookup: form.get("external_lookup") === "on"
     }
@@ -1111,6 +1126,7 @@ async function onAgentChat(event: SubmitEvent): Promise<void> {
     today,
     agent_settings: {
       model_profile: requiredText(form, "model_profile"),
+      effort: requiredText(form, "effort"),
       max_tool_loops: numberField(form, "max_tool_loops")
     }
   });
