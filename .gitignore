@@ -6,6 +6,7 @@
 # Private user data imports and generated local fixtures
 /imports/
 /data/imports/
+/data/local/
 /private/
 /Health - *.html
 
@@ -16,3 +17,7 @@ __pycache__/
 .mypy_cache/
 .venv/
 venv/
+
+# Frontend local state
+web/dist/
+web/node_modules/

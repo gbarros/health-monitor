@@ -1,0 +1,419 @@
+from __future__ import annotations
+
+import unittest
+
+from health_monitor.api.http_api import HttpApi
+from health_monitor.application.service import HealthMonitorService
+from health_monitor.domain.nutrients import Nutrients
+from health_monitor.lookup.estimates import NutritionEstimate, StaticFoodEstimator
+
+
+class HttpApiContractTest(unittest.TestCase):
+    def test_daily_driver_flow_through_http_contract(self) -> None:
+        api = HttpApi(HealthMonitorService())
+
+        household = api.handle("POST", "/api/households", {"name": "Casa"}).body
+        person = api.handle(
+            "POST",
+            "/api/people",
+            {
+                "household_id": household["id"],
+                "name": "Gabriel",
+                "timezone": "America/Sao_Paulo",
+            },
+        ).body
+        food_response = api.handle(
+            "POST",
+            "/api/foods",
+            {
+                "household_id": household["id"],
+                "name": "Iogurte Batavo",
+                "brand": "Batavo",
+                "version_label": "Protein label",
+                "source": "label_scan",
+                "nutrients_per_100g": {
+                    "calories_kcal": 80,
+                    "protein_g": 10,
+                    "carbs_g": 7,
+                    "fat_g": 1,
+                },
+                "aliases": ["iogurte batavo"],
+                "barcode": "7891000000000",
+            },
+        ).body
+        version = food_response["version"]
+
+        created = api.handle(
+            "POST",
+            "/api/diary",
+            {
+                "person_id": person["id"],
+                "logged_at_local": "2026-07-01T10:00:00",
+                "food_version_id": version["id"],
+                "quantity_g": 150,
+                "source": "manual",
+            },
+        )
+        summary = api.handle(
+            "GET",
+            f"/api/diary/day?person_id={person['id']}&day=2026-07-01",
+            None,
+        ).body
+
+        self.assertEqual(created.status_code, 201)
+        self.assertEqual(created.body["meal_type"], "breakfast")
+        self.assertEqual(summary["totals"]["calories_kcal"], 120)
+        self.assertEqual(summary["totals"]["protein_g"], 15)
+        self.assertEqual(summary["meals"]["breakfast"][0]["food_name"], "Iogurte Batavo")
+
+    def test_text_meal_proposal_round_trip_through_http_contract(self) -> None:
+        api = HttpApi(HealthMonitorService())
+        household = api.handle("POST", "/api/households", {"name": "Casa"}).body
+        person = api.handle(
+            "POST",
+            "/api/people",
+            {
+                "household_id": household["id"],
+                "name": "Gabriel",
+                "timezone": "America/Sao_Paulo",
+            },
+        ).body
+        api.handle(
+            "POST",
+            "/api/foods",
+            {
+                "household_id": household["id"],
+                "name": "Queijo Minas",
+                "brand": None,
+                "version_label": "current",
+                "source": "label_scan",
+                "nutrients_per_100g": {
+                    "calories_kcal": 315,
+                    "protein_g": 23,
+                    "carbs_g": 2.6,
+                    "fat_g": 23.5,
+                },
+                "aliases": ["queijo"],
+            },
+        )
+
+        proposal = api.handle(
+            "POST",
+            "/api/agent/text-meal",
+            {
+                "person_id": person["id"],
+                "logged_at_local": "2026-07-01T10:00:00",
+                "text": "100g queijo",
+                "agent_settings": {
+                    "model_profile": "ollama-local",
+                    "effort": "medium",
+                    "max_tool_loops": 4,
+                },
+            },
+        ).body
+        before = api.handle(
+            "GET",
+            f"/api/diary/day?person_id={person['id']}&day=2026-07-01",
+            None,
+        ).body
+        applied = api.handle("POST", f"/api/proposals/{proposal['id']}/confirm", None).body
+        after = api.handle(
+            "GET",
+            f"/api/diary/day?person_id={person['id']}&day=2026-07-01",
+            None,
+        ).body
+
+        self.assertEqual(proposal["status"], "draft")
+        self.assertEqual(proposal["summary"], "1 diary entries drafted from text meal")
+        self.assertEqual(proposal["totals"]["calories_kcal"], 315)
+        self.assertEqual(proposal["agent_run"]["settings"]["model_profile"], "ollama-local")
+        self.assertEqual(proposal["evidence"][0]["resolution_reason"], "alias_default_version")
+        self.assertEqual(proposal["entries"][0]["food_name"], "Queijo Minas")
+        self.assertEqual(before["totals"]["calories_kcal"], 0)
+        self.assertEqual(applied["status"], "applied")
+        self.assertEqual(after["totals"]["calories_kcal"], 315)
+
+    def test_errors_are_json_contracts(self) -> None:
+        api = HttpApi(HealthMonitorService())
+
+        response = api.handle(
+            "POST",
+            "/api/diary",
+            {
+                "person_id": "missing",
+                "logged_at_local": "2026-07-01T10:00:00",
+                "food_version_id": "missing",
+                "quantity_g": 100,
+                "source": "manual",
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.body["error"]["type"], "ValueError")
+
+    def test_label_scan_proposal_round_trip_through_http_contract(self) -> None:
+        api = HttpApi(HealthMonitorService())
+        household = api.handle("POST", "/api/households", {"name": "Casa"}).body
+        person = api.handle(
+            "POST",
+            "/api/people",
+            {
+                "household_id": household["id"],
+                "name": "Gabriel",
+                "timezone": "America/Sao_Paulo",
+            },
+        ).body
+        proposal = api.handle(
+            "POST",
+            "/api/agent/label-scan",
+            {
+                "household_id": household["id"],
+                "person_id": person["id"],
+                "table_text": "\n".join(
+                    [
+                        "Produto: Iogurte Batavo Protein",
+                        "Marca: Batavo",
+                        "Porcao: 170 g",
+                        "Valor energetico: 120 kcal",
+                        "Proteinas: 15 g",
+                        "Carboidratos: 10 g",
+                        "Gorduras totais: 2 g",
+                        "Codigo de barras: 7891000000000",
+                    ]
+                ),
+                "set_as_default": True,
+            },
+        ).body
+
+        applied = api.handle("POST", f"/api/proposals/{proposal['id']}/confirm", None).body
+        resolved = api.handle(
+            "GET",
+            (
+                f"/api/foods/resolve?household_id={household['id']}"
+                f"&person_id={person['id']}&barcode=7891000000000"
+            ),
+            None,
+        ).body
+
+        self.assertEqual(proposal["proposal_type"], "food_version_from_label")
+        self.assertEqual(proposal["payload"]["food_name"], "Iogurte Batavo Protein")
+        self.assertEqual(proposal["payload"]["nutrients_per_100g"]["protein_g"], 8.82)
+        self.assertEqual(applied["status"], "applied")
+        self.assertEqual(resolved["reason"], "confirmed_barcode_association")
+
+    def test_recipe_proposal_round_trip_through_http_contract(self) -> None:
+        api = HttpApi(HealthMonitorService())
+        household = api.handle("POST", "/api/households", {"name": "Casa"}).body
+        person = api.handle(
+            "POST",
+            "/api/people",
+            {
+                "household_id": household["id"],
+                "name": "Gabriel",
+                "timezone": "America/Sao_Paulo",
+            },
+        ).body
+        for food in (
+            {
+                "name": "Queijo Minas",
+                "version_label": "current",
+                "nutrients_per_100g": {
+                    "calories_kcal": 315,
+                    "protein_g": 23,
+                    "carbs_g": 2.6,
+                    "fat_g": 23.5,
+                },
+                "aliases": ["queijo"],
+            },
+            {
+                "name": "Banana",
+                "version_label": "generic",
+                "nutrients_per_100g": {
+                    "calories_kcal": 89,
+                    "protein_g": 1.1,
+                    "carbs_g": 22.8,
+                    "fat_g": 0.3,
+                },
+                "aliases": ["banana"],
+            },
+        ):
+            api.handle(
+                "POST",
+                "/api/foods",
+                {
+                    "household_id": household["id"],
+                    "brand": None,
+                    "source": "reference",
+                    **food,
+                },
+            )
+
+        proposal = api.handle(
+            "POST",
+            "/api/agent/recipe",
+            {
+                "household_id": household["id"],
+                "person_id": person["id"],
+                "recipe_text": "\n".join(
+                    [
+                        "Recipe: Batch breakfast mix",
+                        "Yield: 1000 g",
+                        "Ingredients:",
+                        "500g queijo",
+                        "500g banana",
+                    ]
+                ),
+            },
+        ).body
+
+        applied = api.handle("POST", f"/api/proposals/{proposal['id']}/confirm", None).body
+        resolved = api.handle(
+            "GET",
+            (
+                f"/api/foods/resolve?household_id={household['id']}"
+                f"&person_id={person['id']}&phrase=batch+breakfast+mix"
+            ),
+            None,
+        ).body
+
+        self.assertEqual(proposal["proposal_type"], "recipe_food_version")
+        self.assertEqual(proposal["payload"]["nutrients_per_100g"]["protein_g"], 12.05)
+        self.assertEqual(len(proposal["payload"]["ingredients"]), 2)
+        self.assertEqual(applied["status"], "applied")
+        self.assertEqual(resolved["food_version_id"], applied["applied_record_ids"][1])
+
+    def test_unknown_food_estimate_round_trip_through_http_contract(self) -> None:
+        api = HttpApi(
+            HealthMonitorService(
+                estimator=StaticFoodEstimator(
+                    {
+                        "kfc double crunch combo": NutritionEstimate(
+                            phrase="kfc double crunch combo",
+                            food_name="KFC Double Crunch combo",
+                            nutrients_per_100g=Nutrients(260, 11, 24, 13),
+                            source="fixture_model_estimate",
+                            confidence=0.42,
+                            notes="Fixture estimate for a regional restaurant meal.",
+                        )
+                    }
+                )
+            )
+        )
+        household = api.handle("POST", "/api/households", {"name": "Casa"}).body
+        person = api.handle(
+            "POST",
+            "/api/people",
+            {
+                "household_id": household["id"],
+                "name": "Gabriel",
+                "timezone": "America/Sao_Paulo",
+            },
+        ).body
+        proposal = api.handle(
+            "POST",
+            "/api/agent/text-meal",
+            {
+                "person_id": person["id"],
+                "logged_at_local": "2026-07-01T20:00:00",
+                "text": "300g KFC Double Crunch combo",
+                "agent_settings": {"external_lookup": True},
+            },
+        ).body
+
+        applied = api.handle("POST", f"/api/proposals/{proposal['id']}/confirm", None).body
+        resolved = api.handle(
+            "GET",
+            (
+                f"/api/foods/resolve?household_id={household['id']}"
+                f"&person_id={person['id']}&phrase=kfc+double+crunch+combo"
+            ),
+            None,
+        ).body
+
+        self.assertEqual(proposal["proposal_type"], "diary_entries_with_estimates")
+        self.assertEqual(proposal["totals"]["calories_kcal"], 780)
+        self.assertEqual(proposal["evidence"][0]["source_type"], "model_estimate")
+        self.assertEqual(applied["status"], "applied")
+        self.assertEqual(len(applied["applied_record_ids"]), 3)
+        self.assertEqual(resolved["food_version_id"], proposal["entries"][0]["food_version_id"])
+
+    def test_weight_trend_and_week_summary_through_http_contract(self) -> None:
+        api = HttpApi(HealthMonitorService())
+        household = api.handle("POST", "/api/households", {"name": "Casa"}).body
+        person = api.handle(
+            "POST",
+            "/api/people",
+            {
+                "household_id": household["id"],
+                "name": "Gabriel",
+                "timezone": "America/Sao_Paulo",
+            },
+        ).body
+        food_response = api.handle(
+            "POST",
+            "/api/foods",
+            {
+                "household_id": household["id"],
+                "name": "Queijo Minas",
+                "brand": None,
+                "version_label": "current",
+                "source": "label_scan",
+                "nutrients_per_100g": {
+                    "calories_kcal": 315,
+                    "protein_g": 23,
+                    "carbs_g": 2.6,
+                    "fat_g": 23.5,
+                },
+                "aliases": ["queijo"],
+            },
+        ).body
+        api.handle(
+            "POST",
+            "/api/diary",
+            {
+                "person_id": person["id"],
+                "logged_at_local": "2026-07-01T10:00:00",
+                "food_version_id": food_response["version"]["id"],
+                "quantity_g": 100,
+                "source": "manual",
+            },
+        )
+        api.handle(
+            "POST",
+            "/api/weights",
+            {
+                "person_id": person["id"],
+                "measured_at_local": "2026-07-01T08:00:00",
+                "weight_kg": 91.2,
+                "note": "start",
+                "source": "manual",
+            },
+        )
+        api.handle(
+            "POST",
+            "/api/weights",
+            {
+                "person_id": person["id"],
+                "measured_at_local": "2026-07-07T08:00:00",
+                "weight_kg": 90.4,
+                "note": "week end",
+                "source": "manual",
+            },
+        )
+
+        trend = api.handle("GET", f"/api/weights/trend?person_id={person['id']}", None).body
+        week = api.handle(
+            "GET",
+            f"/api/summaries/week?person_id={person['id']}&start=2026-07-01&end=2026-07-07",
+            None,
+        ).body
+
+        self.assertEqual(trend["delta_kg"], -0.8)
+        self.assertEqual(len(trend["entries"]), 2)
+        self.assertEqual(week["totals"]["calories_kcal"], 315)
+        self.assertEqual(week["averages"]["calories_kcal"], 45)
+        self.assertEqual(week["weight_delta_kg"], -0.8)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -1,0 +1,65 @@
+services:
+  web:
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    depends_on:
+      - api
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://health_monitor:health_monitor@db:5432/health_monitor}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+      NEXUSLOG_MODE: ${NEXUSLOG_MODE:-stdout}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma4:e4b}
+      FOOD_ESTIMATOR: ${FOOD_ESTIMATOR:-ollama}
+      CLOUD_MODEL_CALLS_ENABLED: ${CLOUD_MODEL_CALLS_ENABLED:-false}
+      PERSISTENCE_BACKEND: ${PERSISTENCE_BACKEND:-sqlite}
+      SQLITE_PATH: ${SQLITE_PATH:-/app/data/health-monitor.sqlite3}
+    volumes:
+      - app-data:/app/data
+    depends_on:
+      - db
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    command: ["python", "-m", "health_monitor", "worker"]
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://health_monitor:health_monitor@db:5432/health_monitor}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+      NEXUSLOG_MODE: ${NEXUSLOG_MODE:-stdout}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma4:e4b}
+      FOOD_ESTIMATOR: ${FOOD_ESTIMATOR:-ollama}
+      CLOUD_MODEL_CALLS_ENABLED: ${CLOUD_MODEL_CALLS_ENABLED:-false}
+      PERSISTENCE_BACKEND: ${PERSISTENCE_BACKEND:-sqlite}
+      SQLITE_PATH: ${SQLITE_PATH:-/app/data/health-monitor.sqlite3}
+    volumes:
+      - app-data:/app/data
+    depends_on:
+      - db
+
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-health_monitor}
+      POSTGRES_USER: ${POSTGRES_USER:-health_monitor}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-health_monitor}
+    volumes:
+      - postgres:/var/lib/postgresql/data
+      - backups:/backups
+
+volumes:
+  app-data:
+  postgres:
+  backups:

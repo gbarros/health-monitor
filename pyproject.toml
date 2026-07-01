@@ -1,0 +1,36 @@
+[project]
+name = "health-monitor"
+version = "0.1.0"
+description = "Private household nutrition tracker with PydanticAI-assisted logging."
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.116",
+  "pydantic>=2.11",
+  "pydantic-ai>=0.7",
+  "sqlalchemy>=2.0",
+  "alembic>=1.16",
+  "psycopg[binary]>=3.2",
+  "uvicorn[standard]>=0.35",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.4",
+  "pytest-xdist>=3.8",
+  "pytest-asyncio>=1.1",
+  "ruff>=0.12",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+markers = [
+  "behavior: cross-service/domain behavior tests",
+  "contract: API/event/schema contract tests",
+  "unit: narrow deterministic unit tests",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+

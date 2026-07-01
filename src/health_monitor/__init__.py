@@ -1,0 +1,2 @@
+"""Health Monitor application package."""
+
