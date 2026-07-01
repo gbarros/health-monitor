@@ -126,6 +126,22 @@ class AgentChatResponse:
 
 
 @dataclass(frozen=True)
+class ReviewNote:
+    id: str
+    person_id: str
+    note_type: str
+    title: str
+    body: str
+    starts_on: date | None = None
+    ends_on: date | None = None
+    source: str = "manual"
+    source_agent_run_id: str | None = None
+    source_proposal_id: str | None = None
+    source_record_refs: tuple[dict[str, str], ...] = ()
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+@dataclass(frozen=True)
 class AttachmentObject:
     id: str
     household_id: str
@@ -194,6 +210,7 @@ class HealthMonitorService:
         self.resolver = FoodResolver(self.catalog)
         self.proposals = ProposalService(self.diary)
         self.agent_runs: dict[str, AgentRun] = {}
+        self.review_notes: dict[str, ReviewNote] = {}
         self.lookup_candidates: dict[str, FoodLookupCandidate] = {}
         self.attachments: dict[str, AttachmentObject] = {}
         self._ids: dict[str, int] = {}
@@ -691,8 +708,15 @@ class HealthMonitorService:
             "weight_entries": len(self.weights),
             "proposals": len(self.proposals.proposals),
             "agent_runs": len(self.agent_runs),
+            "review_notes": len(self.review_notes),
             "attachment_objects": len(self.attachments),
         }
+
+    def review_notes_for_person(self, person_id: str) -> tuple[ReviewNote, ...]:
+        self._require_person(person_id)
+        notes = [note for note in self.review_notes.values() if note.person_id == person_id]
+        notes.sort(key=lambda note: (note.starts_on or date.min, note.created_at))
+        return tuple(notes)
 
     def day_summary(self, person_id: str, day: date) -> DaySummary:
         self._require_person(person_id)
@@ -835,6 +859,17 @@ class HealthMonitorService:
                 today=today,
                 run=run,
                 correction=correction,
+            )
+            self._persist()
+            return response
+
+        review_note = parse_chat_review_note(message)
+        if review_note is not None:
+            response = self._chat_draft_review_note(
+                person_id=person_id,
+                message=message,
+                run=run,
+                review_note=review_note,
             )
             self._persist()
             return response
@@ -1044,6 +1079,65 @@ class HealthMonitorService:
             message=answer,
             behavior_label=behavior_label,
             citations=citations,
+        )
+
+    def _chat_draft_review_note(
+        self,
+        *,
+        person_id: str,
+        message: str,
+        run: AgentRun,
+        review_note: dict[str, object],
+    ) -> AgentChatResponse:
+        body = str(review_note["body"]).strip()
+        starts_on = review_note.get("starts_on")
+        ends_on = review_note.get("ends_on")
+        starts_on_text = starts_on.isoformat() if isinstance(starts_on, date) else None
+        ends_on_text = ends_on.isoformat() if isinstance(ends_on, date) else None
+        title = "Review note"
+        if starts_on_text and ends_on_text:
+            title = f"Review note {starts_on_text} to {ends_on_text}"
+        elif starts_on_text:
+            title = f"Review note {starts_on_text}"
+        proposal = self.proposals.create(
+            CreateDiaryEntriesProposal(
+                id=self._next_id("proposal"),
+                person_id=person_id,
+                entries=(),
+                proposal_type="review_note",
+                summary=title,
+                payload={
+                    "note_type": "review",
+                    "title": title,
+                    "body": body,
+                    "starts_on": starts_on_text,
+                    "ends_on": ends_on_text,
+                    "source": "agent_chat",
+                },
+                evidence=(
+                    {
+                        "source_type": "agent_chat",
+                        "raw_text": message,
+                    },
+                ),
+                source_agent_run_id=run.id,
+            )
+        )
+        self.agent_runs[run.id] = AgentRun(
+            id=run.id,
+            person_id=run.person_id,
+            input_text=run.input_text,
+            settings=run.settings,
+            status="proposal_created",
+            proposal_id=proposal.id,
+            created_at=run.created_at,
+        )
+        return AgentChatResponse(
+            run_id=run.id,
+            person_id=person_id,
+            message="I drafted a review note. Confirm the proposal to save it.",
+            behavior_label="draft_review_note",
+            proposal_id=proposal.id,
         )
 
     def _chat_draft_diary_correction(
@@ -1272,6 +1366,11 @@ class HealthMonitorService:
             self.proposals.proposals[proposal_id] = applied
             self._persist()
             return applied
+        if proposal.proposal_type == "review_note":
+            applied = self._apply_review_note_proposal(proposal)
+            self.proposals.proposals[proposal_id] = applied
+            self._persist()
+            return applied
         proposal = self.proposals.confirm_and_apply(proposal_id)
         self._persist()
         return proposal
@@ -1461,6 +1560,46 @@ class HealthMonitorService:
             created_at=proposal.created_at,
         )
 
+    def _apply_review_note_proposal(
+        self,
+        proposal: CreateDiaryEntriesProposal,
+    ) -> CreateDiaryEntriesProposal:
+        if proposal.status == "rejected":
+            raise ValueError("cannot apply rejected proposal")
+        payload = proposal.payload
+        starts_on = date.fromisoformat(str(payload["starts_on"])) if payload.get("starts_on") else None
+        ends_on = date.fromisoformat(str(payload["ends_on"])) if payload.get("ends_on") else None
+        note = ReviewNote(
+            id=self._next_id("review_note"),
+            person_id=proposal.person_id,
+            note_type=str(payload.get("note_type", "review")),
+            title=str(payload.get("title", "Review note")),
+            body=str(payload["body"]),
+            starts_on=starts_on,
+            ends_on=ends_on,
+            source=str(payload.get("source", "agent_chat")),
+            source_agent_run_id=proposal.source_agent_run_id,
+            source_proposal_id=proposal.id,
+            source_record_refs=(
+                {"record_type": "proposal", "record_id": proposal.id},
+            ),
+        )
+        self.review_notes[note.id] = note
+        return CreateDiaryEntriesProposal(
+            id=proposal.id,
+            person_id=proposal.person_id,
+            entries=proposal.entries,
+            proposal_type=proposal.proposal_type,
+            status="applied",
+            summary=proposal.summary,
+            payload=proposal.payload,
+            totals=proposal.totals,
+            evidence=proposal.evidence,
+            source_agent_run_id=proposal.source_agent_run_id,
+            applied_record_ids=(note.id,),
+            created_at=proposal.created_at,
+        )
+
     def _persist(self) -> None:
         if self.repository is not None:
             self.repository.save(self._snapshot())
@@ -1479,6 +1618,7 @@ class HealthMonitorService:
                 self.weights,
                 self.proposals.proposals,
                 self.agent_runs,
+                self.review_notes,
                 self.attachments,
             )
         )
@@ -1507,6 +1647,9 @@ class HealthMonitorService:
                 proposal_to_snapshot(item) for item in self.proposals.proposals.values()
             ],
             "agent_runs": [agent_run_to_snapshot(item) for item in self.agent_runs.values()],
+            "review_notes": [
+                review_note_to_snapshot(item) for item in self.review_notes.values()
+            ],
             "attachment_objects": [
                 attachment_to_snapshot(item) for item in self.attachments.values()
             ],
@@ -1549,6 +1692,10 @@ class HealthMonitorService:
             self.proposals.proposals[proposal.id] = proposal
         self.agent_runs = {
             item["id"]: agent_run_from_snapshot(item) for item in snapshot.get("agent_runs", [])
+        }
+        self.review_notes = {
+            item["id"]: review_note_from_snapshot(item)
+            for item in snapshot.get("review_notes", [])
         }
         self.attachments = {
             item["id"]: attachment_from_snapshot(item)
@@ -1671,6 +1818,30 @@ def parse_chat_quantity_correction(message: str) -> dict[str, object] | None:
         "phrase": normalize_food_phrase(match.group(1)),
         "day": date.fromisoformat(match.group(2)),
         "quantity_g": float(match.group(3).replace(",", ".")),
+    }
+
+
+def parse_chat_review_note(message: str) -> dict[str, object] | None:
+    match = re.search(
+        r"^\s*(?:save|salvar|record|registrar)\s+"
+        r"(?:(?:a|uma)\s+)?(?:review\s+)?(?:note|nota)"
+        r"(?:\s+(?:for|de|para)\s+(\d{4}-\d{2}-\d{2})"
+        r"(?:\s+(?:to|ate|até|-)\s+(\d{4}-\d{2}-\d{2}))?)?"
+        r"\s*:\s*(.+?)\s*$",
+        message,
+        re.I | re.S,
+    )
+    if match is None:
+        return None
+    body = match.group(3).strip()
+    if not body:
+        return None
+    starts_on = date.fromisoformat(match.group(1)) if match.group(1) else None
+    ends_on = date.fromisoformat(match.group(2)) if match.group(2) else starts_on
+    return {
+        "starts_on": starts_on,
+        "ends_on": ends_on,
+        "body": body,
     }
 
 
@@ -2104,6 +2275,40 @@ def agent_run_from_snapshot(value: dict[str, Any]) -> AgentRun:
         settings=dict(value.get("settings", {})),
         status=value["status"],
         proposal_id=value.get("proposal_id"),
+        created_at=datetime.fromisoformat(value["created_at"]),
+    )
+
+
+def review_note_to_snapshot(note: ReviewNote) -> dict[str, Any]:
+    return {
+        "id": note.id,
+        "person_id": note.person_id,
+        "note_type": note.note_type,
+        "title": note.title,
+        "body": note.body,
+        "starts_on": note.starts_on.isoformat() if note.starts_on is not None else None,
+        "ends_on": note.ends_on.isoformat() if note.ends_on is not None else None,
+        "source": note.source,
+        "source_agent_run_id": note.source_agent_run_id,
+        "source_proposal_id": note.source_proposal_id,
+        "source_record_refs": list(note.source_record_refs),
+        "created_at": note.created_at.isoformat(),
+    }
+
+
+def review_note_from_snapshot(value: dict[str, Any]) -> ReviewNote:
+    return ReviewNote(
+        id=value["id"],
+        person_id=value["person_id"],
+        note_type=value.get("note_type", "review"),
+        title=value.get("title", "Review note"),
+        body=value["body"],
+        starts_on=date.fromisoformat(value["starts_on"]) if value.get("starts_on") else None,
+        ends_on=date.fromisoformat(value["ends_on"]) if value.get("ends_on") else None,
+        source=value.get("source", "manual"),
+        source_agent_run_id=value.get("source_agent_run_id"),
+        source_proposal_id=value.get("source_proposal_id"),
+        source_record_refs=tuple(value.get("source_record_refs", [])),
         created_at=datetime.fromisoformat(value["created_at"]),
     )
 

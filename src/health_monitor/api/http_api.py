@@ -15,6 +15,7 @@ from health_monitor.application.service import (
     HealthMonitorService,
     Household,
     Person,
+    ReviewNote,
     WeekSummary,
     WeightEntry,
     WeightTrend,
@@ -214,6 +215,10 @@ class HttpApi:
                 end=date.fromisoformat(query["end"]),
             )
             return HttpResponse(200, week_summary_to_dict(summary))
+
+        if method == "GET" and path == "/api/review-notes":
+            notes = self.service.review_notes_for_person(query["person_id"])
+            return HttpResponse(200, [review_note_to_dict(note) for note in notes])
 
         if method == "GET" and path == "/api/exports/full":
             return HttpResponse(200, self.service.export_data())
@@ -461,6 +466,23 @@ def week_summary_to_dict(summary: WeekSummary) -> dict[str, Any]:
         "totals": nutrients_to_dict(summary.totals.rounded()),
         "averages": nutrients_to_dict(summary.averages.rounded()),
         "weight_delta_kg": summary.weight_delta_kg,
+    }
+
+
+def review_note_to_dict(note: ReviewNote) -> dict[str, Any]:
+    return {
+        "id": note.id,
+        "person_id": note.person_id,
+        "note_type": note.note_type,
+        "title": note.title,
+        "body": note.body,
+        "starts_on": note.starts_on.isoformat() if note.starts_on is not None else None,
+        "ends_on": note.ends_on.isoformat() if note.ends_on is not None else None,
+        "source": note.source,
+        "source_agent_run_id": note.source_agent_run_id,
+        "source_proposal_id": note.source_proposal_id,
+        "source_record_refs": list(note.source_record_refs),
+        "created_at": note.created_at.isoformat(),
     }
 
 

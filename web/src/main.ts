@@ -117,6 +117,19 @@ type WeekSummary = {
   averages: Nutrients;
   weight_delta_kg: number | null;
 };
+type ReviewNote = {
+  id: string;
+  person_id: string;
+  note_type: string;
+  title: string;
+  body: string;
+  starts_on: string | null;
+  ends_on: string | null;
+  source: string;
+  source_agent_run_id: string | null;
+  source_proposal_id: string | null;
+  created_at: string;
+};
 type ProposalEntry = SummaryEntry & { food_version_id: string };
 type Proposal = {
   id: string;
@@ -155,6 +168,7 @@ type AppState = {
   summary: DaySummary | null;
   week: WeekSummary | null;
   weightTrend: WeightTrend | null;
+  reviewNotes: ReviewNote[];
   proposal: Proposal | null;
   chatResponse: AgentChatResponse | null;
   lastDeletedEntry: DiaryEntryRecord | null;
@@ -174,6 +188,7 @@ const state: AppState = {
   summary: null,
   week: null,
   weightTrend: null,
+  reviewNotes: [],
   proposal: null,
   chatResponse: null,
   lastDeletedEntry: null,
@@ -347,6 +362,17 @@ function renderReview(): string {
         )
         .join("")
     : "";
+  const noteRows = state.reviewNotes
+    .map(
+      (note) => `
+        <li>
+          <strong>${escapeHtml(note.title)}</strong>
+          <span>${escapeHtml(note.starts_on ?? "undated")}${note.ends_on ? ` to ${escapeHtml(note.ends_on)}` : ""} · ${escapeHtml(note.source)}</span>
+          <p>${escapeHtml(note.body)}</p>
+        </li>
+      `
+    )
+    .join("");
   return `
     <section class="today">
       <div class="section-heading">
@@ -370,6 +396,11 @@ function renderReview(): string {
       ${
         weightRows
           ? `<section class="meal-band"><h3>Weights</h3><table><thead><tr><th>Date</th><th>Weight</th><th>Note</th></tr></thead><tbody>${weightRows}</tbody></table></section>`
+          : ""
+      }
+      ${
+        noteRows
+          ? `<section class="meal-band"><h3>Review notes</h3><ul class="evidence-list">${noteRows}</ul></section>`
           : ""
       }
     </section>
@@ -405,6 +436,8 @@ function renderProposal(): string {
         ? renderDiaryUpdateProposalPayload(state.proposal)
       : state.proposal.proposal_type === "diary_entries_with_estimates"
         ? renderEstimateProposalPayload(state.proposal)
+      : state.proposal.proposal_type === "review_note"
+        ? renderReviewNoteProposalPayload(state.proposal)
       : "";
   const evidence = state.proposal.evidence
     .map(
@@ -490,6 +523,21 @@ function renderDiaryUpdateProposalPayload(proposal: Proposal): string {
       <div><dt>Previous</dt><dd>${escapeHtml(String(proposal.payload.previous_quantity_g ?? ""))} g</dd></div>
       <div><dt>New</dt><dd>${escapeHtml(String(proposal.payload.quantity_g ?? ""))} g</dd></div>
     </dl>
+  `;
+}
+
+function renderReviewNoteProposalPayload(proposal: Proposal): string {
+  return `
+    <dl class="payload-grid">
+      <div><dt>Range</dt><dd>${escapeHtml(String(proposal.payload.starts_on ?? "undated"))}${proposal.payload.ends_on ? ` to ${escapeHtml(String(proposal.payload.ends_on))}` : ""}</dd></div>
+      <div><dt>Type</dt><dd>${escapeHtml(String(proposal.payload.note_type ?? "review"))}</dd></div>
+      <div><dt>Title</dt><dd>${escapeHtml(String(proposal.payload.title ?? ""))}</dd></div>
+      <div><dt>Source</dt><dd>${escapeHtml(String(proposal.payload.source ?? ""))}</dd></div>
+    </dl>
+    <section class="chat-answer">
+      <strong>Body</strong>
+      <p>${escapeHtml(String(proposal.payload.body ?? ""))}</p>
+    </section>
   `;
 }
 
@@ -1131,6 +1179,7 @@ async function refreshSummary(): Promise<void> {
 
 async function refreshReview(): Promise<void> {
   if (!state.person) {
+    state.reviewNotes = [];
     render();
     return;
   }
@@ -1139,11 +1188,13 @@ async function refreshReview(): Promise<void> {
   state.week = await apiGet<WeekSummary>(
     `/api/summaries/week?person_id=${state.person.id}&start=2026-07-01&end=2026-07-07`
   );
+  state.reviewNotes = await apiGet<ReviewNote[]>(`/api/review-notes?person_id=${state.person.id}`);
   render();
 }
 
 async function refreshAllReadSurfaces(): Promise<void> {
   if (!state.person) {
+    state.reviewNotes = [];
     render();
     return;
   }
@@ -1153,6 +1204,7 @@ async function refreshAllReadSurfaces(): Promise<void> {
   state.week = await apiGet<WeekSummary>(
     `/api/summaries/week?person_id=${state.person.id}&start=2026-07-01&end=2026-07-07`
   );
+  state.reviewNotes = await apiGet<ReviewNote[]>(`/api/review-notes?person_id=${state.person.id}`);
   render();
 }
 

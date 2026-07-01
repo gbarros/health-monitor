@@ -667,6 +667,55 @@ class HttpApiContractTest(unittest.TestCase):
         self.assertEqual(applied["status"], "applied")
         self.assertEqual(summary["totals"]["calories_kcal"], 157.5)
 
+    def test_agent_chat_review_note_proposal_and_read_model_through_http_contract(self) -> None:
+        api = HttpApi(HealthMonitorService())
+        household = api.handle("POST", "/api/households", {"name": "Casa"}).body
+        person = api.handle(
+            "POST",
+            "/api/people",
+            {
+                "household_id": household["id"],
+                "name": "Gabriel",
+                "timezone": "America/Sao_Paulo",
+            },
+        ).body
+
+        response = api.handle(
+            "POST",
+            "/api/agent/chat",
+            {
+                "person_id": person["id"],
+                "message": (
+                    "Save review note for 2026-07-01 to 2026-07-07: "
+                    "Social dinners made adherence harder."
+                ),
+                "today": "2026-07-08",
+            },
+        ).body
+        empty_notes = api.handle(
+            "GET",
+            f"/api/review-notes?person_id={person['id']}",
+            None,
+        ).body
+        applied = api.handle(
+            "POST",
+            f"/api/proposals/{response['proposal']['id']}/confirm",
+            None,
+        ).body
+        notes = api.handle(
+            "GET",
+            f"/api/review-notes?person_id={person['id']}",
+            None,
+        ).body
+
+        self.assertEqual(response["behavior_label"], "draft_review_note")
+        self.assertEqual(response["proposal"]["proposal_type"], "review_note")
+        self.assertEqual(empty_notes, [])
+        self.assertEqual(applied["status"], "applied")
+        self.assertEqual(len(notes), 1)
+        self.assertEqual(notes[0]["starts_on"], "2026-07-01")
+        self.assertIn("Social dinners", notes[0]["body"])
+
     def test_weight_trend_and_week_summary_through_http_contract(self) -> None:
         api = HttpApi(HealthMonitorService())
         household = api.handle("POST", "/api/households", {"name": "Casa"}).body
