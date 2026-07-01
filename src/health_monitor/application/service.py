@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
@@ -124,6 +126,24 @@ class AgentChatResponse:
 
 
 @dataclass(frozen=True)
+class AttachmentObject:
+    id: str
+    household_id: str
+    created_by_person_id: str
+    object_type: str
+    mime_type: str
+    byte_size: int
+    sha256: str
+    content: bytes
+    filename: str | None = None
+    storage_status: str = "stored"
+    retention_policy: str = "keep"
+    linked_record_type: str | None = None
+    linked_record_id: str | None = None
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+@dataclass(frozen=True)
 class ParsedMealItem:
     phrase: str
     quantity_g: float
@@ -175,6 +195,7 @@ class HealthMonitorService:
         self.proposals = ProposalService(self.diary)
         self.agent_runs: dict[str, AgentRun] = {}
         self.lookup_candidates: dict[str, FoodLookupCandidate] = {}
+        self.attachments: dict[str, AttachmentObject] = {}
         self._ids: dict[str, int] = {}
         if self.repository is not None:
             snapshot = self.repository.load()
@@ -276,6 +297,69 @@ class HealthMonitorService:
             return None
         candidates.sort(key=lambda profile: profile.starts_on, reverse=True)
         return candidates[0]
+
+    def create_attachment(
+        self,
+        *,
+        household_id: str,
+        person_id: str,
+        object_type: str,
+        mime_type: str,
+        content: bytes,
+        filename: str | None = None,
+        retention_policy: str = "keep",
+    ) -> AttachmentObject:
+        self._require_household(household_id)
+        person = self._require_person(person_id)
+        if person.household_id != household_id:
+            raise ValueError("attachment person belongs to a different household")
+        if not content:
+            raise ValueError("attachment content is empty")
+        attachment = AttachmentObject(
+            id=self._next_id("attachment"),
+            household_id=household_id,
+            created_by_person_id=person_id,
+            object_type=object_type,
+            mime_type=mime_type,
+            byte_size=len(content),
+            sha256=hashlib.sha256(content).hexdigest(),
+            content=content,
+            filename=filename,
+            retention_policy=retention_policy,
+        )
+        self.attachments[attachment.id] = attachment
+        self._persist()
+        return attachment
+
+    def get_attachment(self, attachment_id: str) -> AttachmentObject:
+        return self.attachments[attachment_id]
+
+    def _link_attachment(
+        self,
+        attachment_id: str,
+        *,
+        linked_record_type: str,
+        linked_record_id: str,
+    ) -> AttachmentObject:
+        attachment = self.attachments[attachment_id]
+        linked = AttachmentObject(
+            id=attachment.id,
+            household_id=attachment.household_id,
+            created_by_person_id=attachment.created_by_person_id,
+            object_type=attachment.object_type,
+            mime_type=attachment.mime_type,
+            byte_size=attachment.byte_size,
+            sha256=attachment.sha256,
+            content=attachment.content,
+            filename=attachment.filename,
+            storage_status=attachment.storage_status,
+            retention_policy=attachment.retention_policy,
+            linked_record_type=linked_record_type,
+            linked_record_id=linked_record_id,
+            created_at=attachment.created_at,
+        )
+        self.attachments[attachment.id] = linked
+        return linked
 
     def create_food_with_version(
         self,
@@ -607,6 +691,7 @@ class HealthMonitorService:
             "weight_entries": len(self.weights),
             "proposals": len(self.proposals.proposals),
             "agent_runs": len(self.agent_runs),
+            "attachment_objects": len(self.attachments),
         }
 
     def day_summary(self, person_id: str, day: date) -> DaySummary:
@@ -1054,9 +1139,14 @@ class HealthMonitorService:
         person_id: str,
         table_text: str,
         set_as_default: bool = True,
+        attachment_id: str | None = None,
     ) -> CreateDiaryEntriesProposal:
         self._require_household(household_id)
         self._require_person(person_id)
+        if attachment_id is not None:
+            attachment = self.get_attachment(attachment_id)
+            if attachment.household_id != household_id:
+                raise ValueError("attachment belongs to a different household")
         parsed = parse_nutrition_label_text(table_text)
         payload = {
             "household_id": household_id,
@@ -1068,6 +1158,7 @@ class HealthMonitorService:
             "barcode": parsed.barcode,
             "set_as_default": set_as_default,
             "source": "label_scan",
+            "attachment_id": attachment_id,
         }
         proposal = self.proposals.create(
             CreateDiaryEntriesProposal(
@@ -1082,6 +1173,7 @@ class HealthMonitorService:
                         "source_type": "nutrition_label_text",
                         "raw_text": table_text,
                         "warnings": list(parsed.warnings),
+                        "attachment_id": attachment_id,
                     },
                 ),
             )
@@ -1238,6 +1330,14 @@ class HealthMonitorService:
             association = self.catalog.resolve_barcode(str(barcode))
             if association is not None:
                 applied_ids.append(association.id)
+        attachment_id = payload.get("attachment_id")
+        if attachment_id is not None:
+            self._link_attachment(
+                str(attachment_id),
+                linked_record_type="food_version",
+                linked_record_id=version.id,
+            )
+            applied_ids.append(str(attachment_id))
         return CreateDiaryEntriesProposal(
             id=proposal.id,
             person_id=proposal.person_id,
@@ -1379,6 +1479,7 @@ class HealthMonitorService:
                 self.weights,
                 self.proposals.proposals,
                 self.agent_runs,
+                self.attachments,
             )
         )
 
@@ -1406,6 +1507,9 @@ class HealthMonitorService:
                 proposal_to_snapshot(item) for item in self.proposals.proposals.values()
             ],
             "agent_runs": [agent_run_to_snapshot(item) for item in self.agent_runs.values()],
+            "attachment_objects": [
+                attachment_to_snapshot(item) for item in self.attachments.values()
+            ],
         }
 
     def _restore_snapshot(self, snapshot: dict[str, Any]) -> None:
@@ -1445,6 +1549,10 @@ class HealthMonitorService:
             self.proposals.proposals[proposal.id] = proposal
         self.agent_runs = {
             item["id"]: agent_run_from_snapshot(item) for item in snapshot.get("agent_runs", [])
+        }
+        self.attachments = {
+            item["id"]: attachment_from_snapshot(item)
+            for item in snapshot.get("attachment_objects", [])
         }
 
 
@@ -1996,5 +2104,44 @@ def agent_run_from_snapshot(value: dict[str, Any]) -> AgentRun:
         settings=dict(value.get("settings", {})),
         status=value["status"],
         proposal_id=value.get("proposal_id"),
+        created_at=datetime.fromisoformat(value["created_at"]),
+    )
+
+
+def attachment_to_snapshot(attachment: AttachmentObject) -> dict[str, Any]:
+    return {
+        "id": attachment.id,
+        "household_id": attachment.household_id,
+        "created_by_person_id": attachment.created_by_person_id,
+        "object_type": attachment.object_type,
+        "mime_type": attachment.mime_type,
+        "byte_size": attachment.byte_size,
+        "sha256": attachment.sha256,
+        "content_base64": base64.b64encode(attachment.content).decode("ascii"),
+        "filename": attachment.filename,
+        "storage_status": attachment.storage_status,
+        "retention_policy": attachment.retention_policy,
+        "linked_record_type": attachment.linked_record_type,
+        "linked_record_id": attachment.linked_record_id,
+        "created_at": attachment.created_at.isoformat(),
+    }
+
+
+def attachment_from_snapshot(value: dict[str, Any]) -> AttachmentObject:
+    content = base64.b64decode(value["content_base64"])
+    return AttachmentObject(
+        id=value["id"],
+        household_id=value["household_id"],
+        created_by_person_id=value["created_by_person_id"],
+        object_type=value["object_type"],
+        mime_type=value["mime_type"],
+        byte_size=int(value["byte_size"]),
+        sha256=value["sha256"],
+        content=content,
+        filename=value.get("filename"),
+        storage_status=value.get("storage_status", "stored"),
+        retention_policy=value.get("retention_policy", "keep"),
+        linked_record_type=value.get("linked_record_type"),
+        linked_record_id=value.get("linked_record_id"),
         created_at=datetime.fromisoformat(value["created_at"]),
     )

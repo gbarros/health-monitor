@@ -53,6 +53,16 @@ type FoodLookupCandidate = {
   confidence: number;
   warnings: string[];
 };
+type AttachmentObject = {
+  id: string;
+  object_type: string;
+  mime_type: string;
+  byte_size: number;
+  sha256: string;
+  filename: string | null;
+  linked_record_type: string | null;
+  linked_record_id: string | null;
+};
 type SummaryEntry = {
   id: string;
   logged_at: string;
@@ -719,6 +729,7 @@ function renderLabelScan(): string {
     <form id="label-scan-form" class="panel">
       <p class="eyebrow">Label scan</p>
       <h2>Nutrition table</h2>
+      <label>Image <input name="attachment" type="file" accept="image/*" ${disabled} /></label>
       <textarea name="table_text" ${disabled}>Produto: Iogurte Batavo Protein
 Marca: Batavo
 Porcao: 170 g
@@ -1035,13 +1046,17 @@ async function onLabelScan(event: SubmitEvent): Promise<void> {
   event.preventDefault();
   if (!state.household || !state.person) return;
   const form = new FormData(event.currentTarget as HTMLFormElement);
+  const attachment = await uploadOptionalAttachment(form, "attachment", "nutrition_label_image");
   state.proposal = await apiPost<Proposal>("/api/agent/label-scan", {
     household_id: state.household.id,
     person_id: state.person.id,
     table_text: requiredText(form, "table_text"),
-    set_as_default: true
+    set_as_default: true,
+    attachment_id: attachment?.id ?? null
   });
-  state.notice = "Food version proposal drafted.";
+  state.notice = attachment
+    ? "Food version proposal drafted with attachment evidence."
+    : "Food version proposal drafted.";
   render();
 }
 
@@ -1223,6 +1238,35 @@ async function apiPatch<T = unknown>(path: string, body: Record<string, unknown>
 
 async function apiDelete<T = unknown>(path: string): Promise<T> {
   return parseResponse<T>(await fetch(path, { method: "DELETE" }));
+}
+
+async function uploadOptionalAttachment(
+  form: FormData,
+  key: string,
+  objectType: string
+): Promise<AttachmentObject | null> {
+  if (!state.household || !state.person) return null;
+  const file = form.get(key);
+  if (!(file instanceof File) || file.size === 0) return null;
+  return apiPost<AttachmentObject>("/api/attachments", {
+    household_id: state.household.id,
+    person_id: state.person.id,
+    object_type: objectType,
+    mime_type: file.type || "application/octet-stream",
+    filename: file.name || null,
+    content_base64: await fileToBase64(file),
+    retention_policy: "keep"
+  });
+}
+
+async function fileToBase64(file: File): Promise<string> {
+  const buffer = await file.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary);
 }
 
 async function parseResponse<T>(response: Response): Promise<T> {

@@ -67,6 +67,7 @@ class ExportImportTest(unittest.TestCase):
             "diary_entries",
             "weight_entries",
             "proposals",
+            "attachment_objects",
         ):
             self.assertIn(key, exported["data"])
         self.assertEqual(exported["data"]["people"][0]["height_cm"], 180)

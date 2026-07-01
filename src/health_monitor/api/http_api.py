@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass
 from datetime import date
 from typing import Any
@@ -7,6 +8,7 @@ from urllib.parse import parse_qs, urlparse
 
 from health_monitor.application.service import (
     AgentChatResponse,
+    AttachmentObject,
     DaySummary,
     DaySummaryEntry,
     GoalProfile,
@@ -87,6 +89,23 @@ class HttpApi:
                 day=date.fromisoformat(query["day"]),
             )
             return HttpResponse(200, goal_profile_to_dict(goal) if goal is not None else {})
+
+        if method == "POST" and path == "/api/attachments":
+            attachment = self.service.create_attachment(
+                household_id=body["household_id"],
+                person_id=body["person_id"],
+                object_type=body["object_type"],
+                mime_type=body["mime_type"],
+                filename=body.get("filename"),
+                content=base64.b64decode(body["content_base64"]),
+                retention_policy=body.get("retention_policy", "keep"),
+            )
+            return HttpResponse(201, attachment_to_dict(attachment))
+
+        if method == "GET" and path.startswith("/api/attachments/"):
+            attachment_id = path.removeprefix("/api/attachments/")
+            attachment = self.service.get_attachment(attachment_id)
+            return HttpResponse(200, attachment_to_dict(attachment))
 
         if method == "POST" and path == "/api/foods":
             food, version = self.service.create_food_with_version(
@@ -218,6 +237,7 @@ class HttpApi:
                 person_id=body["person_id"],
                 table_text=body["table_text"],
                 set_as_default=bool(body.get("set_as_default", True)),
+                attachment_id=body.get("attachment_id"),
             )
             return HttpResponse(201, proposal_to_dict(proposal, self.service))
 
@@ -285,6 +305,25 @@ def goal_profile_to_dict(goal: GoalProfile) -> dict[str, Any]:
         "targets": nutrients_to_dict(goal.targets),
         "notes": goal.notes,
         "created_at": goal.created_at.isoformat(),
+    }
+
+
+def attachment_to_dict(attachment: AttachmentObject) -> dict[str, Any]:
+    return {
+        "id": attachment.id,
+        "household_id": attachment.household_id,
+        "created_by_person_id": attachment.created_by_person_id,
+        "object_type": attachment.object_type,
+        "mime_type": attachment.mime_type,
+        "byte_size": attachment.byte_size,
+        "sha256": attachment.sha256,
+        "content_base64": base64.b64encode(attachment.content).decode("ascii"),
+        "filename": attachment.filename,
+        "storage_status": attachment.storage_status,
+        "retention_policy": attachment.retention_policy,
+        "linked_record_type": attachment.linked_record_type,
+        "linked_record_id": attachment.linked_record_id,
+        "created_at": attachment.created_at.isoformat(),
     }
 
 
