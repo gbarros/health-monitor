@@ -778,7 +778,7 @@ function renderLabelScan(): string {
       <p class="eyebrow">Label scan</p>
       <h2>Nutrition table</h2>
       <label>Image <input name="attachment" type="file" accept="image/*" ${disabled} /></label>
-      <textarea name="table_text" ${disabled}>Produto: Iogurte Batavo Protein
+      <textarea name="table_text" placeholder="Optional when an image is attached" ${disabled}>Produto: Iogurte Batavo Protein
 Marca: Batavo
 Porcao: 170 g
 Valor energetico: 120 kcal
@@ -1098,7 +1098,7 @@ async function onLabelScan(event: SubmitEvent): Promise<void> {
   state.proposal = await apiPost<Proposal>("/api/agent/label-scan", {
     household_id: state.household.id,
     person_id: state.person.id,
-    table_text: requiredText(form, "table_text"),
+    table_text: optionalText(form, "table_text") ?? "",
     set_as_default: true,
     attachment_id: attachment?.id ?? null
   });

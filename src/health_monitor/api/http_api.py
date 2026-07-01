@@ -240,7 +240,7 @@ class HttpApi:
             proposal = self.service.propose_label_scan(
                 household_id=body["household_id"],
                 person_id=body["person_id"],
-                table_text=body["table_text"],
+                table_text=body.get("table_text"),
                 set_as_default=bool(body.get("set_as_default", True)),
                 attachment_id=body.get("attachment_id"),
             )

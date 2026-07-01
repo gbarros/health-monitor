@@ -9,6 +9,7 @@ from health_monitor.application.service import HealthMonitorService
 from health_monitor.config import load_config
 from health_monitor.lookup.estimates import OllamaFoodEstimator
 from health_monitor.lookup.foods import OpenFoodFactsLookupProvider
+from health_monitor.lookup.labels import OllamaLabelTextExtractor
 from health_monitor.persistence.sqlite_state import SQLiteStateRepository
 
 
@@ -25,12 +26,21 @@ def build_api() -> HttpApi:
         )
     elif config.food_estimator != "none":
         raise ValueError(f"unsupported food estimator: {config.food_estimator}")
+    label_text_extractor = None
+    if config.label_text_extractor == "ollama":
+        label_text_extractor = OllamaLabelTextExtractor(
+            base_url=config.ollama_base_url,
+            model=config.ollama_vision_model,
+        )
+    elif config.label_text_extractor != "none":
+        raise ValueError(f"unsupported label text extractor: {config.label_text_extractor}")
     food_lookup_provider = OpenFoodFactsLookupProvider() if config.openfoodfacts_enabled else None
     return HttpApi(
         HealthMonitorService(
             repository=repository,
             estimator=estimator,
             food_lookup_provider=food_lookup_provider,
+            label_text_extractor=label_text_extractor,
         )
     )
 

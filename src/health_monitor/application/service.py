@@ -15,6 +15,7 @@ from health_monitor.domain.nutrients import Nutrients
 from health_monitor.domain.proposals import CreateDiaryEntriesProposal, ProposalService
 from health_monitor.lookup.estimates import FoodEstimator, NutritionEstimate
 from health_monitor.lookup.foods import FoodLookupCandidate, FoodLookupProvider
+from health_monitor.lookup.labels import LabelTextExtraction, LabelTextExtractor
 from health_monitor.persistence.sqlite_state import StateRepository
 
 
@@ -197,10 +198,12 @@ class HealthMonitorService:
         repository: StateRepository | None = None,
         estimator: FoodEstimator | None = None,
         food_lookup_provider: FoodLookupProvider | None = None,
+        label_text_extractor: LabelTextExtractor | None = None,
     ) -> None:
         self.repository = repository
         self.estimator = estimator
         self.food_lookup_provider = food_lookup_provider
+        self.label_text_extractor = label_text_extractor
         self.households: dict[str, Household] = {}
         self.people: dict[str, Person] = {}
         self.goal_profiles: dict[str, GoalProfile] = {}
@@ -1231,17 +1234,33 @@ class HealthMonitorService:
         *,
         household_id: str,
         person_id: str,
-        table_text: str,
+        table_text: str | None,
         set_as_default: bool = True,
         attachment_id: str | None = None,
     ) -> CreateDiaryEntriesProposal:
         self._require_household(household_id)
         self._require_person(person_id)
+        attachment = None
         if attachment_id is not None:
             attachment = self.get_attachment(attachment_id)
             if attachment.household_id != household_id:
                 raise ValueError("attachment belongs to a different household")
-        parsed = parse_nutrition_label_text(table_text)
+        text_source = "user_text"
+        extraction: LabelTextExtraction | None = None
+        normalized_text = (table_text or "").strip()
+        if not normalized_text:
+            if attachment is None or self.label_text_extractor is None:
+                raise ValueError("label scan requires table text or an attachment text extractor")
+            extraction = self.label_text_extractor.extract(
+                image_bytes=attachment.content,
+                mime_type=attachment.mime_type,
+                filename=attachment.filename,
+            )
+            if extraction is None or not extraction.text.strip():
+                raise ValueError("could not extract nutrition label text from attachment")
+            normalized_text = extraction.text.strip()
+            text_source = "ocr"
+        parsed = parse_nutrition_label_text(normalized_text)
         payload = {
             "household_id": household_id,
             "food_name": parsed.food_name,
@@ -1253,6 +1272,11 @@ class HealthMonitorService:
             "set_as_default": set_as_default,
             "source": "label_scan",
             "attachment_id": attachment_id,
+            "text_source": text_source,
+            "ocr_text": extraction.text if extraction is not None else None,
+            "ocr_source": extraction.source if extraction is not None else None,
+            "ocr_confidence": extraction.confidence if extraction is not None else None,
+            "ocr_warnings": list(extraction.warnings) if extraction is not None else [],
         }
         proposal = self.proposals.create(
             CreateDiaryEntriesProposal(
@@ -1265,9 +1289,13 @@ class HealthMonitorService:
                 evidence=(
                     {
                         "source_type": "nutrition_label_text",
-                        "raw_text": table_text,
+                        "raw_text": normalized_text,
                         "warnings": list(parsed.warnings),
                         "attachment_id": attachment_id,
+                        "text_source": text_source,
+                        "ocr_source": extraction.source if extraction is not None else None,
+                        "ocr_confidence": extraction.confidence if extraction is not None else None,
+                        "ocr_warnings": list(extraction.warnings) if extraction is not None else [],
                     },
                 ),
             )
