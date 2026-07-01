@@ -650,6 +650,7 @@ class HttpApiContractTest(unittest.TestCase):
             None,
         ).body
         processed = api.handle("POST", f"/api/jobs/{queued['id']}/process", None).body
+        proposal = api.handle("GET", f"/api/proposals/{processed['result']['proposal_id']}", None).body
         applied = api.handle(
             "POST",
             f"/api/proposals/{processed['result']['proposal_id']}/confirm",
@@ -666,6 +667,8 @@ class HttpApiContractTest(unittest.TestCase):
         self.assertEqual(processed["status"], "succeeded")
         self.assertEqual(processed["attempts"], 1)
         self.assertEqual(processed["result"]["proposal_type"], "diary_entries")
+        self.assertEqual(proposal["id"], processed["result"]["proposal_id"])
+        self.assertEqual(proposal["status"], "draft")
         self.assertEqual(applied["status"], "applied")
         self.assertEqual(after["totals"]["calories_kcal"], 315)
 

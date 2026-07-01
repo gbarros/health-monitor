@@ -158,6 +158,19 @@ type AgentChatResponse = {
   proposal_id: string | null;
   proposal: Proposal | null;
 };
+type BackgroundJob = {
+  id: string;
+  job_type: string;
+  status: string;
+  payload: Record<string, unknown>;
+  result: Record<string, unknown>;
+  last_error: string | null;
+  attempts: number;
+  created_at: string;
+  updated_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+};
 
 type AppState = {
   household: Household | null;
@@ -172,6 +185,7 @@ type AppState = {
   reviewNotes: ReviewNote[];
   proposal: Proposal | null;
   chatResponse: AgentChatResponse | null;
+  jobs: BackgroundJob[];
   lastDeletedEntry: DiaryEntryRecord | null;
   exportText: string;
   notice: string | null;
@@ -192,6 +206,7 @@ const state: AppState = {
   reviewNotes: [],
   proposal: null,
   chatResponse: null,
+  jobs: [],
   lastDeletedEntry: null,
   exportText: "",
   notice: null
@@ -228,6 +243,7 @@ function render(): void {
           ${renderToday()}
           ${renderReview()}
           ${renderProposal()}
+          ${renderJobs()}
         </div>
         <aside class="side">
           ${renderSetup()}
@@ -502,6 +518,58 @@ function renderProposal(): string {
       ${payloadDetails}
       <p class="hint">${escapeHtml(settings)}</p>
       ${evidence ? `<ul class="evidence-list">${evidence}</ul>` : ""}
+    </section>
+  `;
+}
+
+function renderJobs(): string {
+  const disabled = state.person ? "" : "disabled";
+  const rows = state.jobs
+    .map((job) => {
+      const proposalId = typeof job.result.proposal_id === "string" ? job.result.proposal_id : null;
+      return `
+        <li>
+          <div>
+            <strong>${escapeHtml(jobLabel(job.job_type))}</strong>
+            <span>${escapeHtml(job.status)} · ${job.attempts} attempt${job.attempts === 1 ? "" : "s"} · ${escapeHtml(job.created_at.slice(0, 19))}</span>
+            ${
+              job.last_error
+                ? `<span class="job-error">${escapeHtml(job.last_error)}</span>`
+                : proposalId
+                  ? `<span>Proposal ${escapeHtml(proposalId)}</span>`
+                  : ""
+            }
+          </div>
+          <div class="button-row">
+            ${
+              job.status === "pending"
+                ? `<button class="job-process" type="button" data-job-id="${job.id}">Process</button>`
+                : ""
+            }
+            ${
+              proposalId
+                ? `<button class="job-load-proposal" type="button" data-proposal-id="${escapeHtml(proposalId)}">Open proposal</button>`
+                : ""
+            }
+          </div>
+        </li>
+      `;
+    })
+    .join("");
+  return `
+    <section class="today">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Worker</p>
+          <h2>Background jobs</h2>
+        </div>
+        <button id="refresh-jobs" type="button" ${disabled}>Refresh</button>
+      </div>
+      ${
+        rows
+          ? `<ul class="job-list">${rows}</ul>`
+          : `<p class="empty">No background jobs for this profile.</p>`
+      }
     </section>
   `;
 }
@@ -855,6 +923,7 @@ function renderTextMeal(): string {
       </label>
       <label>Max loops <input name="max_tool_loops" type="number" value="4" min="1" max="12" ${disabled} /></label>
       <label class="check-row"><input name="external_lookup" type="checkbox" checked ${disabled} /> External lookup</label>
+      <label class="check-row"><input name="background_job" type="checkbox" ${disabled} /> Run in background</label>
       <button type="submit" ${disabled}>Draft proposal</button>
     </form>
   `;
@@ -879,6 +948,7 @@ function renderAgentChat(): string {
         </label>
         <label>Max loops <input name="max_tool_loops" type="number" value="4" min="1" max="12" ${disabled} /></label>
       </div>
+      <label class="check-row"><input name="background_job" type="checkbox" ${disabled} /> Run in background</label>
       <button type="submit" ${disabled}>Send</button>
       ${
         response
@@ -918,6 +988,7 @@ Proteinas: 15 g
 Carboidratos: 10 g
 Gorduras totais: 2 g
 Codigo de barras: 7891000000000</textarea>
+      <label class="check-row"><input name="background_job" type="checkbox" ${disabled} /> Run in background</label>
       <button type="submit" ${disabled}>Draft food version</button>
     </form>
   `;
@@ -943,6 +1014,7 @@ Yield: 1000 g
 Ingredients:
 500g queijo
 500g banana</textarea>
+      <label class="check-row"><input name="background_job" type="checkbox" ${disabled} /> Run in background</label>
       <button type="submit" ${disabled}>Draft recipe</button>
     </form>
   `;
@@ -977,6 +1049,7 @@ function bindEvents(): void {
   document.querySelector<HTMLSelectElement>("#profile-select")?.addEventListener("change", onProfileSelect);
   document.querySelector<HTMLButtonElement>("#refresh-summary")?.addEventListener("click", refreshSummary);
   document.querySelector<HTMLButtonElement>("#refresh-review")?.addEventListener("click", refreshReview);
+  document.querySelector<HTMLButtonElement>("#refresh-jobs")?.addEventListener("click", refreshJobs);
   document.querySelector<HTMLButtonElement>("#export-data")?.addEventListener("click", onExportData);
   document.querySelector<HTMLButtonElement>("#confirm-proposal")?.addEventListener("click", confirmProposal);
   document.querySelector<HTMLButtonElement>("#reject-proposal")?.addEventListener("click", rejectProposal);
@@ -1002,6 +1075,12 @@ function bindEvents(): void {
   document
     .querySelectorAll<HTMLButtonElement>(".clarification-candidate")
     .forEach((button) => button.addEventListener("click", onClarificationCandidate));
+  document
+    .querySelectorAll<HTMLButtonElement>(".job-process")
+    .forEach((button) => button.addEventListener("click", onJobProcess));
+  document
+    .querySelectorAll<HTMLButtonElement>(".job-load-proposal")
+    .forEach((button) => button.addEventListener("click", onJobLoadProposal));
 }
 
 async function onSetup(event: SubmitEvent): Promise<void> {
@@ -1215,6 +1294,24 @@ async function onClarificationCandidate(event: Event): Promise<void> {
   render();
 }
 
+async function onJobProcess(event: Event): Promise<void> {
+  const jobId = (event.currentTarget as HTMLButtonElement).dataset.jobId;
+  if (!jobId) return;
+  const job = await apiPost<BackgroundJob>(`/api/jobs/${jobId}/process`, {});
+  replaceJob(job);
+  await adoptJobProposal(job);
+  state.notice = `Job ${job.status}.`;
+  render();
+}
+
+async function onJobLoadProposal(event: Event): Promise<void> {
+  const proposalId = (event.currentTarget as HTMLButtonElement).dataset.proposalId;
+  if (!proposalId) return;
+  state.proposal = await apiGet<Proposal>(`/api/proposals/${proposalId}`);
+  state.notice = "Loaded job proposal. Review before applying.";
+  render();
+}
+
 async function onManualLog(event: SubmitEvent): Promise<void> {
   event.preventDefault();
   if (!state.person) return;
@@ -1297,7 +1394,7 @@ async function onTextMeal(event: SubmitEvent): Promise<void> {
   event.preventDefault();
   if (!state.person) return;
   const form = new FormData(event.currentTarget as HTMLFormElement);
-  state.proposal = await apiPost<Proposal>("/api/agent/text-meal", {
+  const payload = {
     person_id: state.person.id,
     logged_at_local: `${today}T10:00:00`,
     text: requiredText(form, "text"),
@@ -1307,7 +1404,12 @@ async function onTextMeal(event: SubmitEvent): Promise<void> {
       max_tool_loops: numberField(form, "max_tool_loops"),
       external_lookup: form.get("external_lookup") === "on"
     }
-  });
+  };
+  if (form.get("background_job") === "on") {
+    await enqueueJob("agent_text_meal", payload);
+    return;
+  }
+  state.proposal = await apiPost<Proposal>("/api/agent/text-meal", payload);
   state.notice = "Proposal drafted. Review before applying.";
   render();
 }
@@ -1316,7 +1418,7 @@ async function onAgentChat(event: SubmitEvent): Promise<void> {
   event.preventDefault();
   if (!state.person) return;
   const form = new FormData(event.currentTarget as HTMLFormElement);
-  state.chatResponse = await apiPost<AgentChatResponse>("/api/agent/chat", {
+  const payload = {
     person_id: state.person.id,
     message: requiredText(form, "message"),
     today,
@@ -1325,7 +1427,12 @@ async function onAgentChat(event: SubmitEvent): Promise<void> {
       effort: requiredText(form, "effort"),
       max_tool_loops: numberField(form, "max_tool_loops")
     }
-  });
+  };
+  if (form.get("background_job") === "on") {
+    await enqueueJob("agent_chat", payload);
+    return;
+  }
+  state.chatResponse = await apiPost<AgentChatResponse>("/api/agent/chat", payload);
   if (state.chatResponse.proposal) {
     state.proposal = state.chatResponse.proposal;
     state.notice = "Chat drafted a proposal. Review before applying.";
@@ -1341,7 +1448,7 @@ async function onLabelScan(event: SubmitEvent): Promise<void> {
   const form = new FormData(event.currentTarget as HTMLFormElement);
   const attachment = await uploadOptionalAttachment(form, "attachment", "nutrition_label_image");
   const quantityG = optionalNumber(form, "quantity_g");
-  state.proposal = await apiPost<Proposal>("/api/agent/label-scan", {
+  const payload = {
     household_id: state.household.id,
     person_id: state.person.id,
     table_text: optionalText(form, "table_text") ?? "",
@@ -1351,7 +1458,12 @@ async function onLabelScan(event: SubmitEvent): Promise<void> {
     logged_at_local: quantityG === null ? null : requiredText(form, "logged_at_local"),
     quantity_g: quantityG,
     meal_type: quantityG === null ? null : requiredText(form, "meal_type")
-  });
+  };
+  if (form.get("background_job") === "on") {
+    await enqueueJob("agent_label_scan", payload);
+    return;
+  }
+  state.proposal = await apiPost<Proposal>("/api/agent/label-scan", payload);
   state.notice = attachment
     ? "Food version proposal drafted with attachment evidence."
     : "Food version proposal drafted.";
@@ -1363,14 +1475,19 @@ async function onRecipe(event: SubmitEvent): Promise<void> {
   if (!state.household || !state.person) return;
   const form = new FormData(event.currentTarget as HTMLFormElement);
   const quantityG = optionalNumber(form, "quantity_g");
-  state.proposal = await apiPost<Proposal>("/api/agent/recipe", {
+  const payload = {
     household_id: state.household.id,
     person_id: state.person.id,
     recipe_text: requiredText(form, "recipe_text"),
     logged_at_local: quantityG === null ? null : requiredText(form, "logged_at_local"),
     quantity_g: quantityG,
     meal_type: quantityG === null ? null : requiredText(form, "meal_type")
-  });
+  };
+  if (form.get("background_job") === "on") {
+    await enqueueJob("agent_recipe", payload);
+    return;
+  }
+  state.proposal = await apiPost<Proposal>("/api/agent/recipe", payload);
   state.notice = "Recipe proposal drafted.";
   render();
 }
@@ -1421,6 +1538,27 @@ async function rejectProposal(): Promise<void> {
   render();
 }
 
+async function enqueueJob(jobType: string, payload: Record<string, unknown>): Promise<void> {
+  const job = await apiPost<BackgroundJob>("/api/jobs", {
+    job_type: jobType,
+    payload
+  });
+  replaceJob(job);
+  state.notice = `${jobLabel(job.job_type)} queued for the worker.`;
+  render();
+}
+
+async function adoptJobProposal(job: BackgroundJob): Promise<void> {
+  const proposalId = typeof job.result.proposal_id === "string" ? job.result.proposal_id : null;
+  if (!proposalId || job.status !== "succeeded") return;
+  state.proposal = await apiGet<Proposal>(`/api/proposals/${proposalId}`);
+}
+
+function replaceJob(job: BackgroundJob): void {
+  const existing = state.jobs.filter((item) => item.id !== job.id);
+  state.jobs = [job, ...existing].sort((left, right) => right.created_at.localeCompare(left.created_at));
+}
+
 async function refreshSummary(): Promise<void> {
   if (!state.person) {
     render();
@@ -1446,10 +1584,21 @@ async function refreshReview(): Promise<void> {
   render();
 }
 
+async function refreshJobs(): Promise<void> {
+  if (!state.person) {
+    state.jobs = [];
+    render();
+    return;
+  }
+  state.jobs = await apiGet<BackgroundJob[]>(`/api/jobs?person_id=${state.person.id}`);
+  render();
+}
+
 async function refreshAllReadSurfaces(): Promise<void> {
   if (!state.person) {
     await refreshFoodLibrary();
     state.reviewNotes = [];
+    state.jobs = [];
     render();
     return;
   }
@@ -1461,6 +1610,7 @@ async function refreshAllReadSurfaces(): Promise<void> {
     `/api/summaries/week?person_id=${state.person.id}&start=2026-07-01&end=2026-07-07`
   );
   state.reviewNotes = await apiGet<ReviewNote[]>(`/api/review-notes?person_id=${state.person.id}`);
+  state.jobs = await apiGet<BackgroundJob[]>(`/api/jobs?person_id=${state.person.id}`);
   render();
 }
 
@@ -1674,6 +1824,16 @@ function zeroNutrients(): Nutrients {
 
 function titleCase(value: string): string {
   return value.slice(0, 1).toUpperCase() + value.slice(1);
+}
+
+function jobLabel(jobType: string): string {
+  const labels: Record<string, string> = {
+    agent_text_meal: "Text meal",
+    agent_label_scan: "Label scan",
+    agent_recipe: "Recipe",
+    agent_chat: "Agent chat"
+  };
+  return labels[jobType] ?? jobType;
 }
 
 function signed(value: number): string {

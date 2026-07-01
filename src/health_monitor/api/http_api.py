@@ -362,6 +362,11 @@ class HttpApi:
             )
             return HttpResponse(201, agent_chat_response_to_dict(response, self.service))
 
+        if method == "GET" and path.startswith("/api/proposals/"):
+            proposal_id = path.removeprefix("/api/proposals/")
+            proposal = self.service.get_proposal(proposal_id)
+            return HttpResponse(200, proposal_to_dict(proposal, self.service))
+
         if method == "POST" and path.startswith("/api/proposals/") and path.endswith("/confirm"):
             proposal_id = path.removeprefix("/api/proposals/").removesuffix("/confirm")
             proposal = self.service.confirm_proposal(proposal_id)
