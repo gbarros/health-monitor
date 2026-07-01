@@ -197,6 +197,8 @@ class HttpApiContractTest(unittest.TestCase):
                     "protein_g": 7,
                     "carbs_g": 35,
                     "fat_g": 12,
+                    "fiber_g": 3,
+                    "sodium_mg": 400,
                 },
                 "logged_at_local": "2026-07-01T16:00:00",
                 "quantity_g": 80,
@@ -224,7 +226,11 @@ class HttpApiContractTest(unittest.TestCase):
         self.assertEqual(created.body["entry"]["source"], "manual_quick_custom")
         self.assertEqual(summary["totals"]["calories_kcal"], 224)
         self.assertEqual(summary["totals"]["protein_g"], 5.6)
+        self.assertEqual(summary["totals"]["fiber_g"], 2.4)
+        self.assertEqual(summary["totals"]["sodium_mg"], 320)
         self.assertEqual(summary["meals"]["snack"][0]["food_name"], "Pao de queijo caseiro")
+        self.assertEqual(summary["meals"]["snack"][0]["nutrients"]["fiber_g"], 2.4)
+        self.assertEqual(summary["meals"]["snack"][0]["nutrients"]["sodium_mg"], 320)
         self.assertEqual(resolved["food_version_id"], created.body["version"]["id"])
 
     def test_food_library_list_returns_loggable_default_versions_through_http_contract(self) -> None:

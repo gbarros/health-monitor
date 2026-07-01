@@ -182,7 +182,14 @@ class DailyDriverApplicationSliceTest(unittest.TestCase):
             name="Pao de queijo caseiro",
             brand=None,
             version_label="quick custom",
-            nutrients_per_100g=Nutrients(calories_kcal=280, protein_g=7, carbs_g=35, fat_g=12),
+            nutrients_per_100g=Nutrients(
+                calories_kcal=280,
+                protein_g=7,
+                carbs_g=35,
+                fat_g=12,
+                fiber_g=3,
+                sodium_mg=400,
+            ),
             logged_at_local="2026-07-01T16:00:00",
             quantity_g=80,
             aliases=["pao de queijo"],
@@ -198,7 +205,7 @@ class DailyDriverApplicationSliceTest(unittest.TestCase):
         self.assertEqual(entry.food_version_id, version.id)
         self.assertEqual(entry.meal_type, "snack")
         self.assertEqual(entry.source, "manual_quick_custom")
-        self.assertEqual(summary.totals.rounded(), Nutrients(224, 5.6, 28, 9.6))
+        self.assertEqual(summary.totals.rounded(), Nutrients(224, 5.6, 28, 9.6, 2.4, 320))
         self.assertEqual(resolved.food_version_id, version.id)
 
     def test_manual_log_can_use_known_serving_size(self) -> None:

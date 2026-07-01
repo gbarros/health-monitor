@@ -288,6 +288,7 @@ function renderToday(): string {
               <td>
                 <strong>${escapeHtml(entry.food_name)}</strong>
                 <span>${escapeHtml(entry.food_version_label)} · ${escapeHtml(entry.source)}</span>
+                <span>${entry.nutrients.fiber_g} g fiber · ${entry.nutrients.sodium_mg} mg sodium</span>
                 <form class="entry-edit-form" data-entry-id="${entry.id}">
                   <input name="quantity_g" type="number" step="0.1" value="${entry.quantity_g}" aria-label="Quantity grams" />
                   <select name="meal_type" aria-label="Meal type">${mealOptions(entry.meal_type)}</select>
@@ -328,6 +329,8 @@ function renderToday(): string {
         ${metric("Protein", `${totals.protein_g}`, "g")}
         ${metric("Carbs", `${totals.carbs_g}`, "g")}
         ${metric("Fat", `${totals.fat_g}`, "g")}
+        ${metric("Fiber", `${totals.fiber_g}`, "g")}
+        ${metric("Sodium", `${totals.sodium_mg}`, "mg")}
       </div>
       ${
         target && delta
@@ -361,6 +364,8 @@ function renderReview(): string {
               <td>${target ? `${target.calories_kcal}` : ""}</td>
               <td>${nutrients.carbs_g} g</td>
               <td>${nutrients.fat_g} g</td>
+              <td>${nutrients.fiber_g} g</td>
+              <td>${nutrients.sodium_mg} mg</td>
             </tr>
           `;
           }
@@ -413,6 +418,8 @@ function renderReview(): string {
         ${metric("Avg kcal", `${averages.calories_kcal}`, "daily")}
         ${metric("Protein", `${totals.protein_g}`, "g total")}
         ${metric("Weight", `${trend?.delta_kg ?? 0}`, "kg delta")}
+        ${metric("Fiber", `${averages.fiber_g}`, "g avg")}
+        ${metric("Sodium", `${averages.sodium_mg}`, "mg avg")}
       </div>
       <div class="chart-grid">
         ${week ? renderMacroChart(week) : ""}
@@ -420,7 +427,7 @@ function renderReview(): string {
       </div>
       ${
         dailyRows
-          ? `<table><thead><tr><th>Day</th><th>Calories</th><th>Protein</th><th>Target</th><th>Carbs</th><th>Fat</th></tr></thead><tbody>${dailyRows}</tbody></table>`
+          ? `<table><thead><tr><th>Day</th><th>Calories</th><th>Protein</th><th>Target</th><th>Carbs</th><th>Fat</th><th>Fiber</th><th>Sodium</th></tr></thead><tbody>${dailyRows}</tbody></table>`
           : `<p class="empty">No weekly review loaded yet.</p>`
       }
       ${
@@ -454,6 +461,7 @@ function renderProposal(): string {
         <li>
           <strong>${escapeHtml(entry.food_name)}</strong>
           <span>${entry.quantity_g} g · ${entry.nutrients.calories_kcal} kcal · ${entry.nutrients.protein_g} g protein</span>
+          <span>${entry.nutrients.fiber_g} g fiber · ${entry.nutrients.sodium_mg} mg sodium</span>
           ${
             editable
               ? `<form class="proposal-entry-edit-form" data-entry-id="${entry.id}">
@@ -697,6 +705,8 @@ function renderFoodVersionProposalPayload(proposal: Proposal): string {
       <div><dt>Barcode</dt><dd>${escapeHtml(String(proposal.payload.barcode ?? ""))}</dd></div>
       <div><dt>Calories / 100g</dt><dd>${nutrients?.calories_kcal ?? 0}</dd></div>
       <div><dt>Protein / 100g</dt><dd>${nutrients?.protein_g ?? 0} g</dd></div>
+      <div><dt>Fiber / 100g</dt><dd>${nutrients?.fiber_g ?? 0} g</dd></div>
+      <div><dt>Sodium / 100g</dt><dd>${nutrients?.sodium_mg ?? 0} mg</dd></div>
     </dl>
   `;
 }
@@ -897,6 +907,7 @@ function renderFoodForm(): string {
         <li>
           <strong>${escapeHtml(foodLabel(item))}</strong>
           <span>${item.version.nutrients_per_100g.calories_kcal} kcal · ${item.version.nutrients_per_100g.protein_g} g protein / 100g</span>
+          <span>${item.version.nutrients_per_100g.fiber_g} g fiber · ${item.version.nutrients_per_100g.sodium_mg} mg sodium / 100g</span>
           <button class="food-archive" type="button" data-food-id="${item.food.id}">Archive</button>
         </li>
       `
@@ -914,6 +925,8 @@ function renderFoodForm(): string {
         <label>Protein <input name="protein_g" type="number" step="0.1" value="23" ${disabled} /></label>
         <label>Carbs <input name="carbs_g" type="number" step="0.1" value="2.6" ${disabled} /></label>
         <label>Fat <input name="fat_g" type="number" step="0.1" value="23.5" ${disabled} /></label>
+        <label>Fiber <input name="fiber_g" type="number" step="0.1" value="0" ${disabled} /></label>
+        <label>Sodium mg <input name="sodium_mg" type="number" step="0.1" value="0" ${disabled} /></label>
       </div>
       <label>Serving size g <input name="serving_size_g" type="number" step="0.1" placeholder="optional" ${disabled} /></label>
       <label>Aliases <input name="aliases" value="queijo, queijo minas" ${disabled} /></label>
@@ -997,6 +1010,8 @@ function renderManualLog(): string {
         <label>Protein / 100g <input name="protein_g" type="number" step="0.1" value="7" ${quickDisabled} /></label>
         <label>Carbs / 100g <input name="carbs_g" type="number" step="0.1" value="35" ${quickDisabled} /></label>
         <label>Fat / 100g <input name="fat_g" type="number" step="0.1" value="12" ${quickDisabled} /></label>
+        <label>Fiber / 100g <input name="fiber_g" type="number" step="0.1" value="0" ${quickDisabled} /></label>
+        <label>Sodium mg / 100g <input name="sodium_mg" type="number" step="0.1" value="0" ${quickDisabled} /></label>
       </div>
       <label>Aliases <input name="aliases" value="pao de queijo" ${quickDisabled} /></label>
       <label>Barcode <input name="barcode" placeholder="optional" ${quickDisabled} /></label>
@@ -1337,7 +1352,9 @@ async function onFood(event: SubmitEvent): Promise<void> {
       calories_kcal: numberField(form, "calories_kcal"),
       protein_g: numberField(form, "protein_g"),
       carbs_g: numberField(form, "carbs_g"),
-      fat_g: numberField(form, "fat_g")
+      fat_g: numberField(form, "fat_g"),
+      fiber_g: numberField(form, "fiber_g"),
+      sodium_mg: numberField(form, "sodium_mg")
     },
     aliases: optionalText(form, "aliases")
       ?.split(",")
@@ -1456,7 +1473,9 @@ async function onQuickCustomLog(event: SubmitEvent): Promise<void> {
       calories_kcal: numberField(form, "calories_kcal"),
       protein_g: numberField(form, "protein_g"),
       carbs_g: numberField(form, "carbs_g"),
-      fat_g: numberField(form, "fat_g")
+      fat_g: numberField(form, "fat_g"),
+      fiber_g: numberField(form, "fiber_g"),
+      sodium_mg: numberField(form, "sodium_mg")
     },
     logged_at_local: requiredText(form, "logged_at_local"),
     quantity_g: numberField(form, "quantity_g"),
