@@ -522,6 +522,12 @@ class HealthMonitorService:
         if barcode is not None:
             resolution = self.resolver.resolve_barcode(barcode)
         if resolution is None and phrase is not None:
+            resolution = self._resolve_phrase_by_recent_use(
+                household_id=household_id,
+                person_id=person_id,
+                phrase=phrase,
+            )
+        if resolution is None and phrase is not None:
             resolution = self.resolver.resolve_phrase(phrase, person_id=person_id)
         if resolution is None:
             raise ValueError("food reference could not be resolved")
@@ -529,6 +535,48 @@ class HealthMonitorService:
         if food.household_id != household_id:
             raise ValueError("resolved food belongs to a different household")
         return resolution
+
+    def _resolve_phrase_by_recent_use(
+        self,
+        *,
+        household_id: str,
+        person_id: str,
+        phrase: str,
+    ) -> FoodResolution | None:
+        normalized = phrase.casefold().strip()
+        matching_food_ids = {
+            alias.food_id
+            for alias in self.catalog.aliases.values()
+            if alias.household_id == household_id
+            and alias.phrase.casefold().strip() == normalized
+            and (alias.person_id is None or alias.person_id == person_id)
+            and alias.food_id in self.catalog.foods
+            and not self.catalog.foods[alias.food_id].archived
+        }
+        if len(matching_food_ids) <= 1:
+            return None
+
+        latest_entry: DiaryEntry | None = None
+        for entry in self.diary.entries.values():
+            if entry.person_id != person_id or entry.deleted_at is not None:
+                continue
+            version = self.catalog.versions.get(entry.food_version_id)
+            if version is None or version.archived:
+                continue
+            if version.food_id not in matching_food_ids:
+                continue
+            if latest_entry is None or entry.logged_at > latest_entry.logged_at:
+                latest_entry = entry
+        if latest_entry is None:
+            return None
+
+        version = self.catalog.get_version(latest_entry.food_version_id)
+        return FoodResolution(
+            food_id=version.food_id,
+            food_version_id=version.id,
+            reason="alias_recently_logged_version",
+            confidence=0.98,
+        )
 
     def lookup_food_candidates(
         self,
@@ -563,7 +611,13 @@ class HealthMonitorService:
                     )
                 )
         if phrase is not None:
-            resolution = self.resolver.resolve_phrase(phrase, person_id=person_id)
+            resolution = self._resolve_phrase_by_recent_use(
+                household_id=household_id,
+                person_id=person_id,
+                phrase=phrase,
+            )
+            if resolution is None:
+                resolution = self.resolver.resolve_phrase(phrase, person_id=person_id)
             if resolution is not None:
                 food = self.catalog.foods[resolution.food_id]
                 version = self.catalog.get_version(resolution.food_version_id)

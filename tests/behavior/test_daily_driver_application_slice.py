@@ -79,6 +79,56 @@ class DailyDriverApplicationSliceTest(unittest.TestCase):
         self.assertEqual(by_barcode.food_version_id, version.id)
         self.assertEqual(by_barcode.reason, "confirmed_barcode_association")
 
+    def test_ambiguous_alias_resolution_prefers_recently_logged_food(self) -> None:
+        service = HealthMonitorService()
+        household = service.create_household(name="Casa")
+        person = service.create_person(
+            household_id=household.id,
+            name="Gabriel",
+            timezone="America/Sao_Paulo",
+        )
+        _, old_yogurt = service.create_food_with_version(
+            household_id=household.id,
+            name="Iogurte Natural",
+            brand="Batavo",
+            version_label="natural label",
+            nutrients_per_100g=Nutrients(calories_kcal=80, protein_g=5, carbs_g=9, fat_g=2),
+            source="label_scan",
+            aliases=["iogurte"],
+        )
+        _, protein_yogurt = service.create_food_with_version(
+            household_id=household.id,
+            name="Iogurte Protein",
+            brand="Batavo",
+            version_label="protein label",
+            nutrients_per_100g=Nutrients(calories_kcal=70, protein_g=10, carbs_g=6, fat_g=1),
+            source="label_scan",
+            aliases=["iogurte"],
+        )
+        service.log_diary_entry(
+            person_id=person.id,
+            logged_at_local="2026-07-01T10:00:00",
+            food_version_id=old_yogurt.id,
+            quantity_g=100,
+            source="manual",
+        )
+        service.log_diary_entry(
+            person_id=person.id,
+            logged_at_local="2026-07-03T10:00:00",
+            food_version_id=protein_yogurt.id,
+            quantity_g=100,
+            source="manual",
+        )
+
+        resolution = service.resolve_food_reference(
+            household_id=household.id,
+            person_id=person.id,
+            phrase="iogurte",
+        )
+
+        self.assertEqual(resolution.food_version_id, protein_yogurt.id)
+        self.assertEqual(resolution.reason, "alias_recently_logged_version")
+
     def test_text_meal_logging_creates_proposal_before_diary_mutation(self) -> None:
         service = HealthMonitorService()
         household = service.create_household(name="Casa")

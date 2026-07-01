@@ -68,6 +68,89 @@ class HttpApiContractTest(unittest.TestCase):
         self.assertEqual(summary["totals"]["protein_g"], 15)
         self.assertEqual(summary["meals"]["breakfast"][0]["food_name"], "Iogurte Batavo")
 
+    def test_food_resolve_prefers_recently_logged_alias_through_http_contract(self) -> None:
+        api = HttpApi(HealthMonitorService())
+        household = api.handle("POST", "/api/households", {"name": "Casa"}).body
+        person = api.handle(
+            "POST",
+            "/api/people",
+            {
+                "household_id": household["id"],
+                "name": "Gabriel",
+                "timezone": "America/Sao_Paulo",
+            },
+        ).body
+        natural = api.handle(
+            "POST",
+            "/api/foods",
+            {
+                "household_id": household["id"],
+                "name": "Iogurte Natural",
+                "brand": "Batavo",
+                "version_label": "natural label",
+                "source": "label_scan",
+                "nutrients_per_100g": {
+                    "calories_kcal": 80,
+                    "protein_g": 5,
+                    "carbs_g": 9,
+                    "fat_g": 2,
+                },
+                "aliases": ["iogurte"],
+            },
+        ).body
+        protein = api.handle(
+            "POST",
+            "/api/foods",
+            {
+                "household_id": household["id"],
+                "name": "Iogurte Protein",
+                "brand": "Batavo",
+                "version_label": "protein label",
+                "source": "label_scan",
+                "nutrients_per_100g": {
+                    "calories_kcal": 70,
+                    "protein_g": 10,
+                    "carbs_g": 6,
+                    "fat_g": 1,
+                },
+                "aliases": ["iogurte"],
+            },
+        ).body
+        api.handle(
+            "POST",
+            "/api/diary",
+            {
+                "person_id": person["id"],
+                "logged_at_local": "2026-07-01T10:00:00",
+                "food_version_id": natural["version"]["id"],
+                "quantity_g": 100,
+                "source": "manual",
+            },
+        )
+        api.handle(
+            "POST",
+            "/api/diary",
+            {
+                "person_id": person["id"],
+                "logged_at_local": "2026-07-03T10:00:00",
+                "food_version_id": protein["version"]["id"],
+                "quantity_g": 100,
+                "source": "manual",
+            },
+        )
+
+        resolved = api.handle(
+            "GET",
+            (
+                f"/api/foods/resolve?household_id={household['id']}"
+                f"&person_id={person['id']}&phrase=iogurte"
+            ),
+            None,
+        ).body
+
+        self.assertEqual(resolved["food_version_id"], protein["version"]["id"])
+        self.assertEqual(resolved["reason"], "alias_recently_logged_version")
+
     def test_people_and_goal_targets_through_http_contract(self) -> None:
         api = HttpApi(HealthMonitorService())
         household = api.handle("POST", "/api/households", {"name": "Casa"}).body
