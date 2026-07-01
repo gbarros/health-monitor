@@ -792,6 +792,7 @@ function renderLabelScan(): string {
       <p class="eyebrow">Label scan</p>
       <h2>Nutrition table</h2>
       <label>Image <input name="attachment" type="file" accept="image/*" ${disabled} /></label>
+      <label>Barcode <input name="barcode" inputmode="numeric" placeholder="optional separate scan" ${disabled} /></label>
       <textarea name="table_text" placeholder="Optional when an image is attached" ${disabled}>Produto: Iogurte Batavo Protein
 Marca: Batavo
 Porcao: 170 g
@@ -1131,6 +1132,7 @@ async function onLabelScan(event: SubmitEvent): Promise<void> {
     household_id: state.household.id,
     person_id: state.person.id,
     table_text: optionalText(form, "table_text") ?? "",
+    barcode: optionalText(form, "barcode"),
     set_as_default: true,
     attachment_id: attachment?.id ?? null
   });

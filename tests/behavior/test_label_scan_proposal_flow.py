@@ -67,6 +67,42 @@ class LabelScanProposalFlowTest(unittest.TestCase):
         self.assertEqual(len(applied.applied_record_ids), 3)
         self.assertEqual(resolution.reason, "confirmed_barcode_association")
 
+    def test_separate_barcode_scan_is_associated_with_label_proposal(self) -> None:
+        service = HealthMonitorService()
+        household = service.create_household(name="Casa")
+        person = service.create_person(
+            household_id=household.id,
+            name="Gabriel",
+            timezone="America/Sao_Paulo",
+        )
+
+        proposal = service.propose_label_scan(
+            household_id=household.id,
+            person_id=person.id,
+            table_text="\n".join(
+                [
+                    "Produto: Iogurte Batavo Protein",
+                    "Marca: Batavo",
+                    "Porcao: 170 g",
+                    "Valor energetico: 120 kcal",
+                    "Proteinas: 15 g",
+                    "Carboidratos: 10 g",
+                    "Gorduras totais: 2 g",
+                ]
+            ),
+            barcode="7891000000000",
+            set_as_default=True,
+        )
+        applied = service.confirm_proposal(proposal.id)
+        resolution = service.resolve_food_reference(
+            household_id=household.id,
+            person_id=person.id,
+            barcode="7891000000000",
+        )
+
+        self.assertEqual(proposal.payload["barcode"], "7891000000000")
+        self.assertEqual(applied.applied_record_ids[1], resolution.food_version_id)
+
     def test_pending_label_proposal_survives_restart_and_can_be_confirmed(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "health-monitor.sqlite3"

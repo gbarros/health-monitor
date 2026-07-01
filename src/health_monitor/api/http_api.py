@@ -253,6 +253,7 @@ class HttpApi:
                 table_text=body.get("table_text"),
                 set_as_default=bool(body.get("set_as_default", True)),
                 attachment_id=body.get("attachment_id"),
+                barcode=body.get("barcode"),
             )
             return HttpResponse(201, proposal_to_dict(proposal, self.service))
 

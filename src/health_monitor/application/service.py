@@ -1496,6 +1496,7 @@ class HealthMonitorService:
         table_text: str | None,
         set_as_default: bool = True,
         attachment_id: str | None = None,
+        barcode: str | None = None,
     ) -> CreateDiaryEntriesProposal:
         self._require_household(household_id)
         self._require_person(person_id)
@@ -1520,6 +1521,10 @@ class HealthMonitorService:
             normalized_text = extraction.text.strip()
             text_source = "ocr"
         parsed = parse_nutrition_label_text(normalized_text)
+        scanned_barcode = barcode.strip() if barcode is not None else None
+        if scanned_barcode == "":
+            scanned_barcode = None
+        final_barcode = scanned_barcode or parsed.barcode
         payload = {
             "household_id": household_id,
             "food_name": parsed.food_name,
@@ -1527,7 +1532,8 @@ class HealthMonitorService:
             "version_label": "label scan",
             "nutrients_per_100g": nutrients_to_snapshot(parsed.nutrients_per_100g.rounded()),
             "serving_size_g": parsed.serving_size_g,
-            "barcode": parsed.barcode,
+            "barcode": final_barcode,
+            "barcode_source": "separate_scan" if scanned_barcode is not None else "label_text",
             "set_as_default": set_as_default,
             "source": "label_scan",
             "attachment_id": attachment_id,

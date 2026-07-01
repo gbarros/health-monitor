@@ -334,6 +334,53 @@ class HttpApiContractTest(unittest.TestCase):
         self.assertEqual(applied["status"], "applied")
         self.assertEqual(resolved["reason"], "confirmed_barcode_association")
 
+    def test_label_scan_accepts_separate_barcode_through_http_contract(self) -> None:
+        api = HttpApi(HealthMonitorService())
+        household = api.handle("POST", "/api/households", {"name": "Casa"}).body
+        person = api.handle(
+            "POST",
+            "/api/people",
+            {
+                "household_id": household["id"],
+                "name": "Gabriel",
+                "timezone": "America/Sao_Paulo",
+            },
+        ).body
+        proposal = api.handle(
+            "POST",
+            "/api/agent/label-scan",
+            {
+                "household_id": household["id"],
+                "person_id": person["id"],
+                "table_text": "\n".join(
+                    [
+                        "Produto: Iogurte Batavo Protein",
+                        "Marca: Batavo",
+                        "Porcao: 170 g",
+                        "Valor energetico: 120 kcal",
+                        "Proteinas: 15 g",
+                        "Carboidratos: 10 g",
+                        "Gorduras totais: 2 g",
+                    ]
+                ),
+                "barcode": "7891000000000",
+                "set_as_default": True,
+            },
+        ).body
+
+        applied = api.handle("POST", f"/api/proposals/{proposal['id']}/confirm", None).body
+        resolved = api.handle(
+            "GET",
+            (
+                f"/api/foods/resolve?household_id={household['id']}"
+                f"&person_id={person['id']}&barcode=7891000000000"
+            ),
+            None,
+        ).body
+
+        self.assertEqual(proposal["payload"]["barcode"], "7891000000000")
+        self.assertEqual(applied["applied_record_ids"][1], resolved["food_version_id"])
+
     def test_attachment_label_scan_round_trip_through_http_contract(self) -> None:
         api = HttpApi(HealthMonitorService())
         household = api.handle("POST", "/api/households", {"name": "Casa"}).body
