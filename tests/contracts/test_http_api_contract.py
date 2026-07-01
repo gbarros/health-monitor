@@ -980,6 +980,56 @@ class HttpApiContractTest(unittest.TestCase):
         self.assertEqual(week["averages"]["calories_kcal"], 45)
         self.assertEqual(week["weight_delta_kg"], -0.8)
 
+    def test_weight_entry_edit_through_http_contract(self) -> None:
+        api = HttpApi(HealthMonitorService())
+        household = api.handle("POST", "/api/households", {"name": "Casa"}).body
+        person = api.handle(
+            "POST",
+            "/api/people",
+            {
+                "household_id": household["id"],
+                "name": "Gabriel",
+                "timezone": "America/Sao_Paulo",
+            },
+        ).body
+        first = api.handle(
+            "POST",
+            "/api/weights",
+            {
+                "person_id": person["id"],
+                "measured_at_local": "2026-07-01T08:00:00",
+                "weight_kg": 91.2,
+                "note": "start",
+                "source": "manual",
+            },
+        ).body
+        api.handle(
+            "POST",
+            "/api/weights",
+            {
+                "person_id": person["id"],
+                "measured_at_local": "2026-07-07T08:00:00",
+                "weight_kg": 90.4,
+                "note": "week end",
+                "source": "manual",
+            },
+        )
+
+        updated = api.handle(
+            "PATCH",
+            f"/api/weights/{first['id']}",
+            {
+                "measured_at_local": "2026-07-01T07:30:00",
+                "weight_kg": 91.0,
+                "note": "corrected start",
+            },
+        ).body
+        trend = api.handle("GET", f"/api/weights/trend?person_id={person['id']}", None).body
+
+        self.assertEqual(updated["weight_kg"], 91.0)
+        self.assertEqual(updated["note"], "corrected start")
+        self.assertEqual(trend["delta_kg"], -0.6)
+
     def test_export_and_import_round_trip_through_http_contract(self) -> None:
         source = HttpApi(HealthMonitorService())
         household = source.handle("POST", "/api/households", {"name": "Casa"}).body

@@ -72,6 +72,48 @@ class WeightAndWeeklyReviewTest(unittest.TestCase):
         self.assertEqual(week.daily[date(2026, 7, 2)].calories_kcal, 157.5)
         self.assertEqual(week.weight_delta_kg, -0.8)
 
+    def test_weight_entry_edit_recomputes_trend_and_week_summary(self) -> None:
+        service = HealthMonitorService()
+        household = service.create_household(name="Casa")
+        person = service.create_person(
+            household_id=household.id,
+            name="Gabriel",
+            timezone="America/Sao_Paulo",
+        )
+        first = service.log_weight(
+            person_id=person.id,
+            measured_at_local="2026-07-01T08:00:00",
+            weight_kg=91.2,
+            note="start",
+            source="manual",
+        )
+        service.log_weight(
+            person_id=person.id,
+            measured_at_local="2026-07-07T08:00:00",
+            weight_kg=90.4,
+            note="week end",
+            source="manual",
+        )
+
+        updated = service.update_weight_entry(
+            entry_id=first.id,
+            measured_at_local="2026-07-01T07:30:00",
+            weight_kg=91.0,
+            note="corrected start",
+        )
+        trend = service.weight_trend(person_id=person.id)
+        week = service.week_summary(
+            person_id=person.id,
+            start=date(2026, 7, 1),
+            end=date(2026, 7, 7),
+        )
+
+        self.assertEqual(updated.weight_kg, 91.0)
+        self.assertEqual(updated.measured_at.hour, 7)
+        self.assertEqual(updated.note, "corrected start")
+        self.assertEqual(trend.delta_kg, -0.6)
+        self.assertEqual(week.weight_delta_kg, -0.6)
+
     def test_weight_and_weekly_review_survive_restart(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "health-monitor.sqlite3"

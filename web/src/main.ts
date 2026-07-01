@@ -354,7 +354,15 @@ function renderReview(): string {
         .map(
           (entry) => `
             <tr>
-              <td>${escapeHtml(entry.measured_at.slice(0, 10))}</td>
+              <td>
+                <strong>${escapeHtml(entry.measured_at.slice(0, 10))}</strong>
+                <form class="weight-edit-form" data-weight-id="${entry.id}">
+                  <input name="measured_at_local" type="datetime-local" value="${escapeHtml(entry.measured_at.slice(0, 16))}" aria-label="Measured at" />
+                  <input name="weight_kg" type="number" step="0.1" value="${entry.weight_kg}" aria-label="Weight kg" />
+                  <input name="note" value="${escapeHtml(entry.note ?? "")}" aria-label="Weight note" />
+                  <button type="submit">Update</button>
+                </form>
+              </td>
               <td>${entry.weight_kg} kg</td>
               <td>${escapeHtml(entry.note ?? "")}</td>
             </tr>
@@ -846,6 +854,9 @@ function bindEvents(): void {
     .querySelectorAll<HTMLButtonElement>(".entry-delete")
     .forEach((button) => button.addEventListener("click", onEntryDelete));
   document
+    .querySelectorAll<HTMLFormElement>(".weight-edit-form")
+    .forEach((form) => form.addEventListener("submit", onWeightEdit));
+  document
     .querySelectorAll<HTMLButtonElement>(".lookup-propose")
     .forEach((button) => button.addEventListener("click", onLookupPropose));
 }
@@ -1047,6 +1058,21 @@ async function onWeight(event: SubmitEvent): Promise<void> {
     source: "manual"
   });
   state.notice = "Weight added.";
+  await refreshReview();
+}
+
+async function onWeightEdit(event: SubmitEvent): Promise<void> {
+  event.preventDefault();
+  const formElement = event.currentTarget as HTMLFormElement;
+  const weightId = formElement.dataset.weightId;
+  if (!weightId) return;
+  const form = new FormData(formElement);
+  await apiPatch<WeightEntry>(`/api/weights/${weightId}`, {
+    measured_at_local: requiredText(form, "measured_at_local"),
+    weight_kg: numberField(form, "weight_kg"),
+    note: optionalText(form, "note")
+  });
+  state.notice = "Weight updated.";
   await refreshReview();
 }
 

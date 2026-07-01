@@ -200,6 +200,16 @@ class HttpApi:
             )
             return HttpResponse(201, weight_entry_to_dict(entry))
 
+        if method == "PATCH" and path.startswith("/api/weights/"):
+            entry_id = path.removeprefix("/api/weights/")
+            entry = self.service.update_weight_entry(
+                entry_id=entry_id,
+                measured_at_local=body.get("measured_at_local"),
+                weight_kg=float(body["weight_kg"]) if body.get("weight_kg") is not None else None,
+                note=body.get("note"),
+            )
+            return HttpResponse(200, weight_entry_to_dict(entry))
+
         if method == "GET" and path == "/api/weights/trend":
             trend = self.service.weight_trend(
                 person_id=query["person_id"],

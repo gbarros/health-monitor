@@ -237,7 +237,16 @@ td:first-child {
   align-items: center;
 }
 
-.entry-edit-form button {
+.weight-edit-form {
+  display: grid;
+  grid-template-columns: minmax(170px, 1fr) 90px minmax(130px, 1fr) auto;
+  gap: 8px;
+  margin-top: 8px;
+  align-items: center;
+}
+
+.entry-edit-form button,
+.weight-edit-form button {
   min-height: 36px;
 }
 
@@ -449,7 +458,8 @@ textarea {
   .side,
   .grid-two,
   .payload-grid,
-  .entry-edit-form {
+  .entry-edit-form,
+  .weight-edit-form {
     grid-template-columns: 1fr;
   }
 

@@ -780,6 +780,33 @@ class HealthMonitorService:
         self._persist()
         return entry
 
+    def update_weight_entry(
+        self,
+        *,
+        entry_id: str,
+        measured_at_local: str | None = None,
+        weight_kg: float | None = None,
+        note: str | None = None,
+    ) -> WeightEntry:
+        entry = self.weights[entry_id]
+        person = self._require_person(entry.person_id)
+        measured_at = (
+            self._parse_person_datetime(measured_at_local, person)
+            if measured_at_local is not None
+            else entry.measured_at
+        )
+        updated = WeightEntry(
+            id=entry.id,
+            person_id=entry.person_id,
+            measured_at=measured_at,
+            weight_kg=round(float(weight_kg), 2) if weight_kg is not None else entry.weight_kg,
+            note=note,
+            source=entry.source,
+        )
+        self.weights[entry_id] = updated
+        self._persist()
+        return updated
+
     def weight_trend(
         self,
         *,
