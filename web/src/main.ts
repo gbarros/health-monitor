@@ -176,6 +176,7 @@ type AppState = {
   household: Household | null;
   people: Person[];
   person: Person | null;
+  selectedDay: string;
   activeGoal: GoalProfile | null;
   foods: FoodResponse[];
   lookupCandidates: FoodLookupCandidate[];
@@ -191,12 +192,12 @@ type AppState = {
   notice: string | null;
 };
 
-const today = "2026-07-01";
 const sessionStorageKey = "health-monitor.session.v1";
 const state: AppState = {
   household: null,
   people: [],
   person: null,
+  selectedDay: localDateInputValue(new Date()),
   activeGoal: null,
   foods: [],
   lookupCandidates: [],
@@ -339,9 +340,12 @@ function renderToday(): string {
       <div class="section-heading">
         <div>
           <p class="eyebrow">Today</p>
-          <h2>${summary?.day ?? today}</h2>
+          <h2>${summary?.day ?? state.selectedDay}</h2>
         </div>
-        <button id="refresh-summary" type="button">Refresh</button>
+        <div class="date-actions">
+          <label>Day <input id="selected-day" type="date" value="${state.selectedDay}" /></label>
+          <button id="refresh-summary" type="button">Refresh</button>
+        </div>
       </div>
       <div class="metrics">
         ${metric("Calories", `${totals.calories_kcal}`, "kcal")}
@@ -903,7 +907,7 @@ function renderGoalForm(): string {
     <form id="goal-form" class="panel">
       <p class="eyebrow">Targets</p>
       <h2>Macro plan</h2>
-      <label>Starts on <input name="starts_on" type="date" value="${today}" ${disabled} /></label>
+      <label>Starts on <input name="starts_on" type="date" value="${state.selectedDay}" ${disabled} /></label>
       <div class="grid-two">
         <label>Calories <input name="calories_kcal" type="number" value="${state.activeGoal?.targets.calories_kcal ?? 2000}" ${disabled} /></label>
         <label>Protein <input name="protein_g" type="number" value="${state.activeGoal?.targets.protein_g ?? 150}" ${disabled} /></label>
@@ -997,7 +1001,7 @@ function renderManualLog(): string {
       <p class="eyebrow">Manual log</p>
       <h2>Diary entry</h2>
       <label>Food <select name="food_version_id" ${disabled}>${options}</select></label>
-      <label>Time <input name="logged_at_local" type="datetime-local" value="${today}T10:00" ${disabled} /></label>
+      <label>Time <input name="logged_at_local" type="datetime-local" value="${defaultDateTime("10:00")}" ${disabled} /></label>
       <div class="grid-two">
         <label>Quantity <input name="quantity" type="number" step="0.1" value="100" ${disabled} /></label>
         <label>Unit
@@ -1015,7 +1019,7 @@ function renderManualLog(): string {
       <label>Name <input name="name" value="Pao de queijo caseiro" ${quickDisabled} /></label>
       <label>Brand <input name="brand" placeholder="optional" ${quickDisabled} /></label>
       <div class="grid-two">
-        <label>Time <input name="logged_at_local" type="datetime-local" value="${today}T16:00" ${quickDisabled} /></label>
+        <label>Time <input name="logged_at_local" type="datetime-local" value="${defaultDateTime("16:00")}" ${quickDisabled} /></label>
         <label>Quantity <input name="quantity_g" type="number" step="0.1" value="80" ${quickDisabled} /></label>
         <label>Meal
           <select name="meal_type" ${quickDisabled}>
@@ -1045,7 +1049,7 @@ function renderWeightForm(): string {
     <form id="weight-form" class="panel">
       <p class="eyebrow">Weight</p>
       <h2>Reading</h2>
-      <label>Time <input name="measured_at_local" type="datetime-local" value="${today}T08:00" ${disabled} /></label>
+      <label>Time <input name="measured_at_local" type="datetime-local" value="${defaultDateTime("08:00")}" ${disabled} /></label>
       <label>Weight kg <input name="weight_kg" type="number" step="0.1" value="91.2" ${disabled} /></label>
       <label>Note <input name="note" placeholder="optional" ${disabled} /></label>
       <button type="submit" ${disabled}>Add weight</button>
@@ -1083,7 +1087,7 @@ function renderAgentChat(): string {
     <form id="agent-chat-form" class="panel">
       <p class="eyebrow">Agent chat</p>
       <h2>Ask / correct</h2>
-      <textarea name="message" ${disabled}>Why was 2026-07-01 high in calories?</textarea>
+      <textarea name="message" ${disabled}>Why was ${state.selectedDay} high in calories?</textarea>
       <div class="grid-two">
         <label>Model profile <input name="model_profile" value="deterministic-local" ${disabled} /></label>
         <label>Effort
@@ -1119,7 +1123,7 @@ function renderLabelScan(): string {
       <label>Image <input name="attachment" type="file" accept="image/*" ${disabled} /></label>
       <label>Barcode <input name="barcode" inputmode="numeric" placeholder="optional separate scan" ${disabled} /></label>
       <div class="grid-two">
-        <label>Log time <input name="logged_at_local" type="datetime-local" value="${today}T10:00" ${disabled} /></label>
+        <label>Log time <input name="logged_at_local" type="datetime-local" value="${defaultDateTime("10:00")}" ${disabled} /></label>
         <label>Log grams <input name="quantity_g" type="number" step="0.1" placeholder="optional" ${disabled} /></label>
         <label>Meal
           <select name="meal_type" ${disabled}>
@@ -1148,7 +1152,7 @@ function renderRecipeForm(): string {
       <p class="eyebrow">Batch food</p>
       <h2>Recipe</h2>
       <div class="grid-two">
-        <label>Log time <input name="logged_at_local" type="datetime-local" value="${today}T12:30" ${disabled} /></label>
+        <label>Log time <input name="logged_at_local" type="datetime-local" value="${defaultDateTime("12:30")}" ${disabled} /></label>
         <label>Log grams <input name="quantity_g" type="number" step="0.1" placeholder="optional" ${disabled} /></label>
         <label>Meal
           <select name="meal_type" ${disabled}>
@@ -1196,6 +1200,7 @@ function bindEvents(): void {
   document
     .querySelectorAll<HTMLSelectElement>(".profile-select")
     .forEach((select) => select.addEventListener("change", onProfileSelect));
+  document.querySelector<HTMLInputElement>("#selected-day")?.addEventListener("change", onSelectedDayChange);
   document.querySelector<HTMLButtonElement>("#refresh-summary")?.addEventListener("click", refreshSummary);
   document.querySelector<HTMLButtonElement>("#refresh-review")?.addEventListener("click", refreshReview);
   document.querySelector<HTMLButtonElement>("#refresh-jobs")?.addEventListener("click", refreshJobs);
@@ -1246,7 +1251,7 @@ async function onSetup(event: SubmitEvent): Promise<void> {
     activity_level: optionalText(form, "activity_level")
   });
   const goal = await createGoalFromFields(person.id, {
-    starts_on: today,
+    starts_on: state.selectedDay,
     calories_kcal: numberField(form, "target_calories_kcal"),
     protein_g: numberField(form, "target_protein_g"),
     carbs_g: numberField(form, "target_carbs_g"),
@@ -1293,6 +1298,20 @@ async function onProfileSelect(event: Event): Promise<void> {
   clearPersonScopedState();
   saveSession();
   state.notice = `Switched to ${selected.name}.`;
+  await refreshAllReadSurfaces();
+}
+
+async function onSelectedDayChange(event: Event): Promise<void> {
+  const selectedDay = (event.currentTarget as HTMLInputElement).value;
+  if (!selectedDay || selectedDay === state.selectedDay) return;
+  state.selectedDay = selectedDay;
+  state.summary = null;
+  state.week = null;
+  state.proposal = null;
+  state.chatResponse = null;
+  state.lastDeletedEntry = null;
+  saveSession();
+  state.notice = `Showing ${selectedDay}.`;
   await refreshAllReadSurfaces();
 }
 
@@ -1553,7 +1572,7 @@ async function onTextMeal(event: SubmitEvent): Promise<void> {
   const form = new FormData(event.currentTarget as HTMLFormElement);
   const payload = {
     person_id: state.person.id,
-    logged_at_local: `${today}T10:00:00`,
+    logged_at_local: `${state.selectedDay}T10:00:00`,
     text: requiredText(form, "text"),
     agent_settings: {
       model_profile: requiredText(form, "model_profile"),
@@ -1578,7 +1597,7 @@ async function onAgentChat(event: SubmitEvent): Promise<void> {
   const payload = {
     person_id: state.person.id,
     message: requiredText(form, "message"),
-    today,
+    today: state.selectedDay,
     agent_settings: {
       model_profile: requiredText(form, "model_profile"),
       effort: requiredText(form, "effort"),
@@ -1722,8 +1741,8 @@ async function refreshSummary(): Promise<void> {
     render();
     return;
   }
-  state.summary = await apiGet<DaySummary>(`/api/diary/day?person_id=${state.person.id}&day=${today}`);
-  state.activeGoal = await fetchActiveGoal(state.person.id, today);
+  state.summary = await apiGet<DaySummary>(`/api/diary/day?person_id=${state.person.id}&day=${state.selectedDay}`);
+  state.activeGoal = await fetchActiveGoal(state.person.id, state.selectedDay);
   render();
 }
 
@@ -1734,9 +1753,10 @@ async function refreshReview(): Promise<void> {
     return;
   }
   state.weightTrend = await apiGet<WeightTrend>(`/api/weights/trend?person_id=${state.person.id}`);
-  state.activeGoal = await fetchActiveGoal(state.person.id, today);
+  state.activeGoal = await fetchActiveGoal(state.person.id, state.selectedDay);
+  const weekRange = weekRangeForDay(state.selectedDay);
   state.week = await apiGet<WeekSummary>(
-    `/api/summaries/week?person_id=${state.person.id}&start=2026-07-01&end=2026-07-07`
+    `/api/summaries/week?person_id=${state.person.id}&start=${weekRange.start}&end=${weekRange.end}`
   );
   state.reviewNotes = await apiGet<ReviewNote[]>(`/api/review-notes?person_id=${state.person.id}`);
   render();
@@ -1761,11 +1781,12 @@ async function refreshAllReadSurfaces(): Promise<void> {
     return;
   }
   await refreshFoodLibrary();
-  state.summary = await apiGet<DaySummary>(`/api/diary/day?person_id=${state.person.id}&day=${today}`);
+  state.summary = await apiGet<DaySummary>(`/api/diary/day?person_id=${state.person.id}&day=${state.selectedDay}`);
   state.weightTrend = await apiGet<WeightTrend>(`/api/weights/trend?person_id=${state.person.id}`);
-  state.activeGoal = await fetchActiveGoal(state.person.id, today);
+  state.activeGoal = await fetchActiveGoal(state.person.id, state.selectedDay);
+  const weekRange = weekRangeForDay(state.selectedDay);
   state.week = await apiGet<WeekSummary>(
-    `/api/summaries/week?person_id=${state.person.id}&start=2026-07-01&end=2026-07-07`
+    `/api/summaries/week?person_id=${state.person.id}&start=${weekRange.start}&end=${weekRange.end}`
   );
   state.reviewNotes = await apiGet<ReviewNote[]>(`/api/review-notes?person_id=${state.person.id}`);
   state.jobs = await apiGet<BackgroundJob[]>(`/api/jobs?person_id=${state.person.id}`);
@@ -1788,8 +1809,13 @@ async function hydrateStoredSession(): Promise<void> {
   const raw = localStorage.getItem(sessionStorageKey);
   if (!raw) return;
   try {
-    const saved = JSON.parse(raw) as { household: Household; person_id: string | null };
+    const saved = JSON.parse(raw) as {
+      household: Household;
+      person_id: string | null;
+      selected_day?: string | null;
+    };
     state.household = saved.household;
+    state.selectedDay = saved.selected_day ?? state.selectedDay;
     state.people = await apiGet<Person[]>(`/api/people?household_id=${saved.household.id}`);
     state.person =
       state.people.find((person) => person.id === saved.person_id) ?? state.people[0] ?? null;
@@ -1807,7 +1833,11 @@ function saveSession(): void {
   if (!state.household) return;
   localStorage.setItem(
     sessionStorageKey,
-    JSON.stringify({ household: state.household, person_id: state.person?.id ?? null })
+    JSON.stringify({
+      household: state.household,
+      person_id: state.person?.id ?? null,
+      selected_day: state.selectedDay
+    })
   );
 }
 
@@ -2012,6 +2042,32 @@ function zeroNutrients(): Nutrients {
     fiber_g: 0,
     sodium_mg: 0
   };
+}
+
+function defaultDateTime(time: string): string {
+  return `${state.selectedDay}T${time}`;
+}
+
+function weekRangeForDay(day: string): { start: string; end: string } {
+  const start = dateFromInputValue(day);
+  const end = new Date(start);
+  end.setDate(start.getDate() + 6);
+  return {
+    start: localDateInputValue(start),
+    end: localDateInputValue(end)
+  };
+}
+
+function dateFromInputValue(value: string): Date {
+  const [year, month, day] = value.split("-").map(Number);
+  return new Date(year, month - 1, day);
+}
+
+function localDateInputValue(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function titleCase(value: string): string {
