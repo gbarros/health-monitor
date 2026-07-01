@@ -282,6 +282,62 @@ class HttpApiContractTest(unittest.TestCase):
         self.assertEqual(applied["status"], "applied")
         self.assertEqual(after["totals"]["calories_kcal"], 315)
 
+    def test_text_meal_unsupported_unit_returns_clarification_contract(self) -> None:
+        api = HttpApi(HealthMonitorService())
+        household = api.handle("POST", "/api/households", {"name": "Casa"}).body
+        person = api.handle(
+            "POST",
+            "/api/people",
+            {
+                "household_id": household["id"],
+                "name": "Gabriel",
+                "timezone": "America/Sao_Paulo",
+            },
+        ).body
+        api.handle(
+            "POST",
+            "/api/foods",
+            {
+                "household_id": household["id"],
+                "name": "Queijo Minas",
+                "brand": None,
+                "version_label": "current",
+                "source": "label_scan",
+                "nutrients_per_100g": {
+                    "calories_kcal": 315,
+                    "protein_g": 23,
+                    "carbs_g": 2.6,
+                    "fat_g": 23.5,
+                },
+                "aliases": ["queijo"],
+            },
+        )
+
+        proposal = api.handle(
+            "POST",
+            "/api/agent/text-meal",
+            {
+                "person_id": person["id"],
+                "logged_at_local": "2026-07-01T10:00:00",
+                "text": "10am, 1 fatia queijo",
+                "agent_settings": {"external_lookup": False},
+            },
+        ).body
+        rejected_apply = api.handle("POST", f"/api/proposals/{proposal['id']}/confirm", None)
+        summary = api.handle(
+            "GET",
+            f"/api/diary/day?person_id={person['id']}&day=2026-07-01",
+            None,
+        ).body
+
+        self.assertEqual(proposal["status"], "needs_clarification")
+        self.assertEqual(proposal["entries"], [])
+        self.assertEqual(proposal["payload"]["missing_fields"], ["quantity_g"])
+        self.assertEqual(proposal["payload"]["unresolved_items"][0]["unit"], "fatia")
+        self.assertEqual(rejected_apply.status_code, 400)
+        self.assertIn("needs clarification", rejected_apply.body["error"]["message"])
+        self.assertEqual(summary["totals"]["calories_kcal"], 0)
+
     def test_diary_entry_correction_round_trip_through_http_contract(self) -> None:
         api = HttpApi(HealthMonitorService())
         household = api.handle("POST", "/api/households", {"name": "Casa"}).body

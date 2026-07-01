@@ -1074,6 +1074,21 @@ class HealthMonitorService:
             status="started",
         )
         self.agent_runs[run.id] = run
+        unsupported_items = [
+            item
+            for item in items
+            if item.evidence.get("quantity_basis") == "unsupported_unit"
+        ]
+        if unsupported_items:
+            proposal = self._create_text_meal_clarification_proposal(
+                person_id=person_id,
+                text=text,
+                run=run,
+                logged_at=parsed_logged_at,
+                unresolved_items=unsupported_items,
+            )
+            self._persist()
+            return proposal
         entries: list[DiaryEntry] = []
         evidence: list[dict[str, object]] = []
         estimated_food_versions: list[dict[str, object]] = []
@@ -1129,7 +1144,15 @@ class HealthMonitorService:
             quantity_g = item.quantity_g
             if item.evidence.get("quantity_basis") == "serving_count":
                 if version.serving_size_g is None:
-                    raise ValueError(f"food version has no serving size: {version.id}")
+                    proposal = self._create_text_meal_clarification_proposal(
+                        person_id=person_id,
+                        text=text,
+                        run=run,
+                        logged_at=parsed_logged_at,
+                        unresolved_items=(item,),
+                    )
+                    self._persist()
+                    return proposal
                 quantity_g = float(item.evidence["serving_count"]) * version.serving_size_g
             entry = DiaryEntry(
                 id=self._next_id("diary_entry"),
@@ -1179,6 +1202,61 @@ class HealthMonitorService:
             created_at=run.created_at,
         )
         self._persist()
+        return proposal
+
+    def _create_text_meal_clarification_proposal(
+        self,
+        *,
+        person_id: str,
+        text: str,
+        run: AgentRun,
+        logged_at: datetime,
+        unresolved_items: tuple[ParsedMealItem, ...] | list[ParsedMealItem],
+    ) -> CreateDiaryEntriesProposal:
+        unresolved_payload = [
+            {
+                "source_text": item.source_text,
+                "phrase": item.phrase,
+                "unit": item.evidence.get("unit"),
+                "quantity": item.evidence.get("unit_quantity", item.quantity_g),
+                "quantity_basis": item.evidence.get("quantity_basis"),
+            }
+            for item in unresolved_items
+        ]
+        proposal = self.proposals.create(
+            CreateDiaryEntriesProposal(
+                id=self._next_id("proposal"),
+                person_id=person_id,
+                entries=(),
+                proposal_type="diary_entries",
+                status="needs_clarification",
+                summary="Need grams or serving size before logging this meal.",
+                payload={
+                    "logged_at_local": logged_at.isoformat(),
+                    "raw_text": text,
+                    "missing_fields": ["quantity_g"],
+                    "unresolved_items": unresolved_payload,
+                },
+                evidence=(
+                    {
+                        "source_type": "text_meal",
+                        "raw_text": text,
+                        "needs_clarification": True,
+                        "unresolved_items": unresolved_payload,
+                    },
+                ),
+                source_agent_run_id=run.id,
+            )
+        )
+        self.agent_runs[run.id] = AgentRun(
+            id=run.id,
+            person_id=run.person_id,
+            input_text=run.input_text,
+            settings=run.settings,
+            status="needs_clarification",
+            proposal_id=proposal.id,
+            created_at=run.created_at,
+        )
         return proposal
 
     def _chat_explain_day(
@@ -1834,6 +1912,10 @@ class HealthMonitorService:
 
     def confirm_proposal(self, proposal_id: str) -> CreateDiaryEntriesProposal:
         proposal = self.proposals.proposals[proposal_id]
+        if proposal.status == "rejected":
+            raise ValueError("cannot apply rejected proposal")
+        if proposal.status == "needs_clarification":
+            raise ValueError("proposal needs clarification before it can be applied")
         if proposal.proposal_type in {"food_version_from_label", "food_version_from_lookup"}:
             applied = self._apply_food_version_proposal(proposal)
             self.proposals.proposals[proposal_id] = applied
@@ -2331,6 +2413,26 @@ def parse_text_meal_item(fragment: str) -> ParsedMealItem:
             quantity_g=quantity_g,
             source_text=fragment,
             evidence={"quantity_basis": "grams"},
+        )
+
+    unsupported_unit = re.fullmatch(
+        r"(\d+(?:[,.]\d+)?)\s+(fatia|fatias|slice|slices)\s+(.+)",
+        fragment,
+        re.I,
+    )
+    if unsupported_unit is not None:
+        quantity = float(unsupported_unit.group(1).replace(",", "."))
+        unit = unsupported_unit.group(2).casefold()
+        phrase = normalize_food_phrase(unsupported_unit.group(3))
+        return ParsedMealItem(
+            phrase=phrase,
+            quantity_g=0,
+            source_text=fragment,
+            evidence={
+                "quantity_basis": "unsupported_unit",
+                "unit": unit,
+                "unit_quantity": quantity,
+            },
         )
 
     count = re.fullmatch(r"(\d+(?:[,.]\d+)?)\s+(.+)", fragment, re.I)

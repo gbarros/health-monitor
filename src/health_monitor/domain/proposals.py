@@ -8,7 +8,7 @@ from health_monitor.domain.diary import Diary, DiaryEntry
 from health_monitor.domain.nutrients import Nutrients
 
 
-ProposalStatus = Literal["draft", "confirmed", "applied", "rejected"]
+ProposalStatus = Literal["draft", "needs_clarification", "confirmed", "applied", "rejected"]
 ProposalType = Literal[
     "diary_entries",
     "diary_entries_with_estimates",
@@ -69,6 +69,8 @@ class ProposalService:
         proposal = self.proposals[proposal_id]
         if proposal.status == "rejected":
             raise ValueError("cannot apply rejected proposal")
+        if proposal.status == "needs_clarification":
+            raise ValueError("proposal needs clarification before it can be applied")
         if proposal.proposal_type != "diary_entries":
             raise ValueError(f"proposal type cannot be applied by diary service: {proposal.proposal_type}")
         for entry in proposal.entries:
