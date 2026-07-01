@@ -835,6 +835,15 @@ function renderRecipeForm(): string {
     <form id="recipe-form" class="panel">
       <p class="eyebrow">Batch food</p>
       <h2>Recipe</h2>
+      <div class="grid-two">
+        <label>Log time <input name="logged_at_local" type="datetime-local" value="${today}T12:30" ${disabled} /></label>
+        <label>Log grams <input name="quantity_g" type="number" step="0.1" placeholder="optional" ${disabled} /></label>
+        <label>Meal
+          <select name="meal_type" ${disabled}>
+            ${mealOptions("lunch")}
+          </select>
+        </label>
+      </div>
       <textarea name="recipe_text" ${disabled}>Recipe: Batch breakfast mix
 Yield: 1000 g
 Ingredients:
@@ -1175,10 +1184,14 @@ async function onRecipe(event: SubmitEvent): Promise<void> {
   event.preventDefault();
   if (!state.household || !state.person) return;
   const form = new FormData(event.currentTarget as HTMLFormElement);
+  const quantityG = optionalNumber(form, "quantity_g");
   state.proposal = await apiPost<Proposal>("/api/agent/recipe", {
     household_id: state.household.id,
     person_id: state.person.id,
-    recipe_text: requiredText(form, "recipe_text")
+    recipe_text: requiredText(form, "recipe_text"),
+    logged_at_local: quantityG === null ? null : requiredText(form, "logged_at_local"),
+    quantity_g: quantityG,
+    meal_type: quantityG === null ? null : requiredText(form, "meal_type")
   });
   state.notice = "Recipe proposal drafted.";
   render();

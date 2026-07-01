@@ -148,6 +148,29 @@ class RecipeProposalFlowTest(unittest.TestCase):
         self.assertEqual(resolved.food_version_id, second_version_id)
         self.assertEqual(old_day.totals.rounded(), Nutrients(202, 12.05, 12.7, 11.9))
 
+    def test_recipe_with_yield_can_log_portion_after_confirmation(self) -> None:
+        service, household_id, person_id = self.make_service_with_ingredients()
+
+        proposal = service.propose_recipe(
+            household_id=household_id,
+            person_id=person_id,
+            recipe_text=RECIPE_TEXT,
+            logged_at_local="2026-07-01T12:30:00",
+            quantity_g=100,
+        )
+        before = service.day_summary(person_id, date(2026, 7, 1))
+        applied = service.confirm_proposal(proposal.id)
+        after = service.day_summary(person_id, date(2026, 7, 1))
+        entry = service.diary.entries[applied.applied_record_ids[-1]]
+
+        self.assertEqual(proposal.proposal_type, "recipe_food_version")
+        self.assertEqual(len(proposal.entries), 1)
+        self.assertEqual(proposal.entries[0].meal_type, "lunch")
+        self.assertEqual(before.totals.calories_kcal, 0)
+        self.assertEqual(entry.food_version_id, applied.applied_record_ids[1])
+        self.assertEqual(entry.source, "recipe")
+        self.assertEqual(after.totals.rounded(), Nutrients(202, 12.05, 12.7, 11.9))
+
     def test_pending_recipe_proposal_survives_restart_and_can_be_confirmed(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "health-monitor.sqlite3"

@@ -696,6 +696,91 @@ class HttpApiContractTest(unittest.TestCase):
         self.assertEqual(applied["status"], "applied")
         self.assertEqual(resolved["food_version_id"], applied["applied_record_ids"][1])
 
+    def test_recipe_can_log_portion_through_http_contract(self) -> None:
+        api = HttpApi(HealthMonitorService())
+        household = api.handle("POST", "/api/households", {"name": "Casa"}).body
+        person = api.handle(
+            "POST",
+            "/api/people",
+            {
+                "household_id": household["id"],
+                "name": "Gabriel",
+                "timezone": "America/Sao_Paulo",
+            },
+        ).body
+        api.handle(
+            "POST",
+            "/api/foods",
+            {
+                "household_id": household["id"],
+                "name": "Queijo Minas",
+                "brand": None,
+                "version_label": "current",
+                "source": "label_scan",
+                "nutrients_per_100g": {
+                    "calories_kcal": 315,
+                    "protein_g": 23,
+                    "carbs_g": 2.6,
+                    "fat_g": 23.5,
+                },
+                "aliases": ["queijo"],
+            },
+        )
+        api.handle(
+            "POST",
+            "/api/foods",
+            {
+                "household_id": household["id"],
+                "name": "Banana",
+                "brand": None,
+                "version_label": "generic",
+                "source": "reference",
+                "nutrients_per_100g": {
+                    "calories_kcal": 89,
+                    "protein_g": 1.1,
+                    "carbs_g": 22.8,
+                    "fat_g": 0.3,
+                },
+                "aliases": ["banana"],
+            },
+        )
+        proposal = api.handle(
+            "POST",
+            "/api/agent/recipe",
+            {
+                "household_id": household["id"],
+                "person_id": person["id"],
+                "recipe_text": "\n".join(
+                    [
+                        "Recipe: Batch breakfast mix",
+                        "Yield: 1000 g",
+                        "Ingredients:",
+                        "500g queijo",
+                        "500g banana",
+                    ]
+                ),
+                "logged_at_local": "2026-07-01T12:30:00",
+                "quantity_g": 100,
+            },
+        ).body
+        before = api.handle(
+            "GET",
+            f"/api/diary/day?person_id={person['id']}&day=2026-07-01",
+            None,
+        ).body
+        applied = api.handle("POST", f"/api/proposals/{proposal['id']}/confirm", None).body
+        after = api.handle(
+            "GET",
+            f"/api/diary/day?person_id={person['id']}&day=2026-07-01",
+            None,
+        ).body
+
+        self.assertEqual(proposal["entries"][0]["food_name"], "Batch breakfast mix")
+        self.assertEqual(proposal["entries"][0]["meal_type"], "lunch")
+        self.assertEqual(before["totals"]["calories_kcal"], 0)
+        self.assertEqual(after["totals"]["calories_kcal"], 202)
+        self.assertEqual(after["meals"]["lunch"][0]["food_version_id"], applied["applied_record_ids"][1])
+
     def test_recipe_missing_yield_draft_through_http_contract(self) -> None:
         api = HttpApi(HealthMonitorService())
         household = api.handle("POST", "/api/households", {"name": "Casa"}).body

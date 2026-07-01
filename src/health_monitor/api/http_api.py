@@ -265,6 +265,9 @@ class HttpApi:
                 household_id=body["household_id"],
                 person_id=body["person_id"],
                 recipe_text=body["recipe_text"],
+                logged_at_local=body.get("logged_at_local"),
+                quantity_g=float(body["quantity_g"]) if body.get("quantity_g") is not None else None,
+                meal_type=body.get("meal_type"),
             )
             return HttpResponse(201, proposal_to_dict(proposal, self.service))
 
