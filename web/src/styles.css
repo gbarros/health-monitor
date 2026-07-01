@@ -103,6 +103,32 @@ h3 {
   padding: 8px 12px;
 }
 
+.person-switch {
+  display: grid;
+  gap: 4px;
+  min-width: 180px;
+}
+
+.person-switch span {
+  color: #657064;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.person-switch select {
+  min-height: 34px;
+  border: 0;
+  background: transparent;
+  color: #1e2420;
+  padding: 0;
+}
+
+.person-switch-topbar {
+  max-width: 240px;
+}
+
 .notice {
   margin: 16px 0 0;
   border-color: #83a8c8;

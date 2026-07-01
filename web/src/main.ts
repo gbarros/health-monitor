@@ -226,7 +226,7 @@ function render(): void {
           <p class="eyebrow">Private household tracker</p>
           <h1>Health Monitor</h1>
         </div>
-        <div class="person-switch">${state.person ? escapeHtml(state.person.name) : "No profile"}</div>
+        ${renderProfileSwitcher("topbar")}
       </header>
 
       ${
@@ -271,6 +271,25 @@ function requireAppRoot(): HTMLDivElement {
     throw new Error("missing app root");
   }
   return root;
+}
+
+function renderProfileSwitcher(placement: "topbar" | "setup"): string {
+  if (!state.household || !state.people.length) {
+    return `<div class="person-switch">No profile</div>`;
+  }
+  const options = state.people
+    .map(
+      (person) =>
+        `<option value="${person.id}" ${person.id === state.person?.id ? "selected" : ""}>${escapeHtml(person.name)}</option>`
+    )
+    .join("");
+  const label = placement === "topbar" ? "Profile" : "Active person";
+  return `
+    <label class="person-switch ${placement === "topbar" ? "person-switch-topbar" : ""}">
+      <span>${label}</span>
+      <select class="profile-select">${options}</select>
+    </label>
+  `;
 }
 
 function renderToday(): string {
@@ -824,17 +843,11 @@ function renderRecipeProposalPayload(proposal: Proposal): string {
 
 function renderSetup(): string {
   if (state.household && state.person) {
-    const options = state.people
-      .map(
-        (person) =>
-          `<option value="${person.id}" ${person.id === state.person?.id ? "selected" : ""}>${escapeHtml(person.name)}</option>`
-      )
-      .join("");
     return `
       <section class="panel">
         <p class="eyebrow">Profile</p>
         <h2>${escapeHtml(state.household.name)}</h2>
-        <label>Active person <select id="profile-select">${options}</select></label>
+        ${renderProfileSwitcher("setup")}
         <p>${escapeHtml(state.person.timezone)}${state.person.height_cm ? ` · ${state.person.height_cm} cm` : ""}</p>
       </section>
       <form id="add-person-form" class="panel">
@@ -1174,7 +1187,9 @@ function bindEvents(): void {
   document.querySelector<HTMLFormElement>("#label-scan-form")?.addEventListener("submit", onLabelScan);
   document.querySelector<HTMLFormElement>("#recipe-form")?.addEventListener("submit", onRecipe);
   document.querySelector<HTMLFormElement>("#import-form")?.addEventListener("submit", onImportData);
-  document.querySelector<HTMLSelectElement>("#profile-select")?.addEventListener("change", onProfileSelect);
+  document
+    .querySelectorAll<HTMLSelectElement>(".profile-select")
+    .forEach((select) => select.addEventListener("change", onProfileSelect));
   document.querySelector<HTMLButtonElement>("#refresh-summary")?.addEventListener("click", refreshSummary);
   document.querySelector<HTMLButtonElement>("#refresh-review")?.addEventListener("click", refreshReview);
   document.querySelector<HTMLButtonElement>("#refresh-jobs")?.addEventListener("click", refreshJobs);
@@ -1256,7 +1271,7 @@ async function onAddPerson(event: SubmitEvent): Promise<void> {
   });
   state.people = [...state.people, person];
   state.person = person;
-  state.activeGoal = null;
+  clearPersonScopedState();
   saveSession();
   state.notice = `${person.name} added.`;
   await refreshAllReadSurfaces();
@@ -1267,7 +1282,7 @@ async function onProfileSelect(event: Event): Promise<void> {
   const selected = state.people.find((person) => person.id === selectedId);
   if (!selected) return;
   state.person = selected;
-  state.proposal = null;
+  clearPersonScopedState();
   saveSession();
   state.notice = `Switched to ${selected.name}.`;
   await refreshAllReadSurfaces();
@@ -1643,6 +1658,7 @@ async function onImportData(event: SubmitEvent): Promise<void> {
   state.household = household;
   state.people = household ? await apiGet<Person[]>(`/api/people?household_id=${household.id}`) : [];
   state.person = state.people[0] ?? null;
+  clearPersonScopedState();
   state.exportText = raw;
   saveSession();
   state.notice = "Import completed.";
@@ -1783,6 +1799,19 @@ function saveSession(): void {
     sessionStorageKey,
     JSON.stringify({ household: state.household, person_id: state.person?.id ?? null })
   );
+}
+
+function clearPersonScopedState(): void {
+  state.activeGoal = null;
+  state.lookupCandidates = [];
+  state.summary = null;
+  state.week = null;
+  state.weightTrend = null;
+  state.reviewNotes = [];
+  state.proposal = null;
+  state.chatResponse = null;
+  state.jobs = [];
+  state.lastDeletedEntry = null;
 }
 
 function registerServiceWorker(): void {
