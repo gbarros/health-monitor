@@ -35,6 +35,8 @@ class CreateDiaryEntriesProposal:
     source_agent_run_id: str | None = None
     applied_record_ids: tuple[str, ...] = ()
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    confirmed_at: datetime | None = None
+    rejected_at: datetime | None = None
 
 
 class ProposalService:
@@ -48,6 +50,7 @@ class ProposalService:
 
     def reject(self, proposal_id: str) -> CreateDiaryEntriesProposal:
         proposal = self.proposals[proposal_id]
+        now = datetime.now(timezone.utc)
         rejected = CreateDiaryEntriesProposal(
             id=proposal.id,
             person_id=proposal.person_id,
@@ -61,6 +64,8 @@ class ProposalService:
             source_agent_run_id=proposal.source_agent_run_id,
             applied_record_ids=proposal.applied_record_ids,
             created_at=proposal.created_at,
+            confirmed_at=proposal.confirmed_at,
+            rejected_at=now,
         )
         self.proposals[proposal_id] = rejected
         return rejected
@@ -73,6 +78,7 @@ class ProposalService:
             raise ValueError("proposal needs clarification before it can be applied")
         if proposal.proposal_type != "diary_entries":
             raise ValueError(f"proposal type cannot be applied by diary service: {proposal.proposal_type}")
+        now = datetime.now(timezone.utc)
         for entry in proposal.entries:
             self.diary.add_entry(entry)
         applied = CreateDiaryEntriesProposal(
@@ -88,6 +94,8 @@ class ProposalService:
             source_agent_run_id=proposal.source_agent_run_id,
             applied_record_ids=tuple(entry.id for entry in proposal.entries),
             created_at=proposal.created_at,
+            confirmed_at=proposal.confirmed_at or now,
+            rejected_at=proposal.rejected_at,
         )
         self.proposals[proposal_id] = applied
         return applied

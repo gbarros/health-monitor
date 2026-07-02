@@ -12,6 +12,12 @@ class ProposalModelTest(unittest.TestCase):
 
         self.assertIsNot(first.created_at, second.created_at)
 
+    def test_audit_timestamps_start_empty(self) -> None:
+        proposal = CreateDiaryEntriesProposal(id="proposal_1", person_id="person_1", entries=())
+
+        self.assertIsNone(proposal.confirmed_at)
+        self.assertIsNone(proposal.rejected_at)
+
 
 if __name__ == "__main__":
     unittest.main()

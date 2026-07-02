@@ -42,8 +42,12 @@ class ProposalGatedWritesBehaviorTest(unittest.TestCase):
         )
 
         proposals.reject("proposal_1")
+        rejected = proposals.proposals["proposal_1"]
 
         self.assertEqual(diary.entries_for_day("person_1", datetime(2026, 7, 1).date()), [])
+        self.assertEqual(rejected.status, "rejected")
+        self.assertIsNotNone(rejected.rejected_at)
+        self.assertIsNone(rejected.confirmed_at)
 
     def test_confirmed_proposal_creates_diary_entries(self) -> None:
         diary, proposals = self.make_services()
@@ -63,9 +67,10 @@ class ProposalGatedWritesBehaviorTest(unittest.TestCase):
         applied = proposals.confirm_and_apply("proposal_1")
 
         self.assertEqual(applied.status, "applied")
+        self.assertIsNotNone(applied.confirmed_at)
+        self.assertIsNone(applied.rejected_at)
         self.assertEqual(len(diary.entries_for_day("person_1", datetime(2026, 7, 1).date())), 1)
 
 
 if __name__ == "__main__":
     unittest.main()
-

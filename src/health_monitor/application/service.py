@@ -1067,6 +1067,8 @@ class HealthMonitorService:
             source_agent_run_id=proposal.source_agent_run_id,
             applied_record_ids=proposal.applied_record_ids,
             created_at=proposal.created_at,
+            confirmed_at=proposal.confirmed_at,
+            rejected_at=proposal.rejected_at,
         )
         self.proposals.proposals[proposal_id] = updated
         self._persist()
@@ -2895,6 +2897,8 @@ class HealthMonitorService:
             source_agent_run_id=proposal.source_agent_run_id,
             applied_record_ids=tuple(applied_ids),
             created_at=proposal.created_at,
+            confirmed_at=proposal.confirmed_at or datetime.now(timezone.utc),
+            rejected_at=proposal.rejected_at,
         )
 
     def _apply_recipe_food_version_proposal(
@@ -2968,6 +2972,8 @@ class HealthMonitorService:
             source_agent_run_id=proposal.source_agent_run_id,
             applied_record_ids=tuple(applied_ids),
             created_at=proposal.created_at,
+            confirmed_at=proposal.confirmed_at or datetime.now(timezone.utc),
+            rejected_at=proposal.rejected_at,
         )
 
     def _apply_recipe_draft_proposal(
@@ -2989,6 +2995,8 @@ class HealthMonitorService:
             source_agent_run_id=proposal.source_agent_run_id,
             applied_record_ids=(),
             created_at=proposal.created_at,
+            confirmed_at=proposal.confirmed_at or datetime.now(timezone.utc),
+            rejected_at=proposal.rejected_at,
         )
 
     def _apply_diary_entry_update_proposal(
@@ -3019,6 +3027,8 @@ class HealthMonitorService:
             source_agent_run_id=proposal.source_agent_run_id,
             applied_record_ids=(updated.id,),
             created_at=proposal.created_at,
+            confirmed_at=proposal.confirmed_at or datetime.now(timezone.utc),
+            rejected_at=proposal.rejected_at,
         )
 
     def _apply_diary_entries_with_estimates(
@@ -3074,6 +3084,8 @@ class HealthMonitorService:
             source_agent_run_id=proposal.source_agent_run_id,
             applied_record_ids=tuple(applied_record_ids),
             created_at=proposal.created_at,
+            confirmed_at=proposal.confirmed_at or datetime.now(timezone.utc),
+            rejected_at=proposal.rejected_at,
         )
 
     def _apply_review_note_proposal(
@@ -3114,6 +3126,8 @@ class HealthMonitorService:
             source_agent_run_id=proposal.source_agent_run_id,
             applied_record_ids=(note.id,),
             created_at=proposal.created_at,
+            confirmed_at=proposal.confirmed_at or datetime.now(timezone.utc),
+            rejected_at=proposal.rejected_at,
         )
 
     def _persist(self) -> None:
@@ -3949,6 +3963,12 @@ def proposal_to_snapshot(proposal: CreateDiaryEntriesProposal) -> dict[str, Any]
         "source_agent_run_id": proposal.source_agent_run_id,
         "applied_record_ids": list(proposal.applied_record_ids),
         "created_at": proposal.created_at.isoformat(),
+        "confirmed_at": proposal.confirmed_at.isoformat()
+        if proposal.confirmed_at is not None
+        else None,
+        "rejected_at": proposal.rejected_at.isoformat()
+        if proposal.rejected_at is not None
+        else None,
     }
 
 
@@ -3966,6 +3986,12 @@ def proposal_from_snapshot(value: dict[str, Any]) -> CreateDiaryEntriesProposal:
         source_agent_run_id=value.get("source_agent_run_id"),
         applied_record_ids=tuple(value.get("applied_record_ids", [])),
         created_at=datetime.fromisoformat(value["created_at"]),
+        confirmed_at=datetime.fromisoformat(value["confirmed_at"])
+        if value.get("confirmed_at")
+        else None,
+        rejected_at=datetime.fromisoformat(value["rejected_at"])
+        if value.get("rejected_at")
+        else None,
     )
 
 

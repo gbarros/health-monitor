@@ -837,8 +837,12 @@ class HttpApiContractTest(unittest.TestCase):
 
         self.assertEqual(proposal["summary"], "2 diary entries copied from breakfast on 2026-07-01")
         self.assertEqual([entry["quantity_g"] for entry in proposal["entries"]], [50, 100])
+        self.assertIsNone(proposal["confirmed_at"])
+        self.assertIsNone(proposal["rejected_at"])
         self.assertEqual(before["totals"]["calories_kcal"], 0)
         self.assertEqual(applied["status"], "applied")
+        self.assertIsNotNone(applied["confirmed_at"])
+        self.assertIsNone(applied["rejected_at"])
         self.assertEqual(after["totals"]["calories_kcal"], 312.5)
         self.assertEqual(len(after["meals"]["breakfast"]), 2)
 

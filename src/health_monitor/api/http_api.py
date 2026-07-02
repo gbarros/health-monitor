@@ -965,6 +965,12 @@ def proposal_to_dict(
         "agent_run": agent_run_to_dict(service, proposal.source_agent_run_id),
         "applied_record_ids": list(proposal.applied_record_ids),
         "created_at": proposal.created_at.isoformat(),
+        "confirmed_at": proposal.confirmed_at.isoformat()
+        if proposal.confirmed_at is not None
+        else None,
+        "rejected_at": proposal.rejected_at.isoformat()
+        if proposal.rejected_at is not None
+        else None,
         "entries": entries,
     }
 

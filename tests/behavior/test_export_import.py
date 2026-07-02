@@ -150,6 +150,28 @@ class ExportImportTest(unittest.TestCase):
         self.assertEqual(summary.target, Nutrients(2000, 150, 180, 70))
         self.assertEqual(len(target.catalog.barcode_associations), 1)
 
+    def test_export_import_preserves_proposal_audit_timestamps(self) -> None:
+        source, person_id = self.build_populated_service()
+        proposal = source.propose_text_meal(
+            person_id=person_id,
+            logged_at_local="2026-07-02T10:00:00",
+            text="50g queijo",
+            agent_settings={"external_lookup": False},
+        )
+        applied = source.confirm_proposal(proposal.id)
+
+        exported = source.export_data()
+        target = HealthMonitorService()
+        target.import_data(exported)
+        restored = target.get_proposal(proposal.id)
+
+        self.assertIsNotNone(applied.confirmed_at)
+        self.assertEqual(
+            restored.confirmed_at.isoformat() if restored.confirmed_at is not None else None,
+            applied.confirmed_at.isoformat() if applied.confirmed_at is not None else None,
+        )
+        self.assertIsNone(restored.rejected_at)
+
     def test_import_refuses_to_overwrite_non_empty_service(self) -> None:
         source, _ = self.build_populated_service()
         exported = source.export_data()
