@@ -191,6 +191,7 @@ type AppState = {
   lastDeletedEntry: DiaryEntryRecord | null;
   exportText: string;
   notice: string | null;
+  errorMessage: string | null;
 };
 
 const sessionStorageKey = "health-monitor.session.v1";
@@ -212,7 +213,8 @@ const state: AppState = {
   jobs: [],
   lastDeletedEntry: null,
   exportText: "",
-  notice: null
+  notice: null,
+  errorMessage: null
 };
 
 const appRoot = requireAppRoot();
@@ -232,15 +234,7 @@ function render(): void {
         ${renderProfileSwitcher("topbar")}
       </header>
 
-      ${
-        state.notice
-          ? `<div class="notice">${escapeHtml(state.notice)}${
-              state.lastDeletedEntry
-                ? ` <button id="undo-delete" type="button">Undo</button>`
-                : ""
-            }</div>`
-          : ""
-      }
+      ${renderNoticeBanner()}
 
       <section class="workspace">
         <div class="primary">
@@ -293,6 +287,18 @@ function renderProfileSwitcher(placement: "topbar" | "setup"): string {
       <select class="profile-select">${options}</select>
     </label>
   `;
+}
+
+function renderNoticeBanner(): string {
+  if (state.errorMessage) {
+    return `<div class="notice notice-error" role="alert">${escapeHtml(state.errorMessage)}</div>`;
+  }
+  if (!state.notice) {
+    return "";
+  }
+  return `<div class="notice">${escapeHtml(state.notice)}${
+    state.lastDeletedEntry ? ` <button id="undo-delete" type="button">Undo</button>` : ""
+  }</div>`;
 }
 
 function renderToday(): string {
@@ -1197,60 +1203,83 @@ function renderDataPortability(): string {
 }
 
 function bindEvents(): void {
-  document.querySelector<HTMLFormElement>("#setup-form")?.addEventListener("submit", onSetup);
-  document.querySelector<HTMLFormElement>("#add-person-form")?.addEventListener("submit", onAddPerson);
-  document.querySelector<HTMLFormElement>("#goal-form")?.addEventListener("submit", onGoal);
-  document.querySelector<HTMLFormElement>("#food-form")?.addEventListener("submit", onFood);
-  document.querySelector<HTMLFormElement>("#food-lookup-form")?.addEventListener("submit", onFoodLookup);
-  document.querySelector<HTMLFormElement>("#manual-log-form")?.addEventListener("submit", onManualLog);
-  document.querySelector<HTMLFormElement>("#quick-custom-log-form")?.addEventListener("submit", onQuickCustomLog);
-  document.querySelector<HTMLFormElement>("#weight-form")?.addEventListener("submit", onWeight);
-  document.querySelector<HTMLFormElement>("#text-meal-form")?.addEventListener("submit", onTextMeal);
-  document.querySelector<HTMLFormElement>("#agent-chat-form")?.addEventListener("submit", onAgentChat);
-  document.querySelector<HTMLFormElement>("#label-scan-form")?.addEventListener("submit", onLabelScan);
-  document.querySelector<HTMLFormElement>("#recipe-form")?.addEventListener("submit", onRecipe);
-  document.querySelector<HTMLFormElement>("#import-form")?.addEventListener("submit", onImportData);
+  document.querySelector<HTMLFormElement>("#setup-form")?.addEventListener("submit", safeAsync(onSetup));
+  document.querySelector<HTMLFormElement>("#add-person-form")?.addEventListener("submit", safeAsync(onAddPerson));
+  document.querySelector<HTMLFormElement>("#goal-form")?.addEventListener("submit", safeAsync(onGoal));
+  document.querySelector<HTMLFormElement>("#food-form")?.addEventListener("submit", safeAsync(onFood));
+  document.querySelector<HTMLFormElement>("#food-lookup-form")?.addEventListener("submit", safeAsync(onFoodLookup));
+  document.querySelector<HTMLFormElement>("#manual-log-form")?.addEventListener("submit", safeAsync(onManualLog));
+  document.querySelector<HTMLFormElement>("#quick-custom-log-form")?.addEventListener("submit", safeAsync(onQuickCustomLog));
+  document.querySelector<HTMLFormElement>("#weight-form")?.addEventListener("submit", safeAsync(onWeight));
+  document.querySelector<HTMLFormElement>("#text-meal-form")?.addEventListener("submit", safeAsync(onTextMeal));
+  document.querySelector<HTMLFormElement>("#agent-chat-form")?.addEventListener("submit", safeAsync(onAgentChat));
+  document.querySelector<HTMLFormElement>("#label-scan-form")?.addEventListener("submit", safeAsync(onLabelScan));
+  document.querySelector<HTMLFormElement>("#recipe-form")?.addEventListener("submit", safeAsync(onRecipe));
+  document.querySelector<HTMLFormElement>("#import-form")?.addEventListener("submit", safeAsync(onImportData));
   document
     .querySelectorAll<HTMLSelectElement>(".profile-select")
-    .forEach((select) => select.addEventListener("change", onProfileSelect));
+    .forEach((select) => select.addEventListener("change", safeAsync(onProfileSelect)));
   document
     .querySelectorAll<HTMLInputElement>(".food-filter")
     .forEach((input) => input.addEventListener("input", onFoodFilterInput));
-  document.querySelector<HTMLInputElement>("#selected-day")?.addEventListener("change", onSelectedDayChange);
-  document.querySelector<HTMLButtonElement>("#refresh-summary")?.addEventListener("click", refreshSummary);
-  document.querySelector<HTMLButtonElement>("#refresh-review")?.addEventListener("click", refreshReview);
-  document.querySelector<HTMLButtonElement>("#refresh-jobs")?.addEventListener("click", refreshJobs);
-  document.querySelector<HTMLButtonElement>("#export-data")?.addEventListener("click", onExportData);
-  document.querySelector<HTMLButtonElement>("#confirm-proposal")?.addEventListener("click", confirmProposal);
-  document.querySelector<HTMLButtonElement>("#reject-proposal")?.addEventListener("click", rejectProposal);
-  document.querySelector<HTMLButtonElement>("#undo-delete")?.addEventListener("click", undoLastDelete);
+  document.querySelector<HTMLInputElement>("#selected-day")?.addEventListener("change", safeAsync(onSelectedDayChange));
+  document.querySelector<HTMLButtonElement>("#refresh-summary")?.addEventListener("click", safeAsync(refreshSummary));
+  document.querySelector<HTMLButtonElement>("#refresh-review")?.addEventListener("click", safeAsync(refreshReview));
+  document.querySelector<HTMLButtonElement>("#refresh-jobs")?.addEventListener("click", safeAsync(refreshJobs));
+  document.querySelector<HTMLButtonElement>("#export-data")?.addEventListener("click", safeAsync(onExportData));
+  document.querySelector<HTMLButtonElement>("#confirm-proposal")?.addEventListener("click", safeAsync(confirmProposal));
+  document.querySelector<HTMLButtonElement>("#reject-proposal")?.addEventListener("click", safeAsync(rejectProposal));
+  document.querySelector<HTMLButtonElement>("#undo-delete")?.addEventListener("click", safeAsync(undoLastDelete));
   document
     .querySelectorAll<HTMLFormElement>(".entry-edit-form")
-    .forEach((form) => form.addEventListener("submit", onEntryEdit));
+    .forEach((form) => form.addEventListener("submit", safeAsync(onEntryEdit)));
   document
     .querySelectorAll<HTMLFormElement>(".proposal-entry-edit-form")
-    .forEach((form) => form.addEventListener("submit", onProposalEntryEdit));
+    .forEach((form) => form.addEventListener("submit", safeAsync(onProposalEntryEdit)));
   document
     .querySelectorAll<HTMLButtonElement>(".entry-delete")
-    .forEach((button) => button.addEventListener("click", onEntryDelete));
+    .forEach((button) => button.addEventListener("click", safeAsync(onEntryDelete)));
   document
     .querySelectorAll<HTMLButtonElement>(".food-archive")
-    .forEach((button) => button.addEventListener("click", onFoodArchive));
+    .forEach((button) => button.addEventListener("click", safeAsync(onFoodArchive)));
   document
     .querySelectorAll<HTMLFormElement>(".weight-edit-form")
-    .forEach((form) => form.addEventListener("submit", onWeightEdit));
+    .forEach((form) => form.addEventListener("submit", safeAsync(onWeightEdit)));
   document
     .querySelectorAll<HTMLButtonElement>(".lookup-propose")
-    .forEach((button) => button.addEventListener("click", onLookupPropose));
+    .forEach((button) => button.addEventListener("click", safeAsync(onLookupPropose)));
   document
     .querySelectorAll<HTMLButtonElement>(".clarification-candidate")
-    .forEach((button) => button.addEventListener("click", onClarificationCandidate));
+    .forEach((button) => button.addEventListener("click", safeAsync(onClarificationCandidate)));
   document
     .querySelectorAll<HTMLButtonElement>(".job-process")
-    .forEach((button) => button.addEventListener("click", onJobProcess));
+    .forEach((button) => button.addEventListener("click", safeAsync(onJobProcess)));
   document
     .querySelectorAll<HTMLButtonElement>(".job-load-proposal")
-    .forEach((button) => button.addEventListener("click", onJobLoadProposal));
+    .forEach((button) => button.addEventListener("click", safeAsync(onJobLoadProposal)));
+}
+
+function safeAsync<T extends Event>(handler: (event: T) => Promise<void>): (event: T) => void {
+  return (event: T) => {
+    void (async () => {
+      const hadError = state.errorMessage !== null;
+      state.errorMessage = null;
+      try {
+        await handler(event);
+        if (hadError && state.errorMessage === null) {
+          render();
+        }
+      } catch (error) {
+        reportUiError(error);
+      }
+    })();
+  };
+}
+
+function reportUiError(error: unknown): void {
+  state.errorMessage = error instanceof Error ? error.message : "Something went wrong.";
+  state.notice = null;
+  render();
 }
 
 async function onSetup(event: SubmitEvent): Promise<void> {

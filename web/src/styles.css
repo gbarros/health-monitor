@@ -140,6 +140,12 @@ h3 {
   flex-wrap: wrap;
 }
 
+.notice-error {
+  border-color: #b42318;
+  background: #fff7f5;
+  color: #7a271a;
+}
+
 .workspace {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 360px;
