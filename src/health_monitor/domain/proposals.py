@@ -50,6 +50,10 @@ class ProposalService:
 
     def reject(self, proposal_id: str) -> CreateDiaryEntriesProposal:
         proposal = self.proposals[proposal_id]
+        if proposal.status == "applied":
+            raise ValueError("cannot reject applied proposal")
+        if proposal.status == "rejected":
+            raise ValueError("proposal is already rejected")
         now = datetime.now(timezone.utc)
         rejected = CreateDiaryEntriesProposal(
             id=proposal.id,
@@ -72,6 +76,8 @@ class ProposalService:
 
     def confirm_and_apply(self, proposal_id: str) -> CreateDiaryEntriesProposal:
         proposal = self.proposals[proposal_id]
+        if proposal.status == "applied":
+            raise ValueError("proposal is already applied")
         if proposal.status == "rejected":
             raise ValueError("cannot apply rejected proposal")
         if proposal.status == "needs_clarification":

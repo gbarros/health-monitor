@@ -68,6 +68,33 @@ class LabelScanProposalFlowTest(unittest.TestCase):
         self.assertEqual(len(applied.applied_record_ids), 3)
         self.assertEqual(resolution.reason, "confirmed_barcode_association")
 
+    def test_applied_label_proposal_cannot_be_confirmed_again(self) -> None:
+        service = HealthMonitorService()
+        household = service.create_household(name="Casa")
+        person = service.create_person(
+            household_id=household.id,
+            name="Gabriel",
+            timezone="America/Sao_Paulo",
+        )
+        proposal = service.propose_label_scan(
+            household_id=household.id,
+            person_id=person.id,
+            table_text=LABEL_TEXT,
+            set_as_default=True,
+        )
+
+        applied = service.confirm_proposal(proposal.id)
+
+        with self.assertRaisesRegex(ValueError, "already applied"):
+            service.confirm_proposal(proposal.id)
+        with self.assertRaisesRegex(ValueError, "cannot reject applied proposal"):
+            service.reject_proposal(proposal.id)
+        self.assertEqual(service.get_proposal(proposal.id), applied)
+        self.assertEqual(
+            len(service.list_food_versions(household_id=household.id, person_id=person.id)),
+            1,
+        )
+
     def test_separate_barcode_scan_is_associated_with_label_proposal(self) -> None:
         service = HealthMonitorService()
         household = service.create_household(name="Casa")

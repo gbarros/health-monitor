@@ -2752,6 +2752,8 @@ class HealthMonitorService:
 
     def confirm_proposal(self, proposal_id: str) -> CreateDiaryEntriesProposal:
         proposal = self.proposals.proposals[proposal_id]
+        if proposal.status == "applied":
+            raise ValueError("proposal is already applied")
         if proposal.status == "rejected":
             raise ValueError("cannot apply rejected proposal")
         if proposal.status == "needs_clarification":

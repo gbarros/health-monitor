@@ -71,6 +71,30 @@ class ProposalGatedWritesBehaviorTest(unittest.TestCase):
         self.assertIsNone(applied.rejected_at)
         self.assertEqual(len(diary.entries_for_day("person_1", datetime(2026, 7, 1).date())), 1)
 
+    def test_applied_proposal_cannot_be_confirmed_or_rejected_again(self) -> None:
+        diary, proposals = self.make_services()
+        entry = DiaryEntry(
+            id="entry_proposed",
+            person_id="person_1",
+            logged_at=datetime(2026, 7, 1, 10, 0, tzinfo=timezone.utc),
+            meal_type="breakfast",
+            food_version_id="egg_large",
+            quantity_g=100,
+            source="agent_proposal",
+        )
+        proposals.create(
+            CreateDiaryEntriesProposal(id="proposal_1", person_id="person_1", entries=(entry,))
+        )
+
+        applied = proposals.confirm_and_apply("proposal_1")
+
+        with self.assertRaisesRegex(ValueError, "already applied"):
+            proposals.confirm_and_apply("proposal_1")
+        with self.assertRaisesRegex(ValueError, "cannot reject applied proposal"):
+            proposals.reject("proposal_1")
+        self.assertEqual(proposals.proposals["proposal_1"], applied)
+        self.assertEqual(len(diary.entries_for_day("person_1", datetime(2026, 7, 1).date())), 1)
+
 
 if __name__ == "__main__":
     unittest.main()
