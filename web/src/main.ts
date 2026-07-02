@@ -43,6 +43,7 @@ type FoodResponse = {
   version: FoodVersion;
   aliases: string[];
   barcodes: string[];
+  attachments: AttachmentObject[];
 };
 type QuickCustomFoodResponse = FoodResponse & { entry: DiaryEntryRecord };
 type FoodLookupCandidate = {
@@ -951,6 +952,7 @@ function renderFoodForm(): string {
           <strong>${escapeHtml(foodLabel(item))}</strong>
           <span>${item.version.nutrients_per_100g.calories_kcal} kcal · ${item.version.nutrients_per_100g.protein_g} g protein / 100g</span>
           <span>${item.version.nutrients_per_100g.fiber_g} g fiber · ${item.version.nutrients_per_100g.sodium_mg} mg sodium / 100g</span>
+          ${foodEvidenceLabel(item.attachments)}
           <button class="food-archive" type="button" data-food-id="${item.food.id}">Archive</button>
         </li>
       `
@@ -2095,6 +2097,7 @@ function matchesFoodFilter(item: FoodResponse): boolean {
     foodLabel(item),
     ...item.aliases,
     ...item.barcodes,
+    ...item.attachments.map((attachment) => attachment.filename ?? attachment.object_type),
     item.food.default_version_id,
     item.version.id
   ]
@@ -2154,7 +2157,7 @@ function addAppliedFoodProposalToLocalLibrary(proposal: Proposal): void {
   };
   const barcode = typeof proposal.payload.barcode === "string" ? proposal.payload.barcode : null;
   const aliases = typeof proposal.payload.food_name === "string" ? [proposal.payload.food_name] : [];
-  state.foods = [...state.foods, { food, version, aliases, barcodes: barcode ? [barcode] : [] }];
+  state.foods = [...state.foods, { food, version, aliases, barcodes: barcode ? [barcode] : [], attachments: [] }];
 }
 
 function zeroNutrients(): Nutrients {
@@ -2206,6 +2209,16 @@ function jobLabel(jobType: string): string {
     agent_chat: "Agent chat"
   };
   return labels[jobType] ?? jobType;
+}
+
+function foodEvidenceLabel(attachments: AttachmentObject[]): string {
+  if (!attachments.length) return "";
+  const filenames = attachments
+    .map((attachment) => attachment.filename ?? attachment.object_type)
+    .slice(0, 2)
+    .join(", ");
+  const suffix = attachments.length > 2 ? ` +${attachments.length - 2}` : "";
+  return `<span class="food-evidence">label evidence · ${escapeHtml(filenames)}${suffix}</span>`;
 }
 
 function syncJobPolling(): void {

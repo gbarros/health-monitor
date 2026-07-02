@@ -1524,6 +1524,11 @@ class HttpApiContractTest(unittest.TestCase):
             f"/api/attachments?linked_record_type=food_version&linked_record_id={food_version_id}",
             None,
         ).body
+        foods = api.handle(
+            "GET",
+            f"/api/foods?household_id={household['id']}&person_id={person['id']}",
+            None,
+        ).body
         restored_attachment = api.handle("GET", f"/api/attachments/{attachment['id']}", None).body
 
         self.assertEqual([item["id"] for item in listed], [attachment["id"]])
@@ -1531,6 +1536,9 @@ class HttpApiContractTest(unittest.TestCase):
         self.assertEqual(listed[0]["linked_record_id"], food_version_id)
         self.assertEqual(listed[0]["filename"], "label.png")
         self.assertNotIn("content_base64", listed[0])
+        self.assertEqual(foods[0]["attachments"][0]["id"], attachment["id"])
+        self.assertEqual(foods[0]["attachments"][0]["filename"], "label.png")
+        self.assertNotIn("content_base64", foods[0]["attachments"][0])
         self.assertEqual(restored_attachment["content_base64"], "ZmFrZS1sYWJlbC1pbWFnZQ==")
 
     def test_image_only_label_scan_uses_extractor_through_http_contract(self) -> None:

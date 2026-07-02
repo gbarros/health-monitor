@@ -700,6 +700,13 @@ def food_response_to_dict(
         "version": food_version_to_dict(version),
         "aliases": food_aliases_for_response(service, food),
         "barcodes": food_barcodes_for_response(service, food, version),
+        "attachments": [
+            attachment_to_dict(attachment, include_content=False)
+            for attachment in service.attachments_for_record(
+                linked_record_type="food_version",
+                linked_record_id=version.id,
+            )
+        ],
     }
 
 
