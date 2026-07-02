@@ -1,0 +1,17 @@
+{
+  "name": "@health-monitor/agent-chat-ui",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Framework-neutral chat UI primitives for agent-assisted health logging.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./styles.css": "./src/styles.css"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.0"
+  }
+}

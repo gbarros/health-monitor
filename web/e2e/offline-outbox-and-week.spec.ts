@@ -39,9 +39,7 @@ test("offline text meal survives reload and replays as a background job", async 
 
   await context.setOffline(true);
   await goToPage(page, "Log");
-  await page.getByRole("button", { name: /Meal note/ }).click();
-  await page.locator("#text-meal-form textarea[name='text']").fill("10am 50g Offline Replay Cheese");
-  await page.locator("#text-meal-form button[type='submit']").click();
+  await sendLogMessage(page, "Meal note", "10am 50g Offline Replay Cheese", "Draft proposal");
   await expect(page.getByText("Meal note saved offline.")).toBeVisible();
   await expect(page.locator(".offline-list").getByText("pending")).toBeVisible();
 
@@ -66,7 +64,6 @@ test("offline label scan persists upload and replays with attachment evidence", 
 
   await context.setOffline(true);
   await goToPage(page, "Log");
-  await page.getByRole("button", { name: /Product label/ }).click();
   await fillLabelScan(page, {
     table_text:
       "Produto: Iogurte Replay\nMarca: Synthetic\nPorcao: 170 g\nValor energetico: 120 kcal\nProteinas: 15 g\nCarboidratos: 10 g\nGorduras totais: 2 g",
@@ -74,7 +71,6 @@ test("offline label scan persists upload and replays with attachment evidence", 
     quantity_g: 170,
     imageBuffer: Buffer.from("offline label image")
   });
-  await page.locator("#label-scan-form button[type='submit']").click();
   await expect(page.getByText("Product label saved offline.")).toBeVisible();
   await expect(page.locator(".offline-list").getByText("1 upload")).toBeVisible();
 
@@ -95,9 +91,7 @@ test("failed offline replay stays retryable and idempotent", async ({ page, cont
 
   await context.setOffline(true);
   await goToPage(page, "Log");
-  await page.getByRole("button", { name: /Chat/ }).click();
-  await page.locator("#agent-chat-form textarea[name='message']").fill("Review this day later.");
-  await page.locator("#agent-chat-form button[type='submit']").click();
+  await sendLogMessage(page, "Chat", "Review this day later.", "Send");
   await expect(page.getByText("Agent chat saved offline.")).toBeVisible();
   await expect(page.locator(".offline-list").getByText("pending")).toBeVisible();
 
@@ -140,45 +134,30 @@ async function runWeekAction(page: Page, scenario: WeekScenario, action: WeekAct
   }
   if (action.type === "label_scan") {
     await goToPage(page, "Log");
-    await page.getByRole("button", { name: /Product label/ }).click();
     await fillLabelScan(page, {
       table_text: action.table_text ?? "",
       barcode: action.barcode ?? "",
       quantity_g: action.quantity_g ?? 100,
       imagePath: action.image ?? null
     });
-    await page.locator("#label-scan-form button[type='submit']").click();
     await expect(page.getByText(/Food version proposal drafted/)).toBeVisible();
     return;
   }
   if (action.type === "text_meal") {
     await goToPage(page, "Log");
-    await page.getByRole("button", { name: /Meal note/ }).click();
-    await page.locator("#text-meal-form textarea[name='text']").fill(action.text ?? "");
-    await page.locator("#text-meal-form summary").click();
-    await page.locator("#text-meal-form input[name='external_lookup']").uncheck();
-    await page.locator("#text-meal-form input[name='research_lookup']").uncheck();
-    await page.locator("#text-meal-form button[type='submit']").click();
+    await sendLogMessage(page, "Meal note", action.text ?? "", "Draft proposal");
     await expect(page.getByText(/Proposal drafted|saved offline|needs clarification/).first()).toBeVisible();
     return;
   }
   if (action.type === "recipe") {
     await goToPage(page, "Log");
-    await page.getByRole("button", { name: /Recipe/ }).click();
-    await page.locator("#recipe-form summary").click();
-    await page.locator("#recipe-form input[name='quantity_g']").fill(String(action.quantity_g ?? 100));
-    await page.locator("#recipe-form textarea[name='recipe_text']").fill(action.recipe_text ?? "");
-    await page.locator("#recipe-form button[type='submit']").click();
+    await sendLogMessage(page, "Recipe", `${action.recipe_text ?? ""}\nLog grams: ${action.quantity_g ?? 100} g`, "Draft proposal");
     await expect(page.getByText("Recipe proposal drafted.")).toBeVisible();
     return;
   }
   if (action.type === "chat_question" || action.type === "correction_request" || action.type === "review_note_request") {
     await goToPage(page, "Log");
-    await page.getByRole("button", { name: /Chat/ }).click();
-    await page.locator("#agent-chat-form textarea[name='message']").fill(action.message ?? "");
-    await page.locator("#agent-chat-form summary").click();
-    await page.locator("#agent-chat-form input[name='background_job']").check();
-    await page.locator("#agent-chat-form button[type='submit']").click();
+    await sendLogMessage(page, "Chat", action.message ?? "", "Send");
     await expect(page.getByText("Agent chat queued for the worker.")).toBeVisible();
     await goToPage(page, "Work");
     await page.locator(".job-process").first().click();
@@ -268,20 +247,52 @@ async function fillLabelScan(
     imageBuffer?: Buffer;
   }
 ): Promise<void> {
-  await page.locator("#label-scan-form textarea[name='table_text']").fill(options.table_text);
-  await page.locator("#label-scan-form input[name='barcode']").fill(options.barcode);
-  await page.locator("#label-scan-form summary").click();
-  await page.locator("#label-scan-form input[name='quantity_g']").fill(String(options.quantity_g));
+  await selectLogMode(page, "Product label");
   if (options.imagePath) {
     const imagePath = isAbsolute(options.imagePath) ? options.imagePath : resolve(repoRoot, options.imagePath);
-    await page.locator("#label-scan-form input[name='attachment']").setInputFiles(imagePath);
+    await agentChat(page).getByLabel("Add files").setInputFiles(imagePath);
   } else {
-    await page.locator("#label-scan-form input[name='attachment']").setInputFiles({
+    await agentChat(page).getByLabel("Add files").setInputFiles({
       name: "synthetic-label.png",
       mimeType: "image/png",
       buffer: options.imageBuffer ?? Buffer.from("synthetic label image")
     });
   }
+  await sendCurrentLogMessage(
+    page,
+    `${options.table_text}
+Barcode: ${options.barcode}
+Quantity: ${options.quantity_g} g`,
+    "Draft proposal"
+  );
+}
+
+function agentChat(page: Page) {
+  return page.locator("#log-agent-chat");
+}
+
+async function selectLogMode(page: Page, mode: string): Promise<void> {
+  await agentChat(page).getByRole("tab", { name: new RegExp(mode) }).click();
+}
+
+async function sendLogMessage(
+  page: Page,
+  mode: string,
+  text: string,
+  button: "Send" | "Draft proposal"
+): Promise<void> {
+  await selectLogMode(page, mode);
+  await sendCurrentLogMessage(page, text, button);
+}
+
+async function sendCurrentLogMessage(
+  page: Page,
+  text: string,
+  button: "Send" | "Draft proposal"
+): Promise<void> {
+  const chat = agentChat(page);
+  await chat.getByRole("textbox", { name: "Message" }).fill(text);
+  await chat.getByRole("button", { name: button, exact: true }).click();
 }
 
 function backgroundJobRows(page: Page) {

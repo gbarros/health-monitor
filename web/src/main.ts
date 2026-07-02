@@ -1,4 +1,18 @@
+import {
+  defineAgentChatElement,
+  type AgentChatAttachment,
+  type AgentChatDraftCard,
+  type AgentChatElement,
+  type AgentChatElementState,
+  type AgentChatMessage,
+  type AgentChatMode,
+  type AgentChatSendPayload,
+  type AgentChatStatus
+} from "@health-monitor/agent-chat-ui";
+import "@health-monitor/agent-chat-ui/styles.css";
 import "./styles.css";
+
+defineAgentChatElement();
 
 type Nutrients = {
   calories_kcal: number;
@@ -272,7 +286,7 @@ type AppState = {
   errorMessage: string | null;
 };
 type AppPage = "log" | "diary" | "review" | "library" | "work" | "settings";
-type LogMode = "meal" | "label" | "recipe" | "chat";
+type LogMode = "meal" | "label" | "recipe" | "chat" | "correction" | "review_note";
 type LogEvent = {
   id: string;
   mode: LogMode;
@@ -460,94 +474,168 @@ function renderNoticeBanner(): string {
 function renderCaptureHub(): string {
   return `
     <section class="capture-zone" id="capture">
-      <div class="chat-workspace">
-        <aside class="chat-mode-rail" aria-label="Log modes">
-          ${renderLogModeButton("chat", "Chat", "Questions and fixes")}
-          ${renderLogModeButton("meal", "Meal note", "Foods, portions, context")}
-          ${renderLogModeButton("label", "Product label", "Photos, barcode, table")}
-          ${renderLogModeButton("recipe", "Recipe", "Batch food or prep")}
-        </aside>
-        <section class="chat-panel" aria-label="Agent log workspace">
-          ${renderLogTranscript()}
-          ${renderModeComposer(state.logMode)}
-        </section>
-      </div>
+      <agent-chat id="log-agent-chat"></agent-chat>
     </section>
   `;
 }
 
-function renderLogModeButton(mode: LogMode, label: string, description: string): string {
-  const active = state.logMode === mode;
-  return `
-    <button class="log-mode-button${active ? " active" : ""}" type="button" data-log-mode="${mode}" aria-pressed="${active}">
-      <strong>${escapeHtml(label)}</strong>
-      <span>${escapeHtml(description)}</span>
-    </button>
-  `;
+function logAgentModes(): AgentChatMode[] {
+  return [
+    {
+      id: "chat",
+      label: "Chat",
+      description: "Questions and fixes",
+      placeholder: `Ask about ${state.selectedDay}, request a correction, or attach a photo for OCR.`
+    },
+    {
+      id: "meal",
+      label: "Meal note",
+      description: "Foods, portions, context",
+      placeholder: "10am\n- 100g queijo\n- cafe com leite\n- banana depois do treino"
+    },
+    {
+      id: "label",
+      label: "Product label",
+      description: "Photos, code, table",
+      placeholder: "Product: name\nBarcode: numbers if visible\nQuantity: 170 g if this should also be logged\nPaste label text here or attach photos."
+    },
+    {
+      id: "recipe",
+      label: "Recipe",
+      description: "Batch food or prep",
+      placeholder: "Recipe: Batch name\nYield: 1000 g\nIngredients:\n- 500g ingredient\nLog grams: 100"
+    },
+    {
+      id: "correction",
+      label: "Correction",
+      description: "Fix a previous entry",
+      placeholder: "Correct yesterday: the cheese was 50g, not 100g."
+    },
+    {
+      id: "review_note",
+      label: "Review note",
+      description: "Save an observation",
+      placeholder: "Create a review note about this week..."
+    }
+  ];
 }
 
-function renderModeComposer(mode: LogMode): string {
-  if (mode === "label") return renderLabelScan();
-  if (mode === "recipe") return renderRecipeForm();
-  if (mode === "chat") return renderAgentChat();
-  return renderTextMeal();
+function logAgentState(): AgentChatElementState {
+  const status: AgentChatStatus = state.isOfflineReplayRunning
+    ? "replaying"
+    : !navigator.onLine
+      ? "offline"
+      : state.errorMessage
+        ? "failed"
+        : "idle";
+  const mode = logAgentModes().find((candidate) => candidate.id === state.logMode);
+  return {
+    messages: logAgentMessages(),
+    modes: logAgentModes(),
+    activeModeId: mode?.id ?? "chat",
+    status,
+    attachments: [],
+    composer: {
+      disabled: !state.person,
+      allowAttachments: state.logMode === "chat" || state.logMode === "label",
+      accept: "image/*",
+      multiple: true,
+      label: "Message",
+      sendLabel: state.logMode === "chat" || state.logMode === "correction" || state.logMode === "review_note" ? "Send" : "Draft proposal",
+      helperText: logAgentHelperText(state.logMode),
+      showInspectPrompt: true
+    }
+  };
 }
 
-function renderLogTranscript(): string {
-  const rows = state.logEvents
-    .slice(-8)
-    .map(
-      (event) => `
-        <article class="chat-turn">
-          <div class="chat-message chat-message-user">
-            <div class="chat-message-meta">
-              <strong>${escapeHtml(event.title)}</strong>
-              <span>${escapeHtml(formatDateTime(event.created_at))}</span>
-            </div>
-            <pre>${escapeHtml(event.message)}</pre>
-          </div>
-          <div class="chat-message chat-message-assistant">
-            <p>${escapeHtml(event.result)}</p>
-          </div>
-        </article>
-      `
-    )
-    .join("");
-  const response = state.chatResponse
-    ? `<article class="chat-turn">
-        <div class="chat-message chat-message-assistant">
-          <div class="chat-message-meta">
-            <strong>${escapeHtml(state.chatResponse.behavior_label)}</strong>
-            <span>${state.chatResponse.citations.length} citation${state.chatResponse.citations.length === 1 ? "" : "s"}</span>
-          </div>
-          <p>${escapeHtml(state.chatResponse.message)}</p>
-        </div>
-      </article>`
-    : "";
-  const proposal = state.proposal
-    ? `<article class="chat-turn">
-        <div class="chat-message chat-message-assistant">
-          <div class="chat-message-meta">
-            <strong>Proposal ready</strong>
-            <span>${escapeHtml(state.proposal.status)}</span>
-          </div>
-          <p>${escapeHtml(state.proposal.summary)}</p>
-        </div>
-      </article>`
-    : "";
-  return `
-    <section class="chat-transcript" aria-label="Log conversation">
-      ${
-        rows || response || proposal
-          ? `${rows}${response}${proposal}`
-          : `<article class="chat-turn">
-              <div class="chat-message chat-message-assistant">
-                <p>Choose a mode and send a first message. Drafts stay reviewable before anything is written.</p>
-              </div>
-            </article>`
-      }
-    </section>
-  `;
+function logAgentHelperText(mode: LogMode): string {
+  if (mode === "label") return "Attach one or more photos. Add barcode, pasted table text, or quantity in the message when useful.";
+  if (mode === "recipe") return "Describe the batch, yield, ingredients, and optional portion to log.";
+  if (mode === "meal") return "Use multiple lines for foods and portions. The agent drafts; you still review before applying.";
+  if (mode === "correction") return "Describe the mistake and the desired correction. The agent can draft a proposal.";
+  if (mode === "review_note") return "Ask the agent to summarize an observation or pattern as a review note.";
+  return "Attach label photos when useful. Chat can queue work for the background worker.";
+}
+
+function logAgentMessages(): AgentChatMessage[] {
+  const messages: AgentChatMessage[] = [];
+  for (const event of state.logEvents.slice(-8)) {
+    messages.push({
+      id: `${event.id}_user`,
+      role: "user",
+      createdAt: event.created_at,
+      text: `${event.title}\n${event.message}`
+    });
+    messages.push({
+      id: `${event.id}_assistant`,
+      role: "assistant",
+      createdAt: event.created_at,
+      text: event.result,
+      toolCalls: [
+        {
+          id: `${event.id}_tool`,
+          name: jobLabelForLogMode(event.mode),
+          status: event.result.toLowerCase().includes("offline") ? "pending" : "succeeded",
+          summary: event.title
+        }
+      ]
+    });
+  }
+  if (state.chatResponse) {
+    messages.push({
+      id: `chat_response_${state.chatResponse.run_id}`,
+      role: "assistant",
+      createdAt: new Date().toISOString(),
+      text: state.chatResponse.message,
+      toolCalls: [
+        {
+          id: `chat_response_tool_${state.chatResponse.run_id}`,
+          name: state.chatResponse.behavior_label,
+          status: "succeeded",
+          summary: `${state.chatResponse.citations.length} citation${state.chatResponse.citations.length === 1 ? "" : "s"}`
+        }
+      ]
+    });
+  }
+  if (state.proposal) {
+    messages.push({
+      id: `proposal_${state.proposal.id}`,
+      role: "assistant",
+      createdAt: state.proposal.created_at,
+      text: "A proposal is ready for review.",
+      draftCards: [proposalToDraftCard(state.proposal)]
+    });
+  }
+  return messages;
+}
+
+function proposalToDraftCard(proposal: Proposal): AgentChatDraftCard {
+  return {
+    id: proposal.id,
+    kind: proposalKindToDraftKind(proposal.proposal_type),
+    title: proposal.proposal_type.replaceAll("_", " "),
+    summary: proposal.summary,
+    details: `${Math.round(proposal.totals.calories_kcal)} kcal · ${proposal.entries.length} entr${proposal.entries.length === 1 ? "y" : "ies"}`,
+    status: proposal.status === "draft" ? "needs_review" : proposal.status === "confirmed" ? "confirmed" : "rejected"
+  };
+}
+
+function proposalKindToDraftKind(kind: string): AgentChatDraftCard["kind"] {
+  if (kind.includes("meal")) return "meal";
+  if (kind.includes("label") || kind.includes("food")) return "label";
+  if (kind.includes("recipe")) return "recipe";
+  if (kind.includes("correction")) return "correction";
+  if (kind.includes("review")) return "review_note";
+  return "generic";
+}
+
+function jobLabelForLogMode(mode: LogMode): string {
+  if (mode === "meal") return "Meal note";
+  if (mode === "label") return "Product label";
+  if (mode === "recipe") return "Recipe";
+  if (mode === "correction") return "Correction";
+  if (mode === "review_note") return "Review note";
+  return "Agent chat";
 }
 
 function renderSetupPage(): string {
@@ -1682,44 +1770,6 @@ function advancedSettings(content: string): string {
   `;
 }
 
-function renderTextMeal(): string {
-  const disabled = state.person ? "" : "disabled";
-  const template = `Mode: meal_log
-Day: ${state.selectedDay}
-Instruction: Parse the user's meal note, resolve foods by local library/recency/barcode/web lookup, and draft diary entries only.
-User note: 10am, 100g queijo`;
-  return `
-    <form id="text-meal-form" class="panel chat-composer">
-      <p class="eyebrow">Starter mode</p>
-      <h2>Meal note</h2>
-      ${renderTemplatePreview("Meal log prompt", template)}
-      <label>Message
-        <textarea name="text" ${disabled}>10am
-- 100g queijo
-- cafe com leite
-- banana depois do treino</textarea>
-      </label>
-      ${advancedSettings(`
-        <div class="grid-two">
-          <label>Model profile <input name="model_profile" value="ollama-local" ${disabled} /></label>
-          <label>Effort
-            <select name="effort" ${disabled}>
-              <option value="low">Low</option>
-              <option value="medium" selected>Medium</option>
-              <option value="high">High</option>
-            </select>
-          </label>
-          <label>Max loops <input name="max_tool_loops" type="number" value="4" min="1" max="12" ${disabled} /></label>
-        </div>
-        <label class="check-row"><input name="external_lookup" type="checkbox" checked ${disabled} /> External lookup</label>
-        <label class="check-row"><input name="research_lookup" type="checkbox" checked ${disabled} /> Research lookup</label>
-        <label class="check-row"><input name="background_job" type="checkbox" ${disabled} /> Run in background</label>
-      `)}
-      <button type="submit" ${disabled}>Draft proposal</button>
-    </form>
-  `;
-}
-
 function renderAgentChat(): string {
   const disabled = state.person ? "" : "disabled";
   const response = state.chatResponse;
@@ -1786,94 +1836,6 @@ function renderChatHistory(): string {
     : "";
 }
 
-function renderLabelScan(): string {
-  const disabled = state.household && state.person ? "" : "disabled";
-  const template = `Mode: label_scan
-Instruction: Extract or create an immutable food version, associate barcode/attachment evidence, and optionally draft a diary entry.
-Barcode: optional
-Nutrition label text or image: Produto, porcao, calorias, macros`;
-  return `
-    <form id="label-scan-form" class="panel chat-composer">
-      <p class="eyebrow">Starter mode</p>
-      <h2>Product label</h2>
-      ${renderTemplatePreview("Product label prompt", template)}
-      <label>Photos
-        <input name="attachment" type="file" accept="image/*" capture="environment" multiple ${disabled} />
-        <span class="field-hint">Use more than one photo when lighting, glare, or package folds hide part of the table.</span>
-      </label>
-      <div class="barcode-row">
-        <label>Barcode
-          <input name="barcode" inputmode="numeric" autocomplete="off" placeholder="scan or type numbers" ${disabled} />
-        </label>
-        <button id="barcode-scan-start" type="button" ${disabled}>Scan</button>
-      </div>
-      <section id="barcode-scanner" class="barcode-scanner" hidden>
-        <video id="barcode-video" playsinline muted></video>
-        <div class="button-row">
-          <button id="barcode-scan-stop" type="button">Stop camera</button>
-        </div>
-        <p class="hint">Point the camera at the barcode. If the browser cannot decode it, type the numbers manually.</p>
-      </section>
-      <label>Label text
-        <textarea name="table_text" placeholder="Optional when photos are clear. Paste OCR/table text here when photos are incomplete, blurry, or copied from a website." ${disabled}>Produto: Iogurte Batavo Protein
-Marca: Batavo
-Porcao: 170 g
-Valor energetico: 120 kcal
-Proteinas: 15 g
-Carboidratos: 10 g
-Gorduras totais: 2 g
-Codigo de barras: 7891000000000</textarea>
-        <span class="field-hint">This is extra evidence for the agent, not a separate product. It helps when an image is unreadable or when you already have table-like text.</span>
-      </label>
-      ${advancedSettings(`
-        <div class="grid-two">
-          <label>Log time <input name="logged_at_local" type="datetime-local" value="${defaultDateTime("10:00")}" ${disabled} /></label>
-          <label>Log grams <input name="quantity_g" type="number" step="0.1" placeholder="optional" ${disabled} /></label>
-          <label>Meal
-            <select name="meal_type" ${disabled}>
-              ${mealOptions("breakfast")}
-            </select>
-          </label>
-        </div>
-        <label class="check-row"><input name="background_job" type="checkbox" ${disabled} /> Run in background</label>
-      `)}
-      <button type="submit" ${disabled}>Draft food version</button>
-    </form>
-  `;
-}
-
-function renderRecipeForm(): string {
-  const disabled = state.household && state.person ? "" : "disabled";
-  const template = `Mode: recipe
-Instruction: Register a batch food from ingredients, estimate/calculate nutrients, and optionally draft a diary entry for a portion.
-Recipe: name, yield, ingredients`;
-  return `
-    <form id="recipe-form" class="panel chat-composer">
-      <p class="eyebrow">Starter mode</p>
-      <h2>Recipe</h2>
-      ${renderTemplatePreview("Recipe prompt", template)}
-      <textarea name="recipe_text" ${disabled}>Recipe: Batch breakfast mix
-Yield: 1000 g
-Ingredients:
-500g queijo
-500g banana</textarea>
-      ${advancedSettings(`
-        <div class="grid-two">
-          <label>Log time <input name="logged_at_local" type="datetime-local" value="${defaultDateTime("12:30")}" ${disabled} /></label>
-          <label>Log grams <input name="quantity_g" type="number" step="0.1" placeholder="optional" ${disabled} /></label>
-          <label>Meal
-            <select name="meal_type" ${disabled}>
-              ${mealOptions("lunch")}
-            </select>
-          </label>
-        </div>
-        <label class="check-row"><input name="background_job" type="checkbox" ${disabled} /> Run in background</label>
-      `)}
-      <button type="submit" ${disabled}>Draft recipe</button>
-    </form>
-  `;
-}
-
 function renderDataPortability(): string {
   return `
     <form id="import-form" class="panel">
@@ -1912,9 +1874,16 @@ function bindEvents(): void {
   document
     .querySelectorAll<HTMLInputElement>(".food-filter")
     .forEach((input) => input.addEventListener("input", onFoodFilterInput));
-  document
-    .querySelectorAll<HTMLButtonElement>(".log-mode-button")
-    .forEach((button) => button.addEventListener("click", onLogModeSelect));
+  const logAgentChat = document.querySelector<AgentChatElement>("#log-agent-chat");
+  if (logAgentChat) {
+    logAgentChat.data = logAgentState();
+    logAgentChat.addEventListener("agent-chat:mode-change", onLogAgentModeChange);
+    logAgentChat.addEventListener("agent-chat:send", safeAsync(onLogAgentSend));
+    logAgentChat.addEventListener("agent-chat:confirm-draft", safeAsync(confirmProposal));
+    logAgentChat.addEventListener("agent-chat:reject-draft", safeAsync(rejectProposal));
+    logAgentChat.addEventListener("agent-chat:inspect-prompt", onLogAgentInspectPrompt);
+    logAgentChat.addEventListener("agent-chat:retry", safeAsync(onReplayOfflineOutbox));
+  }
   document.querySelector<HTMLInputElement>("#selected-day")?.addEventListener("change", safeAsync(onSelectedDayChange));
   document.querySelector<HTMLButtonElement>("#refresh-summary")?.addEventListener("click", safeAsync(refreshSummary));
   document.querySelector<HTMLButtonElement>("#refresh-review")?.addEventListener("click", safeAsync(refreshReview));
@@ -1971,11 +1940,19 @@ function bindEvents(): void {
     .forEach((button) => button.addEventListener("click", safeAsync(onProposalOpen)));
 }
 
-function onLogModeSelect(event: Event): void {
-  const mode = (event.currentTarget as HTMLButtonElement).dataset.logMode as LogMode | undefined;
-  if (!mode) return;
+function onLogAgentModeChange(event: Event): void {
+  const mode = (event as CustomEvent<{ modeId?: string }>).detail.modeId as LogMode | undefined;
+  if (!mode || !logAgentModes().some((candidate) => candidate.id === mode)) return;
   stopBarcodeScanner();
   state.logMode = mode;
+  render();
+}
+
+function onLogAgentInspectPrompt(): void {
+  const mode = logAgentModes().find((candidate) => candidate.id === state.logMode);
+  state.notice = mode
+    ? `${mode.label} mode prepares a model-visible message while durable writes stay reviewable.`
+    : "The chat surface prepares messages for the agent without applying durable writes directly.";
   render();
 }
 
@@ -2735,6 +2712,241 @@ function recipePromptPreview(payload: {
 Optional log: ${payload.quantity_g === null ? "none" : `${payload.quantity_g} g at ${payload.logged_at_local} (${payload.meal_type})`}
 Recipe:
 ${payload.recipe_text}`;
+}
+
+async function onLogAgentSend(event: Event): Promise<void> {
+  event.preventDefault();
+  const detail = (event as CustomEvent<AgentChatSendPayload>).detail;
+  if (!state.person) return;
+  if (detail.modeId === "meal") {
+    await submitLogAgentMeal(detail);
+    return;
+  }
+  if (detail.modeId === "label") {
+    await submitLogAgentLabel(detail);
+    return;
+  }
+  if (detail.modeId === "recipe") {
+    await submitLogAgentRecipe(detail);
+    return;
+  }
+  await submitLogAgentChat(detail);
+}
+
+async function submitLogAgentMeal(detail: AgentChatSendPayload): Promise<void> {
+  if (!state.person) return;
+  const payload = {
+    person_id: state.person.id,
+    logged_at_local: `${state.selectedDay}T10:00:00`,
+    text: detail.text,
+    agent_settings: {
+      model_profile: "ollama-local",
+      effort: "medium",
+      max_tool_loops: 4,
+      external_lookup: true,
+      research_lookup: true
+    }
+  };
+  try {
+    if (!navigator.onLine) {
+      await queueOfflineAgent("agent_text_meal", payload, []);
+      recordLogEvent("meal", "Meal note saved offline", textMealPromptPreview(payload), "Saved locally and will replay after reconnect.");
+      render();
+      return;
+    }
+    state.proposal = await apiPost<Proposal>("/api/agent/text-meal", payload);
+  } catch (error) {
+    if (!isProbablyOfflineError(error)) throw error;
+    await queueOfflineAgent("agent_text_meal", payload, [], error);
+    recordLogEvent("meal", "Meal note saved offline", textMealPromptPreview(payload), "Saved locally and will replay after reconnect.");
+    render();
+    return;
+  }
+  recordLogEvent("meal", "Meal note sent", textMealPromptPreview(payload), state.proposal.summary);
+  state.notice = "Proposal drafted. Review before applying.";
+  await refreshProposals();
+}
+
+async function submitLogAgentChat(detail: AgentChatSendPayload): Promise<void> {
+  if (!state.person) return;
+  const files = queuedFilesFromAgentChat(detail.attachments, "chat_image");
+  const payload = {
+    person_id: state.person.id,
+    message: detail.text,
+    today: state.selectedDay,
+    attachment_ids: [] as string[],
+    agent_settings: {
+      model_profile: "deterministic-local",
+      effort: "medium",
+      max_tool_loops: 4,
+      research_lookup: true
+    }
+  };
+  if (!navigator.onLine) {
+    await queueOfflineAgent("agent_chat", payload, files);
+    recordLogEvent("chat", "Chat saved offline", chatPromptPreview(payload), "Saved locally and will replay after reconnect.");
+    render();
+    return;
+  }
+  let uploadedAttachments: AttachmentObject[] = [];
+  try {
+    uploadedAttachments = await uploadAgentChatAttachments(detail.attachments, "chat_image");
+    payload.attachment_ids = uploadedAttachments.map((attachment) => attachment.id);
+    if (payload.attachment_ids.length) {
+      payload.message = appendAttachmentIdsToMessage(payload.message, payload.attachment_ids);
+    }
+    await enqueueJob("agent_chat", payload);
+  } catch (error) {
+    if (!isProbablyOfflineError(error)) throw error;
+    await queueOfflineAgent(
+      "agent_chat",
+      uploadedAttachments.length ? payload : { ...payload, attachment_ids: [] },
+      uploadedAttachments.length ? [] : files,
+      error
+    );
+    recordLogEvent("chat", "Chat saved offline", chatPromptPreview(payload), "Saved locally and will replay after reconnect.");
+    render();
+    return;
+  }
+  recordLogEvent("chat", "Chat queued", chatPromptPreview(payload), "Background job queued for the worker.");
+  render();
+}
+
+async function submitLogAgentLabel(detail: AgentChatSendPayload): Promise<void> {
+  if (!state.household || !state.person) return;
+  const files = queuedFilesFromAgentChat(detail.attachments, "nutrition_label_image");
+  const quantityG = extractGrams(detail.text);
+  const payload = {
+    household_id: state.household.id,
+    person_id: state.person.id,
+    table_text: detail.text,
+    barcode: extractBarcode(detail.text),
+    set_as_default: true,
+    attachment_id: null as string | null,
+    attachment_ids: [] as string[],
+    logged_at_local: quantityG === null ? null : `${state.selectedDay}T10:00:00`,
+    quantity_g: quantityG,
+    meal_type: quantityG === null ? null : "breakfast"
+  };
+  if (!navigator.onLine) {
+    await queueOfflineAgent("agent_label_scan", payload, files);
+    recordLogEvent("label", "Product label saved offline", labelScanPromptPreview(payload), "Saved locally with upload evidence for replay.");
+    render();
+    return;
+  }
+  let uploadedAttachments: AttachmentObject[] = [];
+  try {
+    uploadedAttachments = await uploadAgentChatAttachments(detail.attachments, "nutrition_label_image");
+    payload.attachment_ids = uploadedAttachments.map((attachment) => attachment.id);
+    payload.attachment_id = payload.attachment_ids[0] ?? null;
+    state.proposal = await apiPost<Proposal>("/api/agent/label-scan", payload);
+  } catch (error) {
+    if (!isProbablyOfflineError(error)) throw error;
+    await queueOfflineAgent(
+      "agent_label_scan",
+      uploadedAttachments.length ? payload : { ...payload, attachment_id: null, attachment_ids: [] },
+      uploadedAttachments.length ? [] : files,
+      error
+    );
+    recordLogEvent("label", "Product label saved offline", labelScanPromptPreview(payload), "Saved locally with upload evidence for replay.");
+    render();
+    return;
+  }
+  recordLogEvent("label", "Product label sent", labelScanPromptPreview(payload), state.proposal.summary);
+  state.notice = uploadedAttachments.length
+    ? `Food version proposal drafted with ${uploadedAttachments.length} attachment${uploadedAttachments.length === 1 ? "" : "s"}.`
+    : "Food version proposal drafted.";
+  await refreshProposals();
+}
+
+async function submitLogAgentRecipe(detail: AgentChatSendPayload): Promise<void> {
+  if (!state.household || !state.person) return;
+  const quantityG = extractGrams(detail.text);
+  const payload = {
+    household_id: state.household.id,
+    person_id: state.person.id,
+    recipe_text: cleanRecipeText(detail.text),
+    logged_at_local: quantityG === null ? null : `${state.selectedDay}T12:30:00`,
+    quantity_g: quantityG,
+    meal_type: quantityG === null ? null : "lunch"
+  };
+  try {
+    if (!navigator.onLine) {
+      await queueOfflineAgent("agent_recipe", payload, []);
+      recordLogEvent("recipe", "Recipe saved offline", recipePromptPreview(payload), "Saved locally and will replay after reconnect.");
+      render();
+      return;
+    }
+    state.proposal = await apiPost<Proposal>("/api/agent/recipe", payload);
+  } catch (error) {
+    if (!isProbablyOfflineError(error)) throw error;
+    await queueOfflineAgent("agent_recipe", payload, [], error);
+    recordLogEvent("recipe", "Recipe saved offline", recipePromptPreview(payload), "Saved locally and will replay after reconnect.");
+    render();
+    return;
+  }
+  recordLogEvent("recipe", "Recipe sent", recipePromptPreview(payload), state.proposal.summary);
+  state.notice = "Recipe proposal drafted.";
+  await refreshProposals();
+}
+
+async function uploadAgentChatAttachments(
+  attachments: AgentChatAttachment[],
+  objectType: string
+): Promise<AttachmentObject[]> {
+  if (!state.household || !state.person) return [];
+  const uploaded: AttachmentObject[] = [];
+  for (const attachment of attachments) {
+    if (!attachment.file || attachment.file.size <= 0) continue;
+    uploaded.push(
+      await apiPost<AttachmentObject>("/api/attachments", {
+        household_id: state.household.id,
+        person_id: state.person.id,
+        object_type: objectType,
+        mime_type: attachment.file.type || attachment.mimeType || "application/octet-stream",
+        filename: attachment.file.name || attachment.name || null,
+        content_base64: await fileToBase64(attachment.file),
+        retention_policy: "keep"
+      })
+    );
+  }
+  return uploaded;
+}
+
+function queuedFilesFromAgentChat(
+  attachments: AgentChatAttachment[],
+  objectType: string
+): OfflineOutboxFile[] {
+  return attachments
+    .filter((attachment): attachment is AgentChatAttachment & { file: File } => !!attachment.file && attachment.file.size > 0)
+    .map((attachment) => ({
+      field: "attachment",
+      object_type: objectType,
+      filename: attachment.file.name || attachment.name || null,
+      mime_type: attachment.file.type || attachment.mimeType || "application/octet-stream",
+      blob: attachment.file
+    }));
+}
+
+function extractBarcode(text: string): string | null {
+  const labeled = text.match(/(?:barcode|codigo|c[oó]digo|ean)\s*[:#-]?\s*(\d{8,14})/i);
+  if (labeled?.[1]) return labeled[1];
+  return text.match(/\b\d{8,14}\b/)?.[0] ?? null;
+}
+
+function extractGrams(text: string): number | null {
+  const labeled = text.match(/(?:quantity|log grams|portion|por[cç][aã]o|quantidade)\s*[:#-]?\s*(\d+(?:[.,]\d+)?)\s*g\b/i);
+  const generic = text.match(/\b(\d+(?:[.,]\d+)?)\s*g\b/i);
+  const raw = labeled?.[1] ?? generic?.[1] ?? null;
+  return raw ? Number(raw.replace(",", ".")) : null;
+}
+
+function cleanRecipeText(text: string): string {
+  return text
+    .split("\n")
+    .filter((line) => !/^\s*(?:quantity|log grams|portion|por[cç][aã]o|quantidade)\s*[:#-]?\s*\d+(?:[.,]\d+)?\s*g\s*$/i.test(line))
+    .join("\n")
+    .trim();
 }
 
 async function onTextMeal(event: SubmitEvent): Promise<void> {

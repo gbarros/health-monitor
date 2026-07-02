@@ -1,4 +1,4 @@
-.PHONY: test test-unit test-behavior test-live-model test-cloud-evals test-private-ocr-evals smoke-ollama dev-api dev-web web-install web-build e2e e2e-private-week
+.PHONY: test test-unit test-behavior test-live-model test-cloud-evals test-private-ocr-evals smoke-ollama dev-api dev-web web-install web-build agent-chat-ui-typecheck e2e-agent-chat-ui e2e e2e-private-week
 
 PYTHON ?= python3
 
@@ -34,6 +34,12 @@ web-install:
 
 web-build:
 	cd web && bun run build
+
+agent-chat-ui-typecheck:
+	web/node_modules/.bin/tsc -p packages/agent-chat-ui/tsconfig.json --noEmit
+
+e2e-agent-chat-ui:
+	cd web && bun run e2e:agent-chat-ui
 
 e2e:
 	cd web && bun run e2e

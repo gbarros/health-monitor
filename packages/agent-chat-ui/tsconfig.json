@@ -6,18 +6,11 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "skipLibCheck": true,
     "moduleResolution": "bundler",
-    "baseUrl": ".",
-    "paths": {
-      "@health-monitor/agent-chat-ui": ["../packages/agent-chat-ui/src/index.ts"],
-      "@health-monitor/agent-chat-ui/styles.css": ["../packages/agent-chat-ui/src/styles.css"]
-    },
-    "allowImportingTsExtensions": true,
     "isolatedModules": true,
     "moduleDetection": "force",
-    "noEmit": true,
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true
   },
-  "include": ["src", "../packages/agent-chat-ui/src"]
+  "include": ["src"]
 }
