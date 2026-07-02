@@ -106,6 +106,33 @@ class AgentTextMealFlowTest(unittest.TestCase):
         self.assertEqual(run.status, "needs_clarification")
         self.assertEqual(service.day_summary(person.id, date(2026, 7, 1)).totals, Nutrients())
 
+    def test_unparseable_weird_meal_text_creates_clarification_proposal_without_mutation(self) -> None:
+        service = HealthMonitorService()
+        household = service.create_household(name="Casa")
+        person = service.create_person(
+            household_id=household.id,
+            name="Gabriel",
+            timezone="America/Sao_Paulo",
+        )
+
+        proposal = service.propose_text_meal(
+            person_id=person.id,
+            logged_at_local="2026-07-01T10:00:00",
+            text="lá pelas 10 comi só meio queijo",
+            agent_settings={"external_lookup": False},
+        )
+        run = service.get_agent_run(proposal.source_agent_run_id or "")
+
+        self.assertEqual(proposal.status, "needs_clarification")
+        self.assertEqual(proposal.entries, ())
+        self.assertEqual(proposal.payload["missing_fields"], ["parseable_food_item"])
+        self.assertEqual(
+            proposal.payload["unresolved_items"][0]["quantity_basis"],
+            "unparseable_text",
+        )
+        self.assertEqual(run.status, "needs_clarification")
+        self.assertEqual(service.day_summary(person.id, date(2026, 7, 1)).totals, Nutrients())
+
     def test_ambiguous_local_food_requires_clarification_without_mutation(self) -> None:
         service = HealthMonitorService()
         household = service.create_household(name="Casa")

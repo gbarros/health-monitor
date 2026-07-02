@@ -1941,7 +1941,38 @@ class HealthMonitorService:
             )
             self._persist()
             return proposal
-        parsed_logged_at, items = parse_text_meal_items(text, default_logged_at=logged_at)
+        try:
+            parsed_logged_at, items = parse_text_meal_items(text, default_logged_at=logged_at)
+        except ValueError as exc:
+            proposal = self._create_text_meal_clarification_proposal(
+                person_id=person_id,
+                text=text,
+                run=run,
+                logged_at=logged_at,
+                unresolved_items=(
+                    ParsedMealItem(
+                        phrase=text.casefold().strip(),
+                        quantity_g=0,
+                        source_text=text,
+                        evidence={
+                            "quantity_basis": "unparseable_text",
+                            "parse_error": str(exc),
+                        },
+                    ),
+                ),
+                missing_fields=("parseable_food_item",),
+                summary="Need a clearer food and quantity before logging this meal.",
+            )
+            self._record_agent_tool_call(
+                run=run,
+                tool_name="parse_text_meal",
+                input_summary="text meal parse",
+                output_summary="needs clarification",
+                status="failed",
+                error=str(exc),
+            )
+            self._persist()
+            return proposal
         unsupported_items = [
             item
             for item in items
