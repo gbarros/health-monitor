@@ -74,6 +74,16 @@ class UnknownFoodEstimateFlowTest(unittest.TestCase):
         self.assertEqual(resolution.food_version_id, proposal.entries[0].food_version_id)
         self.assertEqual(stored_food.brand, "KFC Brasil")
         self.assertEqual(stored_version.source, "external_lookup")
+        tool_calls = service.agent_tool_calls_for_run(proposal.source_agent_run_id or "")
+        self.assertEqual(
+            [(call.tool_name, call.status) for call in tool_calls],
+            [
+                ("resolve_food_reference", "failed"),
+                ("lookup_external_food", "completed"),
+            ],
+        )
+        self.assertIn("kfc double crunch combo", tool_calls[0].input_summary)
+        self.assertIn("KFC Double Crunch combo", tool_calls[1].output_summary)
 
     def test_unknown_food_estimate_is_proposed_before_any_mutation(self) -> None:
         service = HealthMonitorService(
@@ -117,6 +127,16 @@ class UnknownFoodEstimateFlowTest(unittest.TestCase):
         self.assertEqual(proposal.evidence[0]["confidence"], 0.42)
         self.assertEqual(service.day_summary(person.id, date(2026, 7, 1)).totals, Nutrients())
         self.assertIsNone(service.resolver.resolve_phrase("kfc double crunch combo", person_id=person.id))
+        tool_calls = service.agent_tool_calls_for_run(proposal.source_agent_run_id or "")
+        self.assertEqual(
+            [(call.tool_name, call.status) for call in tool_calls],
+            [
+                ("resolve_food_reference", "failed"),
+                ("lookup_external_food", "completed"),
+                ("estimate_food", "completed"),
+            ],
+        )
+        self.assertIn("KFC Double Crunch combo", tool_calls[-1].output_summary)
 
     def test_confirming_unknown_food_estimate_creates_reusable_food_and_diary_entry(self) -> None:
         service = HealthMonitorService(

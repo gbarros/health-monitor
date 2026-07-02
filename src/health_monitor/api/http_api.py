@@ -12,6 +12,7 @@ from health_monitor.application.service import (
     BackgroundJob,
     DaySummary,
     DaySummaryEntry,
+    AgentToolCall,
     GoalProfile,
     HealthMonitorService,
     Household,
@@ -1013,6 +1014,28 @@ def agent_run_to_dict(
         "status": run.status,
         "proposal_id": run.proposal_id,
         "created_at": run.created_at.isoformat(),
+        "tool_calls": [
+            agent_tool_call_to_dict(call)
+            for call in service.agent_tool_calls_for_run(run.id)
+        ],
+    }
+
+
+def agent_tool_call_to_dict(call: AgentToolCall) -> dict[str, Any]:
+    return {
+        "id": call.id,
+        "agent_run_id": call.agent_run_id,
+        "person_id": call.person_id,
+        "tool_name": call.tool_name,
+        "input_summary": call.input_summary,
+        "output_summary": call.output_summary,
+        "status": call.status,
+        "source_record_ids": list(call.source_record_ids),
+        "error": call.error,
+        "started_at": call.started_at.isoformat(),
+        "completed_at": call.completed_at.isoformat()
+        if call.completed_at is not None
+        else None,
     }
 
 

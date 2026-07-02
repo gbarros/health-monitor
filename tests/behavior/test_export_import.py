@@ -5,6 +5,7 @@ from datetime import date
 
 from health_monitor.application.service import HealthMonitorService
 from health_monitor.domain.nutrients import Nutrients
+from health_monitor.lookup.estimates import NutritionEstimate, StaticFoodEstimator
 
 
 class ExportImportTest(unittest.TestCase):
@@ -114,6 +115,50 @@ class ExportImportTest(unittest.TestCase):
             self.assertIn(key, exported["data"])
         self.assertEqual(exported["data"]["people"][0]["height_cm"], 180)
         self.assertEqual(exported["data"]["goal_profiles"][0]["targets"]["protein_g"], 150)
+
+    def test_export_import_preserves_agent_tool_call_audit_trail(self) -> None:
+        source = HealthMonitorService(
+            estimator=StaticFoodEstimator(
+                {
+                    "kfc double crunch combo": NutritionEstimate(
+                        phrase="kfc double crunch combo",
+                        food_name="KFC Double Crunch combo",
+                        nutrients_per_100g=Nutrients(260, 11, 24, 13),
+                        source="fixture_model_estimate",
+                        confidence=0.42,
+                        notes="Fixture estimate for a regional restaurant meal.",
+                    )
+                }
+            )
+        )
+        household = source.create_household(name="Casa")
+        person = source.create_person(
+            household_id=household.id,
+            name="Gabriel",
+            timezone="America/Sao_Paulo",
+        )
+        proposal = source.propose_text_meal(
+            person_id=person.id,
+            logged_at_local="2026-07-01T20:00:00",
+            text="300g KFC Double Crunch combo",
+            agent_settings={"external_lookup": True},
+        )
+
+        exported = source.export_data()
+        target = HealthMonitorService()
+        target.import_data(exported)
+        restored_calls = target.agent_tool_calls_for_run(proposal.source_agent_run_id or "")
+
+        self.assertIn("agent_tool_calls", exported["data"])
+        self.assertEqual(
+            [(call.tool_name, call.status) for call in restored_calls],
+            [
+                ("resolve_food_reference", "failed"),
+                ("lookup_external_food", "completed"),
+                ("estimate_food", "completed"),
+            ],
+        )
+        self.assertEqual(restored_calls[-1].agent_run_id, proposal.source_agent_run_id)
 
     def test_export_import_preserves_recipe_version_metadata(self) -> None:
         source, _, recipe_food_version_id = self.build_service_with_recipe()

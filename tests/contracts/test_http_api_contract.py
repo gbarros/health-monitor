@@ -2185,6 +2185,16 @@ class HttpApiContractTest(unittest.TestCase):
         self.assertEqual(proposal["payload"]["estimated_food_versions"][0]["source_name"], "Open Food Facts")
         self.assertEqual(proposal["evidence"][0]["source_type"], "external_database")
         self.assertEqual(proposal["evidence"][0]["resolution_reason"], "external_lookup")
+        self.assertEqual(
+            [
+                (call["tool_name"], call["status"])
+                for call in proposal["agent_run"]["tool_calls"]
+            ],
+            [
+                ("resolve_food_reference", "failed"),
+                ("lookup_external_food", "completed"),
+            ],
+        )
         self.assertEqual(applied["status"], "applied")
 
     def test_agent_chat_answer_and_correction_proposal_through_http_contract(self) -> None:

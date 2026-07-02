@@ -125,6 +125,21 @@ class AgentRun:
 
 
 @dataclass(frozen=True)
+class AgentToolCall:
+    id: str
+    agent_run_id: str
+    person_id: str
+    tool_name: str
+    input_summary: str
+    output_summary: str
+    status: str
+    source_record_ids: tuple[str, ...] = ()
+    error: str | None = None
+    started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    completed_at: datetime | None = None
+
+
+@dataclass(frozen=True)
 class BackgroundJob:
     id: str
     job_type: str
@@ -258,6 +273,7 @@ class HealthMonitorService:
         self.resolver = FoodResolver(self.catalog)
         self.proposals = ProposalService(self.diary)
         self.agent_runs: dict[str, AgentRun] = {}
+        self.agent_tool_calls: dict[str, AgentToolCall] = {}
         self.review_notes: dict[str, ReviewNote] = {}
         self.lookup_candidates: dict[str, FoodLookupCandidate] = {}
         self.attachments: dict[str, AttachmentObject] = {}
@@ -1261,6 +1277,7 @@ class HealthMonitorService:
             "weight_entries": len(self.weights),
             "proposals": len(self.proposals.proposals),
             "agent_runs": len(self.agent_runs),
+            "agent_tool_calls": len(self.agent_tool_calls),
             "jobs": len(self.jobs),
             "review_notes": len(self.review_notes),
             "attachment_objects": len(self.attachments),
@@ -1602,15 +1619,44 @@ class HealthMonitorService:
                     phrase=item.phrase,
                 )
                 version = self.catalog.get_version(resolution.food_version_id)
+                food = self.catalog.foods[version.food_id]
+                self._record_agent_tool_call(
+                    run=run,
+                    tool_name="resolve_food_reference",
+                    input_summary=f"phrase={item.phrase}",
+                    output_summary=(
+                        f"{food.name} / {version.label}; reason={resolution.reason}; "
+                        f"confidence={resolution.confidence}"
+                    ),
+                    source_record_ids=(version.food_id, version.id),
+                )
                 food_version_id = resolution.food_version_id
                 source = "agent_proposal"
                 resolution_reason = resolution.reason
                 confidence = resolution.confidence
-            except ValueError:
+            except ValueError as exc:
+                self._record_agent_tool_call(
+                    run=run,
+                    tool_name="resolve_food_reference",
+                    input_summary=f"phrase={item.phrase}",
+                    output_summary="no local match",
+                    status="failed",
+                    error=str(exc),
+                )
                 if not settings.get("external_lookup", True):
                     raise
                 lookup_candidate = self._lookup_first_external_food_candidate(item.phrase)
                 if lookup_candidate is not None:
+                    self._record_agent_tool_call(
+                        run=run,
+                        tool_name="lookup_external_food",
+                        input_summary=f"phrase={item.phrase}",
+                        output_summary=(
+                            f"{lookup_candidate.product_name}; source={lookup_candidate.source_name}; "
+                            f"confidence={lookup_candidate.confidence}"
+                        ),
+                        source_record_ids=(lookup_candidate.source_id,),
+                    )
                     food_id = self._next_id("food")
                     food_version_id = self._next_id("food_version")
                     version_label = f"{lookup_candidate.source_name} lookup"
@@ -1657,11 +1703,34 @@ class HealthMonitorService:
                         "warnings": list(lookup_candidate.warnings),
                     }
                 else:
+                    self._record_agent_tool_call(
+                        run=run,
+                        tool_name="lookup_external_food",
+                        input_summary=f"phrase={item.phrase}",
+                        output_summary="no external candidates",
+                    )
                     if self.estimator is None:
                         raise ValueError(f"food reference could not be resolved or estimated: {item.phrase}")
                     estimate = self.estimator.estimate(item.phrase)
                     if estimate is None:
+                        self._record_agent_tool_call(
+                            run=run,
+                            tool_name="estimate_food",
+                            input_summary=f"phrase={item.phrase}",
+                            output_summary="no model estimate",
+                            status="failed",
+                            error="estimator returned no result",
+                        )
                         raise ValueError(f"food reference could not be resolved or estimated: {item.phrase}")
+                    self._record_agent_tool_call(
+                        run=run,
+                        tool_name="estimate_food",
+                        input_summary=f"phrase={item.phrase}",
+                        output_summary=(
+                            f"{estimate.food_name}; source={estimate.source}; "
+                            f"confidence={estimate.confidence}"
+                        ),
+                    )
                     food_id = self._next_id("food")
                     food_version_id = self._next_id("food_version")
                     version = FoodVersion(
@@ -2617,6 +2686,15 @@ class HealthMonitorService:
     def get_agent_run(self, agent_run_id: str) -> AgentRun:
         return self.agent_runs[agent_run_id]
 
+    def agent_tool_calls_for_run(self, agent_run_id: str) -> tuple[AgentToolCall, ...]:
+        calls = [
+            call
+            for call in self.agent_tool_calls.values()
+            if call.agent_run_id == agent_run_id
+        ]
+        calls.sort(key=lambda call: (call.started_at, call.id))
+        return tuple(calls)
+
     def enqueue_job(self, *, job_type: str, payload: dict[str, Any]) -> BackgroundJob:
         if job_type not in {"agent_text_meal", "agent_label_scan", "agent_recipe", "agent_chat"}:
             raise ValueError(f"unsupported job type: {job_type}")
@@ -2823,6 +2901,34 @@ class HealthMonitorService:
         next_number = self._ids.get(prefix, 1)
         self._ids[prefix] = next_number + 1
         return f"{prefix}_{next_number}"
+
+    def _record_agent_tool_call(
+        self,
+        *,
+        run: AgentRun,
+        tool_name: str,
+        input_summary: str,
+        output_summary: str,
+        status: str = "completed",
+        source_record_ids: tuple[str, ...] = (),
+        error: str | None = None,
+    ) -> AgentToolCall:
+        now = datetime.now(timezone.utc)
+        call = AgentToolCall(
+            id=self._next_id("agent_tool_call"),
+            agent_run_id=run.id,
+            person_id=run.person_id,
+            tool_name=tool_name,
+            input_summary=input_summary,
+            output_summary=output_summary,
+            status=status,
+            source_record_ids=source_record_ids,
+            error=error,
+            started_at=now,
+            completed_at=now,
+        )
+        self.agent_tool_calls[call.id] = call
+        return call
 
     def _require_household(self, household_id: str) -> Household:
         try:
@@ -3172,6 +3278,7 @@ class HealthMonitorService:
                 self.weights,
                 self.proposals.proposals,
                 self.agent_runs,
+                self.agent_tool_calls,
                 self.jobs,
                 self.review_notes,
                 self.attachments,
@@ -3206,6 +3313,9 @@ class HealthMonitorService:
                 proposal_to_snapshot(item) for item in self.proposals.proposals.values()
             ],
             "agent_runs": [agent_run_to_snapshot(item) for item in self.agent_runs.values()],
+            "agent_tool_calls": [
+                agent_tool_call_to_snapshot(item) for item in self.agent_tool_calls.values()
+            ],
             "jobs": [background_job_to_snapshot(item) for item in self.jobs.values()],
             "review_notes": [
                 review_note_to_snapshot(item) for item in self.review_notes.values()
@@ -3256,6 +3366,10 @@ class HealthMonitorService:
             self.proposals.proposals[proposal.id] = proposal
         self.agent_runs = {
             item["id"]: agent_run_from_snapshot(item) for item in snapshot.get("agent_runs", [])
+        }
+        self.agent_tool_calls = {
+            item["id"]: agent_tool_call_from_snapshot(item)
+            for item in snapshot.get("agent_tool_calls", [])
         }
         self.jobs = {
             item["id"]: background_job_from_snapshot(item)
@@ -4040,6 +4154,42 @@ def agent_run_from_snapshot(value: dict[str, Any]) -> AgentRun:
         status=value["status"],
         proposal_id=value.get("proposal_id"),
         created_at=datetime.fromisoformat(value["created_at"]),
+    )
+
+
+def agent_tool_call_to_snapshot(call: AgentToolCall) -> dict[str, Any]:
+    return {
+        "id": call.id,
+        "agent_run_id": call.agent_run_id,
+        "person_id": call.person_id,
+        "tool_name": call.tool_name,
+        "input_summary": call.input_summary,
+        "output_summary": call.output_summary,
+        "status": call.status,
+        "source_record_ids": list(call.source_record_ids),
+        "error": call.error,
+        "started_at": call.started_at.isoformat(),
+        "completed_at": call.completed_at.isoformat()
+        if call.completed_at is not None
+        else None,
+    }
+
+
+def agent_tool_call_from_snapshot(value: dict[str, Any]) -> AgentToolCall:
+    return AgentToolCall(
+        id=value["id"],
+        agent_run_id=value["agent_run_id"],
+        person_id=value["person_id"],
+        tool_name=value["tool_name"],
+        input_summary=value["input_summary"],
+        output_summary=value["output_summary"],
+        status=value["status"],
+        source_record_ids=tuple(value.get("source_record_ids", [])),
+        error=value.get("error"),
+        started_at=datetime.fromisoformat(value["started_at"]),
+        completed_at=datetime.fromisoformat(value["completed_at"])
+        if value.get("completed_at")
+        else None,
     )
 
 
