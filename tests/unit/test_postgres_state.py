@@ -3,12 +3,30 @@ from __future__ import annotations
 import unittest
 
 from health_monitor.persistence.postgres_state import (
+    PostgresStateRepository,
     attachment_row_to_snapshot,
     split_snapshot_for_postgres,
 )
 
 
 class PostgresStateTest(unittest.TestCase):
+    def test_schema_initialization_uses_advisory_lock_before_ddl(self) -> None:
+        connection = RecordingConnection()
+
+        PostgresStateRepository(
+            "postgresql://example",
+            connect_factory=lambda: connection,
+        )
+
+        statements = [statement.strip() for statement, _params in connection.statements]
+        lock_index = next(
+            index for index, statement in enumerate(statements) if "pg_advisory_xact_lock" in statement
+        )
+        create_index = next(
+            index for index, statement in enumerate(statements) if "CREATE TABLE IF NOT EXISTS app_state" in statement
+        )
+        self.assertLess(lock_index, create_index)
+
     def test_attachment_content_is_stored_as_separate_blob_row(self) -> None:
         snapshot = {
             "version": 1,
@@ -64,6 +82,32 @@ class PostgresStateTest(unittest.TestCase):
 
         self.assertEqual(restored["content_base64"], "ZmFrZS1sYWJlbC1pbWFnZQ==")
         self.assertEqual(restored["linked_record_type"], "food_version")
+
+
+class RecordingConnection:
+    def __init__(self) -> None:
+        self.statements: list[tuple[str, object | None]] = []
+
+    def __enter__(self) -> "RecordingConnection":
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        return None
+
+    def close(self) -> None:
+        return None
+
+    def execute(self, statement: str, params: object | None = None) -> "RecordingCursor":
+        self.statements.append((statement, params))
+        return RecordingCursor()
+
+
+class RecordingCursor:
+    def fetchone(self) -> None:
+        return None
+
+    def fetchall(self) -> list[object]:
+        return []
 
 
 if __name__ == "__main__":

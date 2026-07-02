@@ -8,6 +8,7 @@ from typing import Any, Callable
 
 
 ConnectFactory = Callable[[], Any]
+SCHEMA_LOCK_ID = 4_794_801_001
 
 
 class PostgresStateRepository:
@@ -137,6 +138,7 @@ class PostgresStateRepository:
     def _ensure_schema(self) -> None:
         with closing(self._connect()) as connection:
             with connection:
+                connection.execute("SELECT pg_advisory_xact_lock(%s)", (SCHEMA_LOCK_ID,))
                 connection.execute(
                     """
                     CREATE TABLE IF NOT EXISTS app_state (
