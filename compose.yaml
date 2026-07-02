@@ -20,12 +20,16 @@ services:
       LOG_FORMAT: ${LOG_FORMAT:-json}
       NEXUSLOG_MODE: ${NEXUSLOG_MODE:-stdout}
       NEXUSLOG_JSONL_PATH: ${NEXUSLOG_JSONL_PATH:-/app/var/nexuslog-events/health-monitor.jsonl}
+      AGENT_RUNTIME: ${AGENT_RUNTIME:-pydantic-ai}
+      MODEL_PROVIDER: ${MODEL_PROVIDER:-ollama}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma4:e4b}
       OLLAMA_VISION_MODEL: ${OLLAMA_VISION_MODEL:-llava}
       FOOD_ESTIMATOR: ${FOOD_ESTIMATOR:-ollama}
       LABEL_TEXT_EXTRACTOR: ${LABEL_TEXT_EXTRACTOR:-ollama}
       OPENFOODFACTS_ENABLED: ${OPENFOODFACTS_ENABLED:-true}
+      USDA_ENABLED: ${USDA_ENABLED:-false}
+      USDA_API_KEY: ${USDA_API_KEY:-}
       CLOUD_MODEL_CALLS_ENABLED: ${CLOUD_MODEL_CALLS_ENABLED:-false}
       PERSISTENCE_BACKEND: ${PERSISTENCE_BACKEND:-postgres}
       SQLITE_PATH: ${SQLITE_PATH:-/app/data/health-monitor.sqlite3}
@@ -57,12 +61,16 @@ services:
       LOG_FORMAT: ${LOG_FORMAT:-json}
       NEXUSLOG_MODE: ${NEXUSLOG_MODE:-stdout}
       NEXUSLOG_JSONL_PATH: ${NEXUSLOG_JSONL_PATH:-/app/var/nexuslog-events/health-monitor.jsonl}
+      AGENT_RUNTIME: ${AGENT_RUNTIME:-pydantic-ai}
+      MODEL_PROVIDER: ${MODEL_PROVIDER:-ollama}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma4:e4b}
       OLLAMA_VISION_MODEL: ${OLLAMA_VISION_MODEL:-llava}
       FOOD_ESTIMATOR: ${FOOD_ESTIMATOR:-ollama}
       LABEL_TEXT_EXTRACTOR: ${LABEL_TEXT_EXTRACTOR:-ollama}
       OPENFOODFACTS_ENABLED: ${OPENFOODFACTS_ENABLED:-true}
+      USDA_ENABLED: ${USDA_ENABLED:-false}
+      USDA_API_KEY: ${USDA_API_KEY:-}
       CLOUD_MODEL_CALLS_ENABLED: ${CLOUD_MODEL_CALLS_ENABLED:-false}
       PERSISTENCE_BACKEND: ${PERSISTENCE_BACKEND:-postgres}
       SQLITE_PATH: ${SQLITE_PATH:-/app/data/health-monitor.sqlite3}

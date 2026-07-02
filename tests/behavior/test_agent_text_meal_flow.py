@@ -60,6 +60,8 @@ class AgentTextMealFlowTest(unittest.TestCase):
         self.assertEqual(proposal.totals.rounded(), Nutrients(312.5, 24.5, 2.4, 22.75))
         self.assertEqual(run.input_text, "10am, 50g queijo, 2 ovos")
         self.assertEqual(run.settings["model_profile"], "ollama-local")
+        self.assertEqual(run.settings["agent_runtime"], "deterministic")
+        self.assertEqual(run.settings["model_provider"], "deterministic")
         self.assertEqual(run.status, "proposal_created")
         self.assertEqual(service.day_summary(person.id, date(2026, 7, 1)).totals, Nutrients())
 

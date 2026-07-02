@@ -47,7 +47,7 @@ class OllamaFoodEstimator:
         prompt = (
             "Return only compact JSON: {\"food_name\":string,\"calories_kcal\":number,"
             "\"protein_g\":number,\"carbs_g\":number,\"fat_g\":number,"
-            "\"confidence\":number,\"notes\":string}. "
+            "\"fiber_g\":number,\"sodium_mg\":number,\"confidence\":number,\"notes\":string}. "
             f"Nutrition per 100g for {phrase}."
         )
         body = json.dumps(
@@ -93,6 +93,8 @@ class OllamaFoodEstimator:
                     protein_g=read_float(nutrition, "protein_g", "protein"),
                     carbs_g=read_float(nutrition, "carbs_g", "carbs", "carbohydrates"),
                     fat_g=read_float(nutrition, "fat_g", "fat"),
+                    fiber_g=read_float(nutrition, "fiber_g", "fiber"),
+                    sodium_mg=read_float(nutrition, "sodium_mg", "sodium"),
                 ),
                 source=f"ollama:{self.model}",
                 confidence=float(estimate.get("confidence", 0.35)),

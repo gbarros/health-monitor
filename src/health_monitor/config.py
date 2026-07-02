@@ -13,12 +13,16 @@ class AppConfig:
     log_format: str = "text"
     nexuslog_mode: str = "stdout"
     nexuslog_jsonl_path: Path = Path("var/nexuslog-events/health-monitor.jsonl")
+    agent_runtime: str = "deterministic"
+    model_provider: str = "deterministic"
     food_estimator: str = "ollama"
     ollama_base_url: str = "http://127.0.0.1:11434"
     ollama_model: str = "gemma4:e4b"
     label_text_extractor: str = "ollama"
     ollama_vision_model: str = "llava"
     openfoodfacts_enabled: bool = True
+    usda_enabled: bool = False
+    usda_api_key: str | None = None
 
 
 def load_config() -> AppConfig:
@@ -36,6 +40,8 @@ def load_config() -> AppConfig:
         nexuslog_jsonl_path=Path(
             os.environ.get("NEXUSLOG_JSONL_PATH", "var/nexuslog-events/health-monitor.jsonl")
         ),
+        agent_runtime=os.environ.get("AGENT_RUNTIME", "deterministic"),
+        model_provider=os.environ.get("MODEL_PROVIDER", "deterministic"),
         food_estimator=os.environ.get("FOOD_ESTIMATOR", "ollama"),
         ollama_base_url=os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434"),
         ollama_model=os.environ.get(
@@ -49,4 +55,7 @@ def load_config() -> AppConfig:
         ),
         openfoodfacts_enabled=os.environ.get("OPENFOODFACTS_ENABLED", "true").casefold()
         in {"1", "true", "yes", "on"},
+        usda_enabled=os.environ.get("USDA_ENABLED", "false").casefold()
+        in {"1", "true", "yes", "on"},
+        usda_api_key=os.environ.get("USDA_API_KEY") or None,
     )

@@ -8,7 +8,11 @@ from health_monitor.api.http_api import HttpApi
 from health_monitor.application.service import HealthMonitorService
 from health_monitor.config import load_config
 from health_monitor.lookup.estimates import OllamaFoodEstimator
-from health_monitor.lookup.foods import OpenFoodFactsLookupProvider
+from health_monitor.lookup.foods import (
+    CompositeFoodLookupProvider,
+    OpenFoodFactsLookupProvider,
+    USDAFoodDataCentralLookupProvider,
+)
 from health_monitor.lookup.labels import OllamaLabelTextExtractor
 from health_monitor.observability.nexuslog import NexusLogEvent, build_nexuslog_sink
 from health_monitor.persistence.postgres_state import PostgresStateRepository
@@ -50,12 +54,29 @@ def build_service(config: Any | None = None) -> HealthMonitorService:
         )
     elif config.label_text_extractor != "none":
         raise ValueError(f"unsupported label text extractor: {config.label_text_extractor}")
-    food_lookup_provider = OpenFoodFactsLookupProvider() if config.openfoodfacts_enabled else None
+    lookup_providers = []
+    if config.openfoodfacts_enabled:
+        lookup_providers.append(OpenFoodFactsLookupProvider())
+    if config.usda_enabled:
+        lookup_providers.append(
+            USDAFoodDataCentralLookupProvider(api_key=config.usda_api_key)
+        )
+    food_lookup_provider = (
+        CompositeFoodLookupProvider(lookup_providers)
+        if len(lookup_providers) > 1
+        else lookup_providers[0]
+        if lookup_providers
+        else None
+    )
     return HealthMonitorService(
         repository=repository,
         estimator=estimator,
         food_lookup_provider=food_lookup_provider,
         label_text_extractor=label_text_extractor,
+        agent_runtime=config.agent_runtime,
+        model_provider=config.model_provider,
+        agent_model=config.ollama_model,
+        ollama_base_url=config.ollama_base_url,
     )
 
 

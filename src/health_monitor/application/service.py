@@ -8,6 +8,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from health_monitor.agent import AgentDeps, PydanticAINutritionAgent, PydanticAIUnavailable
 from health_monitor.domain.diary import Diary, DiaryEntry
 from health_monitor.domain.food_resolution import FoodResolution, FoodResolver
 from health_monitor.domain.foods import BarcodeAssociation, Food, FoodAlias, FoodCatalog, FoodVersion
@@ -273,12 +274,20 @@ class HealthMonitorService:
         food_lookup_provider: FoodLookupProvider | None = None,
         research_lookup_provider: FoodLookupProvider | None = None,
         label_text_extractor: LabelTextExtractor | None = None,
+        agent_runtime: str = "deterministic",
+        model_provider: str = "deterministic",
+        agent_model: str | None = None,
+        ollama_base_url: str = "http://127.0.0.1:11434",
     ) -> None:
         self.repository = repository
         self.estimator = estimator
         self.food_lookup_provider = food_lookup_provider
         self.research_lookup_provider = research_lookup_provider
         self.label_text_extractor = label_text_extractor
+        self.agent_runtime = agent_runtime
+        self.model_provider = model_provider
+        self.agent_model = agent_model
+        self.ollama_base_url = ollama_base_url
         self.households: dict[str, Household] = {}
         self.people: dict[str, Person] = {}
         self.goal_profiles: dict[str, GoalProfile] = {}
@@ -1527,6 +1536,93 @@ class HealthMonitorService:
             weight_delta_kg=trend.delta_kg,
         )
 
+    def _agent_settings(self, agent_settings: dict[str, Any] | None) -> dict[str, Any]:
+        settings = dict(agent_settings or {})
+        settings.setdefault("agent_runtime", self.agent_runtime)
+        settings.setdefault("model_provider", self.model_provider)
+        if self.agent_model is not None:
+            settings.setdefault("model_name", self.agent_model)
+        elif "model_profile" in settings:
+            settings.setdefault("model_name", settings["model_profile"])
+        else:
+            settings.setdefault("model_name", "deterministic")
+        return settings
+
+    def _try_pydantic_ai_chat(
+        self,
+        *,
+        person_id: str,
+        message: str,
+        today: date,
+        run: AgentRun,
+        settings: dict[str, Any],
+    ) -> AgentChatResponse | None:
+        if settings.get("agent_runtime") != "pydantic-ai":
+            return None
+        person = self._require_person(person_id)
+        agent = PydanticAINutritionAgent(
+            model_name=str(settings.get("model_name") or self.agent_model or "qwen3"),
+            ollama_base_url=self.ollama_base_url,
+        )
+        try:
+            response = agent.answer(
+                deps=AgentDeps(
+                    service=self,
+                    person_id=person_id,
+                    household_id=person.household_id,
+                    today=today,
+                    settings=settings,
+                    source_config={
+                        "openfoodfacts_enabled": self.food_lookup_provider is not None,
+                        "research_lookup_enabled": self.research_lookup_provider is not None,
+                    },
+                ),
+                message=message,
+            )
+        except PydanticAIUnavailable as exc:
+            self._record_agent_tool_call(
+                run=run,
+                tool_name="pydantic_ai_chat",
+                input_summary="runtime=pydantic-ai",
+                output_summary="pydantic_ai unavailable; using deterministic fallback",
+                status="failed",
+                error=str(exc),
+            )
+            return None
+        except Exception as exc:
+            self._record_agent_tool_call(
+                run=run,
+                tool_name="pydantic_ai_chat",
+                input_summary="runtime=pydantic-ai",
+                output_summary="pydantic_ai failed; using deterministic fallback",
+                status="failed",
+                error=str(exc),
+            )
+            return None
+
+        self._record_agent_tool_call(
+            run=run,
+            tool_name="pydantic_ai_chat",
+            input_summary="runtime=pydantic-ai",
+            output_summary=f"behavior={response.behavior_label}",
+        )
+        self.agent_runs[run.id] = AgentRun(
+            id=run.id,
+            person_id=run.person_id,
+            input_text=run.input_text,
+            settings=run.settings,
+            status="answered",
+            created_at=run.created_at,
+        )
+        return AgentChatResponse(
+            run_id=run.id,
+            person_id=person_id,
+            message=response.message,
+            behavior_label=response.behavior_label,
+            citations=response.citations,
+            proposal_id=response.proposal_id,
+        )
+
     def chat(
         self,
         *,
@@ -1535,7 +1631,7 @@ class HealthMonitorService:
         today: date,
         agent_settings: dict[str, Any] | None = None,
     ) -> AgentChatResponse:
-        settings = dict(agent_settings or {})
+        settings = self._agent_settings(agent_settings)
         self._require_person(person_id)
         run = AgentRun(
             id=self._next_id("agent_run"),
@@ -1616,6 +1712,16 @@ class HealthMonitorService:
             )
             return finish(response)
 
+        pydantic_response = self._try_pydantic_ai_chat(
+            person_id=person_id,
+            message=message,
+            today=today,
+            run=run,
+            settings=settings,
+        )
+        if pydantic_response is not None:
+            return finish(pydantic_response)
+
         response = AgentChatResponse(
             run_id=run.id,
             person_id=person_id,
@@ -1644,7 +1750,7 @@ class HealthMonitorService:
         text: str,
         agent_settings: dict[str, Any] | None = None,
     ) -> CreateDiaryEntriesProposal:
-        settings = dict(agent_settings or {})
+        settings = self._agent_settings(agent_settings)
         person = self._require_person(person_id)
         logged_at = self._parse_person_datetime(logged_at_local, person)
         repeated_meal = parse_repeated_meal_reference(text, default_logged_at=logged_at)

@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import collections
 import html.parser
+import json
 import re
 from pathlib import Path
 
@@ -181,11 +182,85 @@ def classify(text: str, compiled: dict[str, list[re.Pattern[str]]]) -> set[str]:
     }
 
 
+def candidate_types_for(categories: set[str]) -> tuple[str, ...]:
+    candidate_types: list[str] = []
+    if "macro_or_calorie" in categories and (
+        "food_alias_candidate" in categories or "date_or_day" in categories
+    ):
+        candidate_types.append("meal_log_candidate")
+    if "food_alias_candidate" in categories:
+        candidate_types.append("food_alias_candidate")
+    if "correction_or_revision" in categories:
+        candidate_types.append("correction_candidate")
+    if "label_or_table" in categories:
+        candidate_types.append("label_or_version_candidate")
+    if "restaurant_or_external_lookup" in categories:
+        candidate_types.append("restaurant_lookup_candidate")
+    if "recipe_or_batch" in categories:
+        candidate_types.append("recipe_candidate")
+    if "review_or_pattern" in categories:
+        candidate_types.append("review_note_candidate")
+    if "micronutrient" in categories:
+        candidate_types.append("micronutrient_side_quest_candidate")
+    return tuple(candidate_types)
+
+
+def redact_text(value: str) -> str:
+    redacted = re.sub(r"\b\d{8,14}\b", "[barcode]", value)
+    redacted = re.sub(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", "[email]", redacted)
+    return redacted
+
+
+def extract_signal_payload(
+    raw_html: str,
+    *,
+    source_name: str,
+    redact: bool = True,
+) -> dict[str, object]:
+    block_parser = BlockParser()
+    block_parser.feed(raw_html)
+    compiled = compile_categories()
+    candidates: list[dict[str, object]] = []
+
+    for index, (tag, text) in enumerate(block_parser.blocks, start=1):
+        categories = classify(text, compiled)
+        candidate_types = candidate_types_for(categories)
+        if not candidate_types:
+            continue
+        safe_text = redact_text(text) if redact else text
+        for candidate_type in candidate_types:
+            candidates.append(
+                {
+                    "id": f"chatgpt_signal_{len(candidates) + 1}",
+                    "candidate_type": candidate_type,
+                    "text": safe_text,
+                    "categories": sorted(categories),
+                    "source_context": {
+                        "source_name": source_name,
+                        "html_block_index": index,
+                        "html_tag": tag,
+                    },
+                    "durable_write": False,
+                }
+            )
+
+    return {
+        "format": "health-monitor.chatgpt-signals",
+        "version": 1,
+        "source_name": source_name,
+        "redacted": redact,
+        "durable_write_policy": "proposals_or_fixtures_only",
+        "candidates": candidates,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("html_file", type=Path)
+    parser.add_argument("--out", type=Path)
     parser.add_argument("--snippets-out", type=Path)
     parser.add_argument("--snippets-per-category", type=int, default=8)
+    parser.add_argument("--redact", action=argparse.BooleanOptionalAction, default=True)
     args = parser.parse_args()
 
     raw = args.html_file.read_text(encoding="utf-8", errors="replace")
@@ -240,6 +315,19 @@ def main() -> int:
             lines.append("")
         args.snippets_out.write_text("\n".join(lines), encoding="utf-8")
         print(f"\nWrote snippets: {args.snippets_out}")
+
+    if args.out:
+        payload = extract_signal_payload(
+            raw,
+            source_name=str(args.html_file),
+            redact=args.redact,
+        )
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        args.out.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        print(f"Wrote signal JSON: {args.out}")
 
     return 0
 

@@ -6,6 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 COMPOSE = ROOT / "compose.yaml"
+DOCKERFILE_API = ROOT / "Dockerfile.api"
 
 
 class ComposeRuntimeTest(unittest.TestCase):
@@ -33,6 +34,18 @@ class ComposeRuntimeTest(unittest.TestCase):
 
         self.assertIn("NEXUSLOG_MODE", source)
         self.assertGreaterEqual(source.count("NEXUSLOG_JSONL_PATH"), 2)
+
+    def test_local_stack_defaults_to_pydantic_ai_runtime_with_optional_usda(self) -> None:
+        source = COMPOSE.read_text(encoding="utf-8")
+
+        self.assertGreaterEqual(source.count("AGENT_RUNTIME: ${AGENT_RUNTIME:-pydantic-ai}"), 2)
+        self.assertGreaterEqual(source.count("USDA_ENABLED: ${USDA_ENABLED:-false}"), 2)
+        self.assertGreaterEqual(source.count("USDA_API_KEY: ${USDA_API_KEY:-}"), 2)
+
+    def test_api_image_installs_pydantic_ai_runtime_dependency(self) -> None:
+        source = DOCKERFILE_API.read_text(encoding="utf-8")
+
+        self.assertIn('"pydantic-ai>=0.7"', source)
 
 
 if __name__ == "__main__":
