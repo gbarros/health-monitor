@@ -140,6 +140,28 @@ class BackgroundJob:
 
 
 @dataclass(frozen=True)
+class RecipeIngredient:
+    food_id: str
+    food_version_id: str
+    food_name: str
+    quantity_g: float
+    nutrients: Nutrients
+
+
+@dataclass(frozen=True)
+class RecipeVersion:
+    id: str
+    household_id: str
+    food_id: str
+    food_version_id: str
+    name: str
+    yield_g: float
+    ingredients: tuple[RecipeIngredient, ...]
+    source_proposal_id: str | None = None
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+@dataclass(frozen=True)
 class AgentChatResponse:
     run_id: str
     person_id: str
@@ -240,6 +262,7 @@ class HealthMonitorService:
         self.lookup_candidates: dict[str, FoodLookupCandidate] = {}
         self.attachments: dict[str, AttachmentObject] = {}
         self.jobs: dict[str, BackgroundJob] = {}
+        self.recipe_versions: dict[str, RecipeVersion] = {}
         self._ids: dict[str, int] = {}
         if self.repository is not None:
             snapshot = self.repository.load()
@@ -1207,7 +1230,11 @@ class HealthMonitorService:
             "jobs": len(self.jobs),
             "review_notes": len(self.review_notes),
             "attachment_objects": len(self.attachments),
+            "recipe_versions": len(self.recipe_versions),
         }
+
+    def recipe_version_for_food_version(self, food_version_id: str) -> RecipeVersion | None:
+        return self.recipe_versions.get(food_version_id)
 
     def review_notes_for_person(self, person_id: str) -> tuple[ReviewNote, ...]:
         self._require_person(person_id)
@@ -2407,6 +2434,7 @@ class HealthMonitorService:
                 phrase=ingredient.phrase,
             )
             version = self.catalog.get_version(resolution.food_version_id)
+            food = self.catalog.foods[version.food_id]
             nutrients = version.nutrients_per_100g.scale(ingredient.quantity_g / 100)
             total += nutrients
             ingredient_payloads.append(
@@ -2414,6 +2442,8 @@ class HealthMonitorService:
                     "source_text": ingredient.source_text,
                     "phrase": ingredient.phrase,
                     "quantity_g": ingredient.quantity_g,
+                    "food_id": food.id,
+                    "food_name": food.name,
                     "food_version_id": version.id,
                     "resolution_reason": resolution.reason,
                     "confidence": resolution.confidence,
@@ -2877,6 +2907,14 @@ class HealthMonitorService:
             version_id=str(payload["food_version_id"]) if payload.get("food_version_id") is not None else None,
         )
         applied_ids = [food.id, version.id]
+        self.recipe_versions[version.id] = recipe_version_from_proposal_payload(
+            id=self._next_id("recipe_version"),
+            household_id=household_id,
+            food_id=food.id,
+            food_version_id=version.id,
+            payload=payload,
+            source_proposal_id=proposal.id,
+        )
         for entry in proposal.entries:
             if entry.food_version_id != version.id:
                 entry = DiaryEntry(
@@ -3073,6 +3111,7 @@ class HealthMonitorService:
                 self.jobs,
                 self.review_notes,
                 self.attachments,
+                self.recipe_versions,
             )
         )
 
@@ -3088,6 +3127,9 @@ class HealthMonitorService:
             "foods": [food_to_snapshot(item) for item in self.catalog.foods.values()],
             "food_versions": [
                 food_version_to_snapshot(item) for item in self.catalog.versions.values()
+            ],
+            "recipe_versions": [
+                recipe_version_to_snapshot(item) for item in self.recipe_versions.values()
             ],
             "food_aliases": [food_alias_to_snapshot(item) for item in self.catalog.aliases.values()],
             "barcode_associations": [
@@ -3125,6 +3167,10 @@ class HealthMonitorService:
         for item in snapshot.get("food_versions", []):
             version = food_version_from_snapshot(item)
             self.catalog.add_version(version)
+        self.recipe_versions = {
+            item["food_version_id"]: recipe_version_from_snapshot(item)
+            for item in snapshot.get("recipe_versions", [])
+        }
         for food_id, food in list(self.catalog.foods.items()):
             if food.default_version_id is not None:
                 self.catalog.set_default_version(food_id, food.default_version_id)
@@ -3683,6 +3729,82 @@ def food_version_from_snapshot(value: dict[str, Any]) -> FoodVersion:
         confidence=float(value.get("confidence", 1.0)),
         created_at=datetime.fromisoformat(value["created_at"]),
         archived=bool(value.get("archived", False)),
+    )
+
+
+def recipe_version_from_proposal_payload(
+    *,
+    id: str,
+    household_id: str,
+    food_id: str,
+    food_version_id: str,
+    payload: dict[str, Any],
+    source_proposal_id: str,
+) -> RecipeVersion:
+    return RecipeVersion(
+        id=id,
+        household_id=household_id,
+        food_id=food_id,
+        food_version_id=food_version_id,
+        name=str(payload["food_name"]),
+        yield_g=float(payload["yield_g"]),
+        ingredients=tuple(
+            RecipeIngredient(
+                food_id=str(item["food_id"]),
+                food_version_id=str(item["food_version_id"]),
+                food_name=str(item["food_name"]),
+                quantity_g=float(item["quantity_g"]),
+                nutrients=nutrients_from_snapshot(dict(item["nutrients"])),
+            )
+            for item in payload.get("ingredients", [])
+        ),
+        source_proposal_id=source_proposal_id,
+    )
+
+
+def recipe_version_to_snapshot(recipe: RecipeVersion) -> dict[str, Any]:
+    return {
+        "id": recipe.id,
+        "household_id": recipe.household_id,
+        "food_id": recipe.food_id,
+        "food_version_id": recipe.food_version_id,
+        "name": recipe.name,
+        "yield_g": recipe.yield_g,
+        "ingredients": [
+            {
+                "food_id": ingredient.food_id,
+                "food_version_id": ingredient.food_version_id,
+                "food_name": ingredient.food_name,
+                "quantity_g": ingredient.quantity_g,
+                "nutrients": nutrients_to_snapshot(ingredient.nutrients),
+            }
+            for ingredient in recipe.ingredients
+        ],
+        "source_proposal_id": recipe.source_proposal_id,
+        "created_at": recipe.created_at.isoformat(),
+    }
+
+
+def recipe_version_from_snapshot(value: dict[str, Any]) -> RecipeVersion:
+    return RecipeVersion(
+        id=value["id"],
+        household_id=value["household_id"],
+        food_id=value["food_id"],
+        food_version_id=value["food_version_id"],
+        name=value["name"],
+        yield_g=float(value["yield_g"]),
+        ingredients=tuple(
+            RecipeIngredient(
+                food_id=item["food_id"],
+                food_version_id=item["food_version_id"],
+                food_name=item["food_name"],
+                quantity_g=float(item["quantity_g"]),
+                nutrients=nutrients_from_snapshot(item["nutrients"]),
+            )
+            for item in value.get("ingredients", [])
+        ),
+        source_proposal_id=value.get("source_proposal_id"),
+        created_at=datetime.fromisoformat(value["created_at"]),
     )
 
 

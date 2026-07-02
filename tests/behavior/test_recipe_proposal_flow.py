@@ -80,10 +80,21 @@ class RecipeProposalFlowTest(unittest.TestCase):
             person_id=person_id,
             phrase="batch breakfast mix",
         )
+        recipe = service.recipe_version_for_food_version(applied.applied_record_ids[1])
 
         self.assertEqual(applied.status, "applied")
         self.assertEqual(len(applied.applied_record_ids), 2)
         self.assertEqual(resolution.food_version_id, applied.applied_record_ids[1])
+        self.assertIsNotNone(recipe)
+        assert recipe is not None
+        self.assertEqual(recipe.food_id, applied.applied_record_ids[0])
+        self.assertEqual(recipe.food_version_id, applied.applied_record_ids[1])
+        self.assertEqual(recipe.yield_g, 1000)
+        self.assertEqual(
+            [ingredient.food_name for ingredient in recipe.ingredients],
+            ["Queijo Minas", "Banana"],
+        )
+        self.assertEqual([ingredient.quantity_g for ingredient in recipe.ingredients], [500, 500])
 
     def test_recipe_missing_yield_creates_draft_without_reusable_food_version(self) -> None:
         service, household_id, person_id = self.make_service_with_ingredients()
@@ -142,11 +153,19 @@ class RecipeProposalFlowTest(unittest.TestCase):
             phrase="batch breakfast mix",
         )
         old_day = service.day_summary(person_id, date(2026, 7, 1))
+        first_recipe = service.recipe_version_for_food_version(first_version_id)
+        second_recipe = service.recipe_version_for_food_version(second_version_id)
 
         self.assertEqual(second_applied.applied_record_ids[0], first_applied.applied_record_ids[0])
         self.assertNotEqual(second_version_id, first_version_id)
         self.assertEqual(resolved.food_version_id, second_version_id)
         self.assertEqual(old_day.totals.rounded(), Nutrients(202, 12.05, 12.7, 11.9))
+        self.assertIsNotNone(first_recipe)
+        self.assertIsNotNone(second_recipe)
+        assert first_recipe is not None
+        assert second_recipe is not None
+        self.assertEqual(first_recipe.yield_g, 1000)
+        self.assertEqual(second_recipe.yield_g, 800)
 
     def test_recipe_with_yield_can_log_portion_after_confirmation(self) -> None:
         service, household_id, person_id = self.make_service_with_ingredients()
