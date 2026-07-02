@@ -3,7 +3,14 @@ from __future__ import annotations
 import unittest
 from datetime import date
 
-from health_monitor.agent.runtime import AgentDeps, normalize_ollama_base_url
+from health_monitor.agent.runtime import (
+    AgentAnswerOutput,
+    AgentClarificationRequestOutput,
+    AgentDeps,
+    AgentLookupEstimateExplanation,
+    AgentProposalDraftOutput,
+    normalize_ollama_base_url,
+)
 from health_monitor.application.service import HealthMonitorService
 
 
@@ -38,6 +45,30 @@ class AgentRuntimeScaffoldTest(unittest.TestCase):
             normalize_ollama_base_url("https://ollama.com/v1"),
             "https://ollama.com/v1",
         )
+
+    def test_structured_output_contracts_are_explicit(self) -> None:
+        answer = AgentAnswerOutput(message="Grounded answer")
+        proposal = AgentProposalDraftOutput(
+            proposal_id="proposal_1",
+            proposal_type="diary_entry_update",
+            proposal_status="draft",
+            summary="Draft correction",
+        )
+        clarification = AgentClarificationRequestOutput(
+            question="Which yogurt?",
+            missing_fields=("food_version_id",),
+        )
+        lookup = AgentLookupEstimateExplanation(
+            source_name="Open Food Facts",
+            source_type="external_database",
+            source_id="789",
+            confidence=0.72,
+        )
+
+        self.assertEqual(answer.message, "Grounded answer")
+        self.assertFalse(proposal.mutation_applied)
+        self.assertEqual(clarification.missing_fields, ("food_version_id",))
+        self.assertEqual(lookup.source_name, "Open Food Facts")
 
 
 if __name__ == "__main__":

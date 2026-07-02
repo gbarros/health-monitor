@@ -92,11 +92,14 @@ Remaining:
 Evidence:
 - Deterministic chat can answer day/week/micronutrient/version questions, draft corrections, draft review notes, and persist chat history.
 - PydanticAI/Ollama runtime scaffold exists behind `AGENT_RUNTIME=pydantic-ai`.
+- Typed agent tools expose day summary, week summary, weight trend, food resolution, food lookup, food version history, text meal draft, diary correction draft, and review note draft behavior.
+- Structured output contracts cover answer, proposal draft, clarification request, and lookup/estimate explanation shapes.
 - Behavior coverage in `tests/behavior/test_agent_chat_harness.py`, `tests/behavior/test_diary_entry_corrections.py`, and `tests/behavior/test_review_notes.py`.
+- Agent toolkit coverage in `tests/unit/test_agent_toolkit.py` and `tests/unit/test_agent_runtime_scaffold.py`.
 
 Remaining:
-- Expand PydanticAI typed tools and structured outputs beyond freeform answers.
 - Add optional live Ollama smoke tests for seeded summary and correction drafting.
+- Add model-output parsing/eval fixtures for when the live PydanticAI agent chooses draft tools.
 
 ### F-010: Weight Log
 
