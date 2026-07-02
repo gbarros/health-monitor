@@ -82,3 +82,9 @@ Services:
 - `db`: Postgres 17 volume for app state and attachment blobs
 
 For local dependency-light development, `make dev-api` still defaults to SQLite. In Compose, `PERSISTENCE_BACKEND=postgres` stores the application snapshot in Postgres and stores attachment binary content in the `attachment_objects` table as `bytea` rows.
+
+## Observability
+
+API and worker runtime events are emitted in a NexusLog-compatible JSON shape. By default Compose writes JSON events to stdout with `NEXUSLOG_MODE=stdout`.
+
+Set `NEXUSLOG_MODE=jsonl` to append events to `${NEXUSLOG_JSONL_PATH:-/app/var/nexuslog-events/health-monitor.jsonl}` inside the app data volume. Use `NEXUSLOG_MODE=disabled` to silence app event emission.

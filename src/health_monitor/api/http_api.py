@@ -27,6 +27,7 @@ from health_monitor.domain.foods import Food, FoodVersion
 from health_monitor.domain.nutrients import Nutrients
 from health_monitor.domain.proposals import CreateDiaryEntriesProposal
 from health_monitor.lookup.foods import FoodLookupCandidate
+from health_monitor.observability.nexuslog import NexusLogEvent, NexusLogSink
 
 
 @dataclass(frozen=True)
@@ -36,17 +37,204 @@ class HttpResponse:
 
 
 class HttpApi:
-    def __init__(self, service: HealthMonitorService) -> None:
+    def __init__(self, service: HealthMonitorService, event_sink: NexusLogSink | None = None) -> None:
         self.service = service
+        self.event_sink = event_sink
 
     def handle(self, method: str, target: str, body: dict[str, Any] | None) -> HttpResponse:
+        normalized_method = method.upper()
+        parsed = urlparse(target)
+        path = parsed.path
+        query = {key: values[-1] for key, values in parse_qs(parsed.query).items()}
         try:
-            return self._handle(method.upper(), target, body or {})
+            response = self._handle(normalized_method, target, body or {})
         except (KeyError, TypeError, ValueError) as exc:
-            return HttpResponse(
+            response = HttpResponse(
                 status_code=400,
                 body={"error": {"type": type(exc).__name__, "message": str(exc)}},
             )
+        self._emit_runtime_events(
+            method=normalized_method,
+            path=path,
+            query=query,
+            response=response,
+        )
+        return response
+
+    def _emit_runtime_events(
+        self,
+        *,
+        method: str,
+        path: str,
+        query: dict[str, str],
+        response: HttpResponse,
+    ) -> None:
+        if self.event_sink is None:
+            return
+        self._emit(
+            NexusLogEvent(
+                service="health-monitor-api",
+                level="error" if response.status_code >= 500 else "info",
+                event="api.request.completed",
+                payload={
+                    "method": method,
+                    "path": path,
+                    "status_code": response.status_code,
+                    "has_error": "error" in response.body,
+                },
+                entity_type=entity_type_for_path(path),
+                entity_id=entity_id_for_path(path, response.body),
+            )
+        )
+        if response.status_code >= 400:
+            return
+
+        if method == "POST" and path == "/api/jobs":
+            self._emit(
+                NexusLogEvent(
+                    service="health-monitor-api",
+                    level="info",
+                    event="job.enqueued",
+                    entity_type="job",
+                    entity_id=str(response.body["id"]),
+                    job_id=str(response.body["id"]),
+                    payload={
+                        "job_type": str(response.body["job_type"]),
+                        "status": str(response.body["status"]),
+                        "person_id": person_id_from_job_payload(response.body),
+                    },
+                )
+            )
+            return
+
+        if method == "POST" and path in {"/api/foods", "/api/diary/custom-food"}:
+            self._emit_food_created(response.body)
+            return
+
+        if method == "POST" and path.startswith("/api/jobs/") and path.endswith("/process"):
+            self._emit(
+                NexusLogEvent(
+                    service="health-monitor-api",
+                    level="info",
+                    event="job.processed",
+                    entity_type="job",
+                    entity_id=str(response.body["id"]),
+                    job_id=str(response.body["id"]),
+                    payload={
+                        "job_type": str(response.body["job_type"]),
+                        "status": str(response.body["status"]),
+                        "attempts": int(response.body["attempts"]),
+                    },
+                )
+            )
+            return
+
+        if method == "POST" and path.startswith("/api/proposals/") and path.endswith("/confirm"):
+            self._emit_proposal_decision("proposal.applied", response.body)
+            return
+
+        if method == "POST" and path.startswith("/api/proposals/") and path.endswith("/reject"):
+            self._emit_proposal_decision("proposal.rejected", response.body)
+            return
+
+        if method == "POST" and path.startswith("/api/agent/"):
+            self._emit_agent_run_completed(response.body)
+            return
+
+        if method == "GET" and path == "/api/lookups/foods":
+            source_types = sorted(
+                {
+                    str(item.get("source_type"))
+                    for item in response.body
+                    if isinstance(item, dict) and item.get("source_type") is not None
+                }
+            )
+            self._emit(
+                NexusLogEvent(
+                    service="health-monitor-api",
+                    level="info",
+                    event="lookup.completed",
+                    entity_type="lookup",
+                    payload={
+                        "person_id": query.get("person_id"),
+                        "candidate_count": len(response.body),
+                        "source_types": source_types,
+                    },
+                )
+            )
+
+    def _emit_proposal_decision(self, event_name: str, proposal: dict[str, Any]) -> None:
+        self._emit(
+            NexusLogEvent(
+                service="health-monitor-api",
+                level="info",
+                event=event_name,
+                entity_type="proposal",
+                entity_id=str(proposal["id"]),
+                payload={
+                    "proposal_id": str(proposal["id"]),
+                    "person_id": str(proposal["person_id"]),
+                    "proposal_type": str(proposal["proposal_type"]),
+                    "status": str(proposal["status"]),
+                    "applied_record_count": len(proposal.get("applied_record_ids", [])),
+                    "agent_run_id": proposal.get("source_agent_run_id"),
+                },
+            )
+        )
+
+    def _emit_food_created(self, body: dict[str, Any]) -> None:
+        food = body.get("food")
+        version = body.get("version")
+        if not isinstance(food, dict) or not isinstance(version, dict):
+            return
+        self._emit(
+            NexusLogEvent(
+                service="health-monitor-api",
+                level="info",
+                event="food.created",
+                entity_type="food",
+                entity_id=str(food["id"]),
+                payload={
+                    "food_id": str(food["id"]),
+                    "food_version_id": str(version["id"]),
+                    "source": str(version.get("source")),
+                    "alias_count": len(body.get("aliases", [])),
+                    "barcode_count": len(body.get("barcodes", [])),
+                },
+            )
+        )
+
+    def _emit_agent_run_completed(self, body: dict[str, Any]) -> None:
+        run_id = body.get("run_id") or body.get("source_agent_run_id")
+        if run_id is None and isinstance(body.get("agent_run"), dict):
+            run_id = body["agent_run"].get("id")
+        if run_id is None:
+            return
+        self._emit(
+            NexusLogEvent(
+                service="health-monitor-api",
+                level="info",
+                event="agent.run.completed",
+                entity_type="agent_run",
+                entity_id=str(run_id),
+                payload={
+                    "agent_run_id": str(run_id),
+                    "person_id": str(body.get("person_id")),
+                    "proposal_id": body.get("proposal_id") or body.get("id"),
+                    "proposal_type": body.get("proposal_type"),
+                    "behavior_label": body.get("behavior_label"),
+                    "status": body.get("status"),
+                },
+            )
+        )
+
+    def _emit(self, event: NexusLogEvent) -> None:
+        if self.event_sink is None:
+            return
+        try:
+            self.event_sink.emit(event)
+        except Exception:
+            return
 
     def _handle(self, method: str, target: str, body: dict[str, Any]) -> HttpResponse:
         parsed = urlparse(target)
@@ -454,6 +642,41 @@ def attachment_to_dict(attachment: AttachmentObject, *, include_content: bool = 
     if include_content:
         payload["content_base64"] = base64.b64encode(attachment.content).decode("ascii")
     return payload
+
+
+def entity_type_for_path(path: str) -> str | None:
+    if path.startswith("/api/proposals/"):
+        return "proposal"
+    if path.startswith("/api/jobs"):
+        return "job"
+    if path.startswith("/api/agent/"):
+        return "agent_run"
+    if path.startswith("/api/lookups/"):
+        return "lookup"
+    return None
+
+
+def entity_id_for_path(path: str, body: Any) -> str | None:
+    if not isinstance(body, dict):
+        return None
+    if path.startswith("/api/jobs") and body.get("id") is not None:
+        return str(body["id"])
+    if path.startswith("/api/proposals/") and body.get("id") is not None:
+        return str(body["id"])
+    if path.startswith("/api/agent/"):
+        run_id = body.get("run_id") or body.get("source_agent_run_id")
+        if run_id is None and isinstance(body.get("agent_run"), dict):
+            run_id = body["agent_run"].get("id")
+        return str(run_id) if run_id is not None else None
+    return None
+
+
+def person_id_from_job_payload(job: dict[str, Any]) -> str | None:
+    payload = job.get("payload")
+    if not isinstance(payload, dict):
+        return None
+    person_id = payload.get("person_id")
+    return str(person_id) if person_id is not None else None
 
 
 def food_to_dict(food: Food) -> dict[str, Any]:

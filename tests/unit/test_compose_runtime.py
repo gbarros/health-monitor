@@ -28,6 +28,12 @@ class ComposeRuntimeTest(unittest.TestCase):
 
         self.assertGreaterEqual(source.count("restart: unless-stopped"), 2)
 
+    def test_api_and_worker_can_emit_nexuslog_jsonl_events(self) -> None:
+        source = COMPOSE.read_text(encoding="utf-8")
+
+        self.assertIn("NEXUSLOG_MODE", source)
+        self.assertGreaterEqual(source.count("NEXUSLOG_JSONL_PATH"), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -10,16 +10,24 @@ from health_monitor.config import load_config
 from health_monitor.lookup.estimates import OllamaFoodEstimator
 from health_monitor.lookup.foods import OpenFoodFactsLookupProvider
 from health_monitor.lookup.labels import OllamaLabelTextExtractor
+from health_monitor.observability.nexuslog import NexusLogEvent, build_nexuslog_sink
 from health_monitor.persistence.postgres_state import PostgresStateRepository
 from health_monitor.persistence.sqlite_state import SQLiteStateRepository
 
 
 def build_api() -> HttpApi:
-    return HttpApi(build_service())
-
-
-def build_service() -> HealthMonitorService:
     config = load_config()
+    return HttpApi(
+        build_service(config),
+        event_sink=build_nexuslog_sink(
+            mode=config.nexuslog_mode,
+            jsonl_path=config.nexuslog_jsonl_path,
+        ),
+    )
+
+
+def build_service(config: Any | None = None) -> HealthMonitorService:
+    config = config or load_config()
     if config.persistence_backend == "sqlite":
         repository = SQLiteStateRepository(config.sqlite_path)
     elif config.persistence_backend == "postgres":
@@ -90,6 +98,22 @@ class HealthMonitorRequestHandler(BaseHTTPRequestHandler):
 
 
 def run(host: str = "127.0.0.1", port: int = 8765) -> None:
+    config = load_config()
+    sink = build_nexuslog_sink(
+        mode=config.nexuslog_mode,
+        jsonl_path=config.nexuslog_jsonl_path,
+    )
     server = ThreadingHTTPServer((host, port), HealthMonitorRequestHandler)
-    print(f"health-monitor api listening on http://{host}:{port}")
+    sink.emit(
+        NexusLogEvent(
+            service="health-monitor-api",
+            level="info",
+            event="api.started",
+            payload={
+                "host": host,
+                "port": port,
+                "persistence_backend": config.persistence_backend,
+            },
+        )
+    )
     server.serve_forever()

@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 import unittest
+from io import StringIO
 
-from health_monitor.observability.nexuslog import NexusLogEvent
+from health_monitor.api.http_api import HttpApi
+from health_monitor.application.service import HealthMonitorService
+from health_monitor.domain.nutrients import Nutrients
+from health_monitor.observability.nexuslog import JsonLineNexusLogSink, NexusLogEvent
+from health_monitor.worker import process_available_job
 
 
 class NexusLogEventContractTest(unittest.TestCase):
@@ -44,7 +49,148 @@ class NexusLogEventContractTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             event.as_dict()
 
+    def test_jsonline_sink_writes_nexuslog_compatible_event(self) -> None:
+        stream = StringIO()
+        sink = JsonLineNexusLogSink(stream)
+
+        sink.emit(
+            NexusLogEvent(
+                service="health-monitor-api",
+                level="info",
+                event="api.request.completed",
+                payload={"method": "GET", "path": "/api/health", "status_code": 200},
+            )
+        )
+
+        line = stream.getvalue().strip()
+        self.assertIn('"event": "api.request.completed"', line)
+        self.assertIn('"status_code": 200', line)
+
+    def test_http_api_emits_sanitized_request_job_agent_and_proposal_events(self) -> None:
+        sink = RecordingSink()
+        api = HttpApi(HealthMonitorService(), event_sink=sink)
+
+        household = api.handle("POST", "/api/households", {"name": "Casa"}).body
+        person = api.handle(
+            "POST",
+            "/api/people",
+            {
+                "household_id": household["id"],
+                "name": "Gabriel",
+                "timezone": "America/Sao_Paulo",
+            },
+        ).body
+        food = api.handle(
+            "POST",
+            "/api/foods",
+            {
+                "household_id": household["id"],
+                "name": "Queijo Minas",
+                "brand": None,
+                "version_label": "current",
+                "source": "label_scan",
+                "nutrients_per_100g": {
+                    "calories_kcal": 315,
+                    "protein_g": 23,
+                    "carbs_g": 2.6,
+                    "fat_g": 23.5,
+                },
+                "aliases": ["queijo"],
+            },
+        ).body
+        proposal = api.handle(
+            "POST",
+            "/api/agent/text-meal",
+            {
+                "person_id": person["id"],
+                "logged_at_local": "2026-07-01T10:00:00",
+                "text": "100g queijo",
+                "agent_settings": {"model_profile": "deterministic-test"},
+            },
+        ).body
+        api.handle("POST", f"/api/proposals/{proposal['id']}/confirm", {})
+        api.handle(
+            "POST",
+            "/api/jobs",
+            {
+                "job_type": "agent_text_meal",
+                "payload": {
+                    "person_id": person["id"],
+                    "logged_at_local": "2026-07-02T10:00:00",
+                    "text": "50g queijo",
+                    "agent_settings": {"model_profile": "deterministic-test"},
+                },
+            },
+        )
+        api.handle(
+            "GET",
+            f"/api/lookups/foods?household_id={household['id']}&person_id={person['id']}&phrase=queijo",
+            None,
+        )
+
+        event_names = [event["event"] for event in sink.events]
+        self.assertIn("api.request.completed", event_names)
+        self.assertIn("agent.run.completed", event_names)
+        self.assertIn("proposal.applied", event_names)
+        self.assertIn("food.created", event_names)
+        self.assertIn("job.enqueued", event_names)
+        self.assertIn("lookup.completed", event_names)
+
+        serialized = repr(sink.events)
+        self.assertNotIn("100g queijo", serialized)
+        self.assertNotIn("50g queijo", serialized)
+        self.assertIn(food["food"]["id"], serialized)
+
+    def test_worker_processing_emits_job_processed_event(self) -> None:
+        sink = RecordingSink()
+        service = HealthMonitorService()
+        household = service.create_household(name="Casa")
+        person = service.create_person(
+            household_id=household.id,
+            name="Gabriel",
+            timezone="America/Sao_Paulo",
+        )
+        _, version = service.create_food_with_version(
+            household_id=household.id,
+            name="Queijo Minas",
+            brand=None,
+            version_label="current",
+            nutrients_per_100g=Nutrients(
+                calories_kcal=315,
+                protein_g=23,
+                carbs_g=2.6,
+                fat_g=23.5,
+            ),
+            source="label_scan",
+            aliases=["queijo"],
+        )
+        service.enqueue_job(
+            job_type="agent_text_meal",
+            payload={
+                "person_id": person.id,
+                "logged_at_local": "2026-07-01T10:00:00",
+                "text": "100g queijo",
+                "agent_settings": {"model_profile": "deterministic-test"},
+            },
+        )
+
+        job = process_available_job(service, event_sink=sink)
+
+        self.assertIsNotNone(job)
+        self.assertEqual(job.status, "succeeded")
+        self.assertEqual(sink.events[-1]["event"], "job.processed")
+        self.assertEqual(sink.events[-1]["job_id"], job.id)
+        self.assertEqual(sink.events[-1]["payload"]["status"], "succeeded")
+        self.assertNotIn(version.id, sink.events[-1]["payload"])
+
+
+class RecordingSink:
+    def __init__(self) -> None:
+        self.events: list[dict[str, object]] = []
+
+    def emit(self, event: NexusLogEvent) -> None:
+        self.events.append(event.as_dict())
+
 
 if __name__ == "__main__":
     unittest.main()
-
