@@ -227,6 +227,7 @@ const state: AppState = {
 };
 
 const appRoot = requireAppRoot();
+let jobPollTimer: number | null = null;
 
 render();
 void hydrateStoredSession();
@@ -690,11 +691,12 @@ function renderJobs(): string {
   const rows = state.jobs
     .map((job) => {
       const proposalId = typeof job.result.proposal_id === "string" ? job.result.proposal_id : null;
+      const active = isActiveJobStatus(job.status);
       return `
         <li>
           <div>
             <strong>${escapeHtml(jobLabel(job.job_type))}</strong>
-            <span>${escapeHtml(job.status)} · ${job.attempts} attempt${job.attempts === 1 ? "" : "s"} · ${escapeHtml(job.created_at.slice(0, 19))}</span>
+            <span${active ? ' class="job-status-active"' : ""}>${escapeHtml(job.status)} · ${job.attempts} attempt${job.attempts === 1 ? "" : "s"} · ${escapeHtml(job.created_at.slice(0, 19))}</span>
             ${
               job.last_error
                 ? `<span class="job-error">${escapeHtml(job.last_error)}</span>`
@@ -1788,6 +1790,7 @@ async function enqueueJob(jobType: string, payload: Record<string, unknown>): Pr
     payload
   });
   replaceJob(job);
+  syncJobPolling();
   state.notice = `${jobLabel(job.job_type)} queued for the worker.`;
   render();
 }
@@ -1832,10 +1835,12 @@ async function refreshReview(): Promise<void> {
 async function refreshJobs(): Promise<void> {
   if (!state.person) {
     state.jobs = [];
+    syncJobPolling();
     render();
     return;
   }
   state.jobs = await apiGet<BackgroundJob[]>(`/api/jobs?person_id=${state.person.id}`);
+  syncJobPolling();
   render();
 }
 
@@ -1844,6 +1849,7 @@ async function refreshAllReadSurfaces(): Promise<void> {
     await refreshFoodLibrary();
     state.reviewNotes = [];
     state.jobs = [];
+    syncJobPolling();
     render();
     return;
   }
@@ -1857,6 +1863,7 @@ async function refreshAllReadSurfaces(): Promise<void> {
   );
   state.reviewNotes = await apiGet<ReviewNote[]>(`/api/review-notes?person_id=${state.person.id}`);
   state.jobs = await apiGet<BackgroundJob[]>(`/api/jobs?person_id=${state.person.id}`);
+  syncJobPolling();
   render();
 }
 
@@ -1918,6 +1925,7 @@ function clearPersonScopedState(): void {
   state.proposal = null;
   state.chatResponse = null;
   state.jobs = [];
+  syncJobPolling();
   state.lastDeletedEntry = null;
 }
 
@@ -2198,6 +2206,27 @@ function jobLabel(jobType: string): string {
     agent_chat: "Agent chat"
   };
   return labels[jobType] ?? jobType;
+}
+
+function syncJobPolling(): void {
+  if (hasActiveJobs()) {
+    if (jobPollTimer !== null) return;
+    jobPollTimer = window.setInterval(() => {
+      void refreshJobs();
+    }, 4000);
+    return;
+  }
+  if (jobPollTimer === null) return;
+  window.clearInterval(jobPollTimer);
+  jobPollTimer = null;
+}
+
+function hasActiveJobs(): boolean {
+  return state.jobs.some((job) => isActiveJobStatus(job.status));
+}
+
+function isActiveJobStatus(status: string): boolean {
+  return status === "pending" || status === "running";
 }
 
 function signed(value: number): string {

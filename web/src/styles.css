@@ -352,6 +352,11 @@ td:first-child {
   font-size: 13px;
 }
 
+.job-list .job-status-active {
+  color: #225465;
+  font-weight: 700;
+}
+
 .job-list .job-error {
   color: #8c2f25;
 }
