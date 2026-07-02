@@ -64,7 +64,7 @@ class OllamaLabelTextExtractor:
         filename: str | None = None,
     ) -> LabelTextExtraction | None:
         prompt = (
-            "Read this nutrition facts label or Brazilian tabela nutricional. "
+            "Text Recognition: Read this nutrition facts label or Brazilian tabela nutricional. "
             "Return only JSON with keys text, confidence, warnings. The text value must be "
             "line-oriented key/value text using labels like Produto, Marca, Porcao, "
             "Valor energetico, Proteinas, Carboidratos, Gorduras totais, Fibra alimentar, "

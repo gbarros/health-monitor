@@ -4299,11 +4299,21 @@ def parse_chat_review_note(message: str) -> dict[str, object] | None:
 
 def parse_nutrition_label_text(text: str) -> ParsedNutritionLabel:
     fields = parse_label_fields(text)
-    food_name = fields.get("produto") or fields.get("product") or fields.get("nome")
+    food_name = (
+        fields.get("produto")
+        or fields.get("product")
+        or fields.get("nome")
+        or infer_ocr_product_name(text)
+    )
     if not food_name:
         raise ValueError("label text is missing product name")
     brand = fields.get("marca") or fields.get("brand")
-    serving_text = fields.get("porcao") or fields.get("porção") or fields.get("serving")
+    serving_text = (
+        fields.get("porcao")
+        or fields.get("porção")
+        or fields.get("serving")
+        or infer_ocr_serving_text(text)
+    )
     if serving_text is None:
         raise ValueError("label text is missing serving size")
     serving_size_g = parse_grams(serving_text)
@@ -4313,8 +4323,11 @@ def parse_nutrition_label_text(text: str) -> ParsedNutritionLabel:
     calories = parse_number_from_field(fields, ("valor energetico", "valor energético", "calorias", "calories", "energy"))
     protein = parse_number_from_field(fields, ("proteinas", "proteínas", "protein"))
     carbs = parse_number_from_field(fields, ("carboidratos", "carbs", "carbohydrate"))
-    fat = parse_number_from_field(fields, ("gorduras totais", "gordura total", "fat", "total fat"))
-    fiber = parse_number_from_field(fields, ("fibra alimentar", "fibras", "fiber"), default=0)
+    fat = parse_number_from_field(
+        fields,
+        ("gorduras totais", "gordura totais", "gordura total", "fat", "total fat"),
+    )
+    fiber = parse_number_from_field(fields, ("fibra alimentar", "fibras alimentares", "fibras", "fiber"), default=0)
     sodium = parse_number_from_field(fields, ("sodio", "sódio", "sodium"), default=0)
     barcode = fields.get("codigo de barras") or fields.get("código de barras") or fields.get("barcode")
     factor = 100 / serving_size_g
@@ -4396,11 +4409,89 @@ def parse_label_fields(text: str) -> dict[str, str]:
         if match is None:
             continue
         fields[normalize_label_key(match.group(1))] = match.group(2).strip()
+    for key, value in parse_markdown_nutrition_table_fields(text).items():
+        fields.setdefault(key, value)
     return fields
 
 
 def normalize_label_key(value: str) -> str:
-    return re.sub(r"\s+", " ", value.strip().casefold())
+    without_units = re.sub(r"\s*\([^)]*\)", "", value.strip().casefold())
+    return re.sub(r"\s+", " ", without_units).strip()
+
+
+def infer_ocr_product_name(text: str) -> str | None:
+    skipped_prefixes = (
+        "lote",
+        "data ",
+        "tara ",
+        "ingrediente",
+        "nao contem",
+        "não contém",
+        "conserva",
+        "informacao nutricional",
+        "informação nutricional",
+        "porcao",
+        "porção",
+    )
+    for raw_line in text.splitlines():
+        line = raw_line.strip().strip("|").strip()
+        if not line or ":" in line:
+            continue
+        normalized = normalize_label_key(line)
+        if normalized.startswith(skipped_prefixes):
+            continue
+        if normalized.startswith(":---") or normalized in {"100g", "80g", "%vd"}:
+            continue
+        return line
+    return None
+
+
+def infer_ocr_serving_text(text: str) -> str | None:
+    match = re.search(r"\bpor[cç][aã]o\s*:\s*([^\n|]+?\d+(?:[,.]\d+)?\s*g)\b", text, re.I)
+    if match is not None:
+        return match.group(1).strip()
+    match = re.search(r"\bserving(?: size)?\s*:\s*([^\n|]+?\d+(?:[,.]\d+)?\s*g)\b", text, re.I)
+    if match is not None:
+        return match.group(1).strip()
+    return None
+
+
+def parse_markdown_nutrition_table_fields(text: str) -> dict[str, str]:
+    nutrient_keys = {
+        normalize_label_key("Valor energetico"),
+        normalize_label_key("Valor energético"),
+        normalize_label_key("Calorias"),
+        normalize_label_key("Proteinas"),
+        normalize_label_key("Proteínas"),
+        normalize_label_key("Carboidratos"),
+        normalize_label_key("Gorduras totais"),
+        normalize_label_key("Gordura totais"),
+        normalize_label_key("Gordura total"),
+        normalize_label_key("Fibra alimentar"),
+        normalize_label_key("Fibras alimentares"),
+        normalize_label_key("Sodio"),
+        normalize_label_key("Sódio"),
+    }
+    fields: dict[str, str] = {}
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line.startswith("|") or "---" in line:
+            continue
+        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        for index, cell in enumerate(cells):
+            key = normalize_label_key(cell)
+            if key not in nutrient_keys:
+                continue
+            values: list[str] = []
+            for following in cells[index + 1 :]:
+                following_key = normalize_label_key(following)
+                if following_key in nutrient_keys:
+                    break
+                if re.search(r"\d", following):
+                    values.append(following)
+            if values:
+                fields.setdefault(key, values[1] if len(values) > 1 else values[0])
+    return fields
 
 
 def parse_number_from_field(
