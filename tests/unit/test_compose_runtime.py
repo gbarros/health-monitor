@@ -16,6 +16,13 @@ class ComposeRuntimeTest(unittest.TestCase):
         self.assertIn("pg_isready", source)
         self.assertIn("condition: service_healthy", source)
 
+    def test_web_waits_for_api_health(self) -> None:
+        source = COMPOSE.read_text(encoding="utf-8")
+
+        self.assertIn("/api/health", source)
+        self.assertIn("urllib.request.urlopen", source)
+        self.assertIn("api:\n        condition: service_healthy", source)
+
     def test_api_and_worker_restart_after_transient_startup_failures(self) -> None:
         source = COMPOSE.read_text(encoding="utf-8")
 

@@ -11,6 +11,20 @@ from health_monitor.lookup.labels import LabelTextExtraction, StaticLabelTextExt
 
 
 class HttpApiContractTest(unittest.TestCase):
+    def test_health_endpoint_reports_api_readiness(self) -> None:
+        api = HttpApi(HealthMonitorService())
+
+        response = api.handle("GET", "/api/health", None)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.body,
+            {
+                "status": "ok",
+                "service": "health-monitor-api",
+            },
+        )
+
     def test_daily_driver_flow_through_http_contract(self) -> None:
         api = HttpApi(HealthMonitorService())
 

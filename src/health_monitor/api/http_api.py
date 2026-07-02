@@ -54,7 +54,13 @@ class HttpApi:
         query = {key: values[-1] for key, values in parse_qs(parsed.query).items()}
 
         if method == "GET" and path == "/api/health":
-            return HttpResponse(200, {"status": "ok"})
+            return HttpResponse(
+                200,
+                {
+                    "status": "ok",
+                    "service": "health-monitor-api",
+                },
+            )
 
         if method == "POST" and path == "/api/households":
             household = self.service.create_household(name=body["name"])

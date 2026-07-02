@@ -7,7 +7,7 @@ services:
       - "${WEB_PORT:-8080}:80"
     depends_on:
       api:
-        condition: service_started
+        condition: service_healthy
 
   api:
     build:
@@ -33,6 +33,16 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/api/health', timeout=2).read()\"",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
 
   worker:
     build:
