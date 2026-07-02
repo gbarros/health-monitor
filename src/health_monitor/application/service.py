@@ -1082,6 +1082,8 @@ class HealthMonitorService:
         food_version_id: str,
     ) -> CreateDiaryEntriesProposal:
         proposal = self.proposals.proposals[proposal_id]
+        if proposal.status == "superseded":
+            raise ValueError("proposal is superseded")
         if proposal.status != "needs_clarification":
             raise ValueError("only clarification proposals can be resolved")
         unresolved_items = list(proposal.payload.get("unresolved_items", []))
@@ -1141,6 +1143,10 @@ class HealthMonitorService:
                 ),
                 source_agent_run_id=proposal.source_agent_run_id,
             )
+        )
+        self.proposals.supersede(
+            proposal.id,
+            superseded_by_proposal_id=resolved.id,
         )
         if proposal.source_agent_run_id is not None and proposal.source_agent_run_id in self.agent_runs:
             run = self.agent_runs[proposal.source_agent_run_id]
@@ -2754,6 +2760,8 @@ class HealthMonitorService:
         proposal = self.proposals.proposals[proposal_id]
         if proposal.status == "applied":
             raise ValueError("proposal is already applied")
+        if proposal.status == "superseded":
+            raise ValueError("proposal is superseded")
         if proposal.status == "rejected":
             raise ValueError("cannot apply rejected proposal")
         if proposal.status == "needs_clarification":

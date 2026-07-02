@@ -189,9 +189,12 @@ class AgentTextMealFlowTest(unittest.TestCase):
             unresolved_index=0,
             food_version_id=protein.id,
         )
+        superseded = service.get_proposal(clarification.id)
         applied = service.confirm_proposal(resolved.id)
         summary = service.day_summary(person.id, date(2026, 7, 1))
 
+        self.assertEqual(superseded.status, "superseded")
+        self.assertEqual(superseded.payload["superseded_by_proposal_id"], resolved.id)
         self.assertEqual(resolved.status, "draft")
         self.assertEqual(resolved.entries[0].food_version_id, protein.id)
         self.assertEqual(resolved.entries[0].quantity_g, 100)
@@ -200,6 +203,16 @@ class AgentTextMealFlowTest(unittest.TestCase):
         self.assertEqual(applied.status, "applied")
         self.assertEqual(summary.totals.rounded(), Nutrients(70, 10, 6, 1))
         self.assertNotEqual(resolved.entries[0].food_version_id, natural.id)
+        with self.assertRaisesRegex(ValueError, "superseded"):
+            service.resolve_text_meal_food_clarification(
+                proposal_id=clarification.id,
+                unresolved_index=0,
+                food_version_id=natural.id,
+            )
+        with self.assertRaisesRegex(ValueError, "superseded"):
+            service.confirm_proposal(clarification.id)
+        with self.assertRaisesRegex(ValueError, "cannot reject superseded proposal"):
+            service.reject_proposal(clarification.id)
 
     def test_draft_text_meal_entry_can_be_edited_before_confirmation(self) -> None:
         service = HealthMonitorService()

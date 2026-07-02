@@ -8,7 +8,14 @@ from health_monitor.domain.diary import Diary, DiaryEntry
 from health_monitor.domain.nutrients import Nutrients
 
 
-ProposalStatus = Literal["draft", "needs_clarification", "confirmed", "applied", "rejected"]
+ProposalStatus = Literal[
+    "draft",
+    "needs_clarification",
+    "confirmed",
+    "applied",
+    "rejected",
+    "superseded",
+]
 ProposalType = Literal[
     "diary_entries",
     "diary_entries_with_estimates",
@@ -52,6 +59,8 @@ class ProposalService:
         proposal = self.proposals[proposal_id]
         if proposal.status == "applied":
             raise ValueError("cannot reject applied proposal")
+        if proposal.status == "superseded":
+            raise ValueError("cannot reject superseded proposal")
         if proposal.status == "rejected":
             raise ValueError("proposal is already rejected")
         now = datetime.now(timezone.utc)
@@ -78,6 +87,8 @@ class ProposalService:
         proposal = self.proposals[proposal_id]
         if proposal.status == "applied":
             raise ValueError("proposal is already applied")
+        if proposal.status == "superseded":
+            raise ValueError("proposal is superseded")
         if proposal.status == "rejected":
             raise ValueError("cannot apply rejected proposal")
         if proposal.status == "needs_clarification":
@@ -105,3 +116,38 @@ class ProposalService:
         )
         self.proposals[proposal_id] = applied
         return applied
+
+    def supersede(
+        self,
+        proposal_id: str,
+        *,
+        superseded_by_proposal_id: str,
+    ) -> CreateDiaryEntriesProposal:
+        proposal = self.proposals[proposal_id]
+        if proposal.status == "applied":
+            raise ValueError("cannot supersede applied proposal")
+        if proposal.status == "rejected":
+            raise ValueError("cannot supersede rejected proposal")
+        if proposal.status == "superseded":
+            raise ValueError("proposal is already superseded")
+        superseded = CreateDiaryEntriesProposal(
+            id=proposal.id,
+            person_id=proposal.person_id,
+            entries=proposal.entries,
+            proposal_type=proposal.proposal_type,
+            status="superseded",
+            summary=proposal.summary,
+            payload={
+                **proposal.payload,
+                "superseded_by_proposal_id": superseded_by_proposal_id,
+            },
+            totals=proposal.totals,
+            evidence=proposal.evidence,
+            source_agent_run_id=proposal.source_agent_run_id,
+            applied_record_ids=proposal.applied_record_ids,
+            created_at=proposal.created_at,
+            confirmed_at=proposal.confirmed_at,
+            rejected_at=proposal.rejected_at,
+        )
+        self.proposals[proposal_id] = superseded
+        return superseded

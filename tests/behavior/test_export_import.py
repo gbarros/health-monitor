@@ -172,6 +172,52 @@ class ExportImportTest(unittest.TestCase):
         )
         self.assertIsNone(restored.rejected_at)
 
+    def test_export_import_preserves_superseded_clarification_link(self) -> None:
+        source = HealthMonitorService()
+        household = source.create_household(name="Casa")
+        person = source.create_person(
+            household_id=household.id,
+            name="Gabriel",
+            timezone="America/Sao_Paulo",
+        )
+        source.create_food_with_version(
+            household_id=household.id,
+            name="Iogurte Natural",
+            brand="Batavo",
+            version_label="natural",
+            nutrients_per_100g=Nutrients(80, 5, 9, 2),
+            source="label_scan",
+            aliases=["iogurte"],
+        )
+        _, protein = source.create_food_with_version(
+            household_id=household.id,
+            name="Iogurte Protein",
+            brand="Batavo",
+            version_label="protein",
+            nutrients_per_100g=Nutrients(70, 10, 6, 1),
+            source="label_scan",
+            aliases=["iogurte"],
+        )
+        clarification = source.propose_text_meal(
+            person_id=person.id,
+            logged_at_local="2026-07-02T10:00:00",
+            text="100g iogurte",
+            agent_settings={"external_lookup": False},
+        )
+        resolved = source.resolve_text_meal_food_clarification(
+            proposal_id=clarification.id,
+            unresolved_index=0,
+            food_version_id=protein.id,
+        )
+
+        exported = source.export_data()
+        target = HealthMonitorService()
+        target.import_data(exported)
+        restored = target.get_proposal(clarification.id)
+
+        self.assertEqual(restored.status, "superseded")
+        self.assertEqual(restored.payload["superseded_by_proposal_id"], resolved.id)
+
     def test_import_refuses_to_overwrite_non_empty_service(self) -> None:
         source, _ = self.build_populated_service()
         exported = source.export_data()

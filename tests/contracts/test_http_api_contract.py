@@ -1029,6 +1029,15 @@ class HttpApiContractTest(unittest.TestCase):
                 "food_version_id": protein["version"]["id"],
             },
         ).body
+        superseded = api.handle("GET", f"/api/proposals/{clarification['id']}", None).body
+        second_resolve = api.handle(
+            "POST",
+            f"/api/proposals/{clarification['id']}/resolve-food",
+            {
+                "unresolved_index": 0,
+                "food_version_id": natural["version"]["id"],
+            },
+        )
         applied = api.handle("POST", f"/api/proposals/{resolved['id']}/confirm", None).body
         summary = api.handle(
             "GET",
@@ -1036,6 +1045,10 @@ class HttpApiContractTest(unittest.TestCase):
             None,
         ).body
 
+        self.assertEqual(superseded["status"], "superseded")
+        self.assertEqual(superseded["payload"]["superseded_by_proposal_id"], resolved["id"])
+        self.assertEqual(second_resolve.status_code, 400)
+        self.assertIn("superseded", second_resolve.body["error"]["message"])
         self.assertEqual(resolved["status"], "draft")
         self.assertEqual(resolved["payload"]["resolved_from_proposal_id"], clarification["id"])
         self.assertEqual(resolved["entries"][0]["food_version_id"], protein["version"]["id"])
