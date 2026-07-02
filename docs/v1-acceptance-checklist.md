@@ -184,11 +184,12 @@ Remaining:
 
 Evidence:
 - ChatGPT history evidence tooling can inspect large exported HTML and extract sanitized signal candidates without durable diary writes.
+- Signal extraction supports inferred source dates, date-range filtering, barcode/email redaction, and source-context preservation.
 - Raw exports and generated private snippets stay local/ignored.
-- Unit coverage in `tests/unit/test_chatgpt_signal_extraction.py`.
+- Unit coverage in `tests/unit/test_chatgpt_signal_extraction.py` and `tests/unit/test_chatgpt_import_hygiene.py`.
 
 Remaining:
-- Add date filtering and richer candidate payloads for repeated aliases, label/version hints, recipes, and review notes.
+- Add richer candidate payloads for repeated aliases, label/version hints, recipes, and review notes.
 
 ### F-019: Controlled Research-Agent Lookup
 

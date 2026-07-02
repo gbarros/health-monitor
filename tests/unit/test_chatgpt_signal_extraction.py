@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from datetime import date
 
 from scripts.extract_chatgpt_log_signals import extract_signal_payload
 
@@ -29,6 +30,35 @@ class ChatGPTSignalExtractionTest(unittest.TestCase):
         self.assertEqual(payload["durable_write_policy"], "proposals_or_fixtures_only")
         self.assertNotIn("diary_entries", payload)
         self.assertNotIn("7891000000000", str(payload["candidates"]))
+
+    def test_extract_signal_payload_filters_by_inferred_context_date(self) -> None:
+        html = """
+        <html><body>
+          <h2>2026-07-01</h2>
+          <p>100g queijo minas. Total 315 kcal.</p>
+          <h2>2026-07-02</h2>
+          <p>100g Iogurte Batavo Protein. Total 70 kcal.</p>
+          <h2>2026-07-03</h2>
+          <p>Revisão da semana: social dinner.</p>
+        </body></html>
+        """
+
+        payload = extract_signal_payload(
+            html,
+            source_name="synthetic.html",
+            start_date=date(2026, 7, 2),
+            end_date=date(2026, 7, 2),
+        )
+
+        self.assertEqual(payload["filters"]["start_date"], "2026-07-02")
+        self.assertEqual(payload["filters"]["end_date"], "2026-07-02")
+        self.assertEqual(
+            {item["source_context"]["context_date"] for item in payload["candidates"]},
+            {"2026-07-02"},
+        )
+        self.assertIn("Iogurte Batavo", str(payload["candidates"]))
+        self.assertNotIn("queijo minas", str(payload["candidates"]))
+        self.assertNotIn("social dinner", str(payload["candidates"]))
 
 
 if __name__ == "__main__":

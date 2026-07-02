@@ -35,6 +35,31 @@ imports/chatgpt/2026-07-export.zip
 
 The repo ignores `imports/`, `data/imports/`, and `private/` so raw data is not committed accidentally.
 
+## Supported Local Commands
+
+Inspect a large exported HTML file without dumping private content:
+
+```bash
+python scripts/inspect_chatgpt_log.py <export.html>
+```
+
+Extract sanitized signal candidates to a local JSON file:
+
+```bash
+python scripts/extract_chatgpt_log_signals.py <export.html> --out <fixtures.json>
+```
+
+Optional date filters narrow candidates to blocks with inferred source context in the selected range:
+
+```bash
+python scripts/extract_chatgpt_log_signals.py <export.html> \
+  --start-date 2026-07-01 \
+  --end-date 2026-07-31 \
+  --out <fixtures.json>
+```
+
+Use `--no-redact` only for local one-off work. Generated private snippets and raw exports should stay under ignored paths such as `private/`, `imports/`, or `data/imports/`.
+
 ## Import Strategy
 
 The first parser should be conservative.

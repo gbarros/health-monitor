@@ -8,6 +8,7 @@ import collections
 import html.parser
 import json
 import re
+from datetime import date
 from pathlib import Path
 
 
@@ -115,6 +116,10 @@ CATEGORIES: dict[str, list[str]] = {
 }
 
 
+ISO_DATE_RE = re.compile(r"\b(20\d{2})-(\d{1,2})-(\d{1,2})\b")
+SLASH_DATE_RE = re.compile(r"\b(\d{1,2})/(\d{1,2})/(20\d{2}|\d{2})\b")
+
+
 class BlockParser(html.parser.HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
@@ -211,21 +216,56 @@ def redact_text(value: str) -> str:
     return redacted
 
 
+def parse_context_date(text: str) -> date | None:
+    iso_match = ISO_DATE_RE.search(text)
+    if iso_match is not None:
+        year, month, day = (int(part) for part in iso_match.groups())
+        return date(year, month, day)
+    slash_match = SLASH_DATE_RE.search(text)
+    if slash_match is None:
+        return None
+    day_value, month, year = slash_match.groups()
+    year_value = int(year)
+    if year_value < 100:
+        year_value += 2000
+    return date(year_value, int(month), int(day_value))
+
+
+def date_in_range(value: date | None, start_date: date | None, end_date: date | None) -> bool:
+    if start_date is None and end_date is None:
+        return True
+    if value is None:
+        return False
+    if start_date is not None and value < start_date:
+        return False
+    if end_date is not None and value > end_date:
+        return False
+    return True
+
+
 def extract_signal_payload(
     raw_html: str,
     *,
     source_name: str,
     redact: bool = True,
+    start_date: date | None = None,
+    end_date: date | None = None,
 ) -> dict[str, object]:
     block_parser = BlockParser()
     block_parser.feed(raw_html)
     compiled = compile_categories()
     candidates: list[dict[str, object]] = []
+    current_context_date: date | None = None
 
     for index, (tag, text) in enumerate(block_parser.blocks, start=1):
+        detected_date = parse_context_date(text)
+        if detected_date is not None:
+            current_context_date = detected_date
         categories = classify(text, compiled)
         candidate_types = candidate_types_for(categories)
         if not candidate_types:
+            continue
+        if not date_in_range(current_context_date, start_date, end_date):
             continue
         safe_text = redact_text(text) if redact else text
         for candidate_type in candidate_types:
@@ -239,6 +279,9 @@ def extract_signal_payload(
                         "source_name": source_name,
                         "html_block_index": index,
                         "html_tag": tag,
+                        "context_date": current_context_date.isoformat()
+                        if current_context_date is not None
+                        else None,
                     },
                     "durable_write": False,
                 }
@@ -249,6 +292,10 @@ def extract_signal_payload(
         "version": 1,
         "source_name": source_name,
         "redacted": redact,
+        "filters": {
+            "start_date": start_date.isoformat() if start_date is not None else None,
+            "end_date": end_date.isoformat() if end_date is not None else None,
+        },
         "durable_write_policy": "proposals_or_fixtures_only",
         "candidates": candidates,
     }
@@ -261,6 +308,8 @@ def main() -> int:
     parser.add_argument("--snippets-out", type=Path)
     parser.add_argument("--snippets-per-category", type=int, default=8)
     parser.add_argument("--redact", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--start-date", type=date.fromisoformat)
+    parser.add_argument("--end-date", type=date.fromisoformat)
     args = parser.parse_args()
 
     raw = args.html_file.read_text(encoding="utf-8", errors="replace")
@@ -321,6 +370,8 @@ def main() -> int:
             raw,
             source_name=str(args.html_file),
             redact=args.redact,
+            start_date=args.start_date,
+            end_date=args.end_date,
         )
         args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_text(
