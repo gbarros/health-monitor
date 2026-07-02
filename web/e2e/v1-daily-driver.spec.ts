@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { Buffer } from "node:buffer";
 
 test("v1 daily driver workflow", async ({ page }) => {
   await page.goto("/");
@@ -48,8 +49,13 @@ test("v1 daily driver workflow", async ({ page }) => {
 
   await page.locator("#label-scan-form input[name='barcode']").fill("7891000000000");
   await page.locator("#label-scan-form input[name='quantity_g']").fill("170");
+  await page.locator("#label-scan-form input[name='attachment']").setInputFiles({
+    name: "label.png",
+    mimeType: "image/png",
+    buffer: Buffer.from("fake png label evidence")
+  });
   await page.locator("#label-scan-form button[type='submit']").click();
-  await expect(page.getByText("Food version proposal drafted.")).toBeVisible();
+  await expect(page.getByText("Food version proposal drafted with attachment evidence.")).toBeVisible();
   await expect(page.locator(".proposal").getByText("Iogurte Batavo Protein").first()).toBeVisible();
   await page.locator("#confirm-proposal").click();
   await expect(page.getByText("Proposal applied.")).toBeVisible();

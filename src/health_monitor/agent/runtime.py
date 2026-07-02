@@ -176,13 +176,29 @@ def normalize_agent_runtime_output(raw_output: Any) -> AgentRuntimeResponse:
             output_type=output_type,
             confidence=_optional_float(payload.get("confidence")),
         )
-    return AgentRuntimeResponse(message=str(payload))
+    return AgentRuntimeResponse(message=str(payload), behavior_label="pydantic_ai_answer")
 
 
 def runtime_output_payload(raw_output: Any) -> Any:
     if isinstance(raw_output, str):
         stripped = raw_output.strip()
-        if stripped.startswith("{") and stripped.endswith("}"):
+        if stripped.startswith("```"):
+            lines = stripped.splitlines()
+            if lines and lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].startswith("```"):
+                lines = lines[:-1]
+            stripped = "\n".join(lines).strip()
+        if stripped.startswith("{"):
+            try:
+                return json.loads(stripped)
+            except json.JSONDecodeError:
+                try:
+                    parsed, _ = json.JSONDecoder().raw_decode(stripped)
+                    return parsed
+                except json.JSONDecodeError:
+                    return raw_output
+        if stripped.startswith("["):
             try:
                 return json.loads(stripped)
             except json.JSONDecodeError:
@@ -303,7 +319,7 @@ class PydanticAINutritionAgent:
 
     def _run(self, *, deps: AgentDeps, message: str, task_instructions: str) -> Any:
         try:
-            from pydantic_ai import Agent, RunContext
+            from pydantic_ai import Agent
             from pydantic_ai.models.ollama import OllamaModel
             from pydantic_ai.providers.ollama import OllamaProvider
         except ImportError as exc:
@@ -332,13 +348,13 @@ class PydanticAINutritionAgent:
         )
 
         @agent.tool
-        async def day_summary(ctx: RunContext[AgentDeps], iso_day: str) -> dict[str, Any]:
+        async def day_summary(ctx, iso_day: str) -> dict[str, Any]:
             """Return deterministic diary entries, totals, targets, and citations for one ISO date."""
             return tools.day_summary(ctx.deps, iso_day)
 
         @agent.tool
         async def week_summary(
-            ctx: RunContext[AgentDeps],
+            ctx,
             start_iso: str,
             end_iso: str,
         ) -> dict[str, Any]:
@@ -346,13 +362,13 @@ class PydanticAINutritionAgent:
             return tools.week_summary(ctx.deps, start_iso, end_iso)
 
         @agent.tool
-        async def weight_trend(ctx: RunContext[AgentDeps]) -> dict[str, Any]:
+        async def weight_trend(ctx) -> dict[str, Any]:
             """Return deterministic weight trend for the active person."""
             return tools.weight_trend(ctx.deps)
 
         @agent.tool
         async def resolve_food(
-            ctx: RunContext[AgentDeps],
+            ctx,
             phrase: str | None = None,
             barcode: str | None = None,
         ) -> dict[str, Any]:
@@ -361,7 +377,7 @@ class PydanticAINutritionAgent:
 
         @agent.tool
         async def lookup_food(
-            ctx: RunContext[AgentDeps],
+            ctx,
             phrase: str | None = None,
             barcode: str | None = None,
         ) -> dict[str, Any]:
@@ -369,13 +385,13 @@ class PydanticAINutritionAgent:
             return tools.food_lookup(ctx.deps, phrase=phrase, barcode=barcode)
 
         @agent.tool
-        async def food_version_history(ctx: RunContext[AgentDeps], phrase: str) -> dict[str, Any]:
+        async def food_version_history(ctx, phrase: str) -> dict[str, Any]:
             """Inspect matching local food versions, defaults, and recent diary usage."""
             return tools.food_version_history(ctx.deps, phrase=phrase)
 
         @agent.tool
         async def draft_text_meal_proposal(
-            ctx: RunContext[AgentDeps],
+            ctx,
             logged_at_local: str,
             text: str,
         ) -> dict[str, Any]:
@@ -388,7 +404,7 @@ class PydanticAINutritionAgent:
 
         @agent.tool
         async def draft_diary_correction_proposal(
-            ctx: RunContext[AgentDeps],
+            ctx,
             message: str,
         ) -> dict[str, Any]:
             """Draft a diary correction proposal without applying it."""
@@ -396,7 +412,7 @@ class PydanticAINutritionAgent:
 
         @agent.tool
         async def draft_review_note_proposal(
-            ctx: RunContext[AgentDeps],
+            ctx,
             message: str,
         ) -> dict[str, Any]:
             """Draft a review note proposal without saving a review note."""

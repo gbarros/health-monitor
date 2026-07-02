@@ -21,6 +21,14 @@ class AgentOutputNormalizationTest(unittest.TestCase):
         self.assertEqual(response.confidence, 0.81)
         self.assertEqual(response.citations, ({"record_type": "diary_entry", "record_id": "entry_1"},))
 
+    def test_normalizes_fenced_or_trailing_json_answer_payload(self) -> None:
+        response = normalize_agent_runtime_output(
+            '```json\n{"output_type":"answer","message":"Queijo Minas was largest."}\n```\nextra'
+        )
+
+        self.assertEqual(response.behavior_label, "pydantic_ai_answer")
+        self.assertEqual(response.message, "Queijo Minas was largest.")
+
     def test_normalizes_proposal_payload(self) -> None:
         response = normalize_agent_runtime_output(
             {

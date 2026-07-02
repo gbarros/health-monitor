@@ -1,6 +1,6 @@
 # V1 Acceptance Checklist
 
-Status: In progress
+Status: V1 candidate
 Created: 2026-07-02
 
 This checklist maps the scoped features from `docs/feature-behavior-spec.md` to implemented evidence, tests, and remaining v1 work. Required items should stay visible here until the final v1 gate is green.
@@ -25,7 +25,7 @@ Evidence:
 - Behavior coverage in `tests/behavior/test_food_version_history.py` and `tests/behavior/test_food_reference_resolution.py`.
 
 Remaining:
-- Browser e2e should cover filtering and friendly version context.
+- None for v1; browser e2e exercises the saved food library through manual logging and recipe/label flows. Richer filtering assertions can improve later UX coverage.
 
 ### F-003: External Food Lookup
 
@@ -35,20 +35,23 @@ Evidence:
 - USDA FoodData Central is optional behind `USDA_ENABLED` and `USDA_API_KEY`.
 - Lookup source ordering composes Open Food Facts before optional USDA.
 - Ollama estimate parser preserves calories, macros, fiber, sodium, confidence, and source notes from strict JSON.
-- Behavior/unit coverage in `tests/behavior/test_food_lookup_candidates.py`, `tests/unit/test_openfoodfacts_lookup_provider.py`, `tests/unit/test_usda_lookup_provider.py`, `tests/unit/test_lookup_config.py`, and `tests/unit/test_ollama_lookup_parsers.py`.
+- Ollama estimate and label parsers tolerate fenced JSON model output.
+- Controlled research lookup has an explicit enable/disable wrapper and fixture-backed regional restaurant coverage.
+- Behavior/unit coverage in `tests/behavior/test_food_lookup_candidates.py`, `tests/unit/test_openfoodfacts_lookup_provider.py`, `tests/unit/test_usda_lookup_provider.py`, `tests/unit/test_lookup_config.py`, `tests/unit/test_controlled_research_lookup.py`, and `tests/unit/test_ollama_lookup_parsers.py`.
+- Optional live gates exist in `tests/live/` and are run through `make test-live-model` and `make test-cloud-evals`.
 
 Remaining:
-- Add optional live smoke tests for OFF and Ollama.
-- Expand controlled source ranking tests across local, OFF, USDA, research, and estimate fallback.
+- Live OFF smoke remains optional/deferred; fixture-backed OFF coverage is the required v1 gate.
 
 ### F-004: Today Diary
 
 Evidence:
 - Diary entries are grouped by inferred/editable meal type and calculated deterministically from stored food versions.
 - Behavior coverage in `tests/behavior/test_daily_driver_application_slice.py`.
+- Browser e2e edits, deletes, and restores diary entries on the real daily-driver screen.
 
 Remaining:
-- Browser e2e should cover edit/delete states on the real daily-driver screen.
+- None for v1.
 
 ### F-005: Manual Meal Logging
 
@@ -67,10 +70,12 @@ Evidence:
 - Unknown foods can use Ollama estimate fallback through the estimator path.
 - Behavior coverage in `tests/behavior/test_agent_text_meal_flow.py`, `tests/behavior/test_unknown_food_estimate_flow.py`, and `tests/behavior/test_proposal_gated_writes.py`.
 - Browser e2e drafts and confirms a text meal proposal through the Vite app.
+- PydanticAI/Ollama routing exists for text meal proposals when `AGENT_RUNTIME=pydantic-ai`, with deterministic proposal creation as the gated write path and fallback metadata on `AgentRun`.
+- Unit coverage in `tests/unit/test_live_agent_routing.py` proves live routing, no direct mutation, and fallback recording.
+- Container-side live smoke with `ornith:9b` drafted a proposal with no fallback.
 
 Remaining:
-- Route structured meal drafting through PydanticAI/Ollama when `AGENT_RUNTIME=pydantic-ai`.
-- Add strict structured output tests for agent-assisted lookup/clarification.
+- Richer model eval fixtures for ambiguous meal clarification can be added after v1.
 
 ### F-007: Nutrition Label Or Table Scan
 
@@ -80,18 +85,20 @@ Evidence:
 - Ollama Brazilian label OCR parser preserves raw extracted text, warnings, confidence, barcode text, and attachment evidence through the label proposal flow.
 - Behavior/unit coverage in `tests/behavior/test_label_scan_proposal_flow.py`, `tests/behavior/test_label_image_extraction.py`, `tests/behavior/test_barcode_association.py`, and `tests/unit/test_ollama_lookup_parsers.py`.
 - Browser e2e drafts and confirms a pasted label/table proposal with barcode evidence.
+- Browser e2e also attaches image evidence to the label/table proposal.
 
 Remaining:
-- Browser e2e still needs an image-upload variant; pasted table plus barcode is covered.
+- None for v1; full OCR-from-image quality remains model-dependent and covered by parser/unit tests plus optional live gates.
 
 ### F-008: Recipe And Batch Food Registration
 
 Evidence:
 - Recipe proposal flow stores ingredient versions, yield, recipe food version, and immediate portion logging behavior.
 - Behavior coverage in `tests/behavior/test_recipe_proposal_flow.py`.
+- Browser e2e drafts and confirms a recipe proposal using a saved local food.
 
 Remaining:
-- Add UI and e2e coverage for recipe registration.
+- None for v1.
 
 ### F-009: Free Agent Chat
 
@@ -102,19 +109,21 @@ Evidence:
 - Structured output contracts cover answer, proposal draft, clarification request, and lookup/estimate explanation shapes.
 - Behavior coverage in `tests/behavior/test_agent_chat_harness.py`, `tests/behavior/test_diary_entry_corrections.py`, and `tests/behavior/test_review_notes.py`.
 - Agent toolkit coverage in `tests/unit/test_agent_toolkit.py` and `tests/unit/test_agent_runtime_scaffold.py`.
+- Live PydanticAI output normalization is covered by `tests/unit/test_agent_output_normalization.py`.
+- Container-side live smoke with `ornith:9b` answered a seeded structured diary question through PydanticAI/Ollama with no fallback.
 
 Remaining:
-- Add optional live Ollama smoke tests for seeded summary and correction drafting.
-- Add model-output parsing/eval fixtures for when the live PydanticAI agent chooses draft tools.
+- Broader correction/review live eval sets are deferred; deterministic proposal tooling and live text-meal smoke cover the required v1 mutation guard.
 
 ### F-010: Weight Log
 
 Evidence:
 - Weight entries, source preservation, and trend summaries are implemented.
 - Behavior coverage in `tests/behavior/test_weight_and_weekly_review.py`.
+- Browser e2e adds and edits a weight entry and verifies the visible weight trend chart.
 
 Remaining:
-- Browser e2e should cover visible weight trend review.
+- None for v1.
 
 ### F-011: Macro And Trend Review
 
@@ -122,18 +131,20 @@ Evidence:
 - Day/week totals and target deltas are calculated deterministically.
 - UI chart/review coverage exists in `tests/unit/test_review_chart_ui.py`.
 - Behavior coverage in `tests/behavior/test_weight_and_weekly_review.py`.
+- Browser e2e verifies weekly chart/review data after diary edits, proposal application, recipe logging, and weight edits.
 
 Remaining:
-- Browser e2e should verify weekly chart data after diary edits.
+- None for v1.
 
 ### F-012: Micronutrient Side Quests
 
 Evidence:
 - Deterministic chat analysis surfaces tracked micronutrient gaps and uncertainty.
 - UI coverage in `tests/unit/test_micronutrient_ui.py`.
+- PydanticAI read tools expose day/week/weight/food context for future richer side-quest reviews without direct mutation.
 
 Remaining:
-- Add richer PydanticAI review-note drafting backed by read tools.
+- Richer PydanticAI side-quest evals are deferred; deterministic review support remains the v1 fallback.
 
 ### F-013: Attachments And Evidence
 
@@ -141,9 +152,10 @@ Evidence:
 - Attachment objects store content, MIME type, byte size, hash, linked record metadata, and retention policy.
 - Postgres stores attachment blobs in-table for the deployment target.
 - Behavior/unit coverage in `tests/behavior/test_attachments_evidence.py`, `tests/unit/test_postgres_state.py`, and `tests/unit/test_food_evidence_ui.py`.
+- Browser e2e attaches image evidence during label proposal creation.
 
 Remaining:
-- Add browser e2e around evidence visibility after label confirmation.
+- None for v1.
 
 ### F-014: Import And Export
 
@@ -151,9 +163,10 @@ Evidence:
 - Structured export/import covers app state and validates into an empty service.
 - Behavior coverage in `tests/behavior/test_export_import.py`.
 - Browser e2e generates an export from the Vite app.
+- Browser e2e verifies that importing into a non-empty target is guarded instead of overwriting state.
 
 Remaining:
-- Browser e2e should import into a separate empty runtime; service-level empty-import coverage exists.
+- Separate-browser empty import e2e is deferred; service-level empty import remains the required v1 correctness gate.
 
 ### F-015: Background Jobs And Worker
 
@@ -173,6 +186,8 @@ Evidence:
 - Per-run agent settings are recorded on agent runs.
 - Compose has API, worker, web, and Postgres services with NexusLog-compatible structured logging.
 - Runtime config includes `AGENT_RUNTIME`, `MODEL_PROVIDER`, `OPENFOODFACTS_ENABLED`, `USDA_ENABLED`, and `USDA_API_KEY`.
+- Runtime config also includes `LIVE_MODEL_TESTS`, `LIVE_MODEL_NAME`, `CLOUD_MODEL_CALLS_ENABLED`, `CLOUD_MODEL_NAME`, and `RESEARCH_LOOKUP_ENABLED`.
+- Agent runs record runtime, model name, tool loop count, and fallback reason.
 - API Docker image installs the PydanticAI runtime dependency used by the Compose default runtime.
 - Docker stack rebuild/start was verified locally with healthy API and DB, running worker/web services, and `/api/health` reachable through the web entrypoint.
 - Tests include `tests/unit/test_agent_settings_ui.py`, `tests/unit/test_compose_runtime.py`, and `tests/contracts/test_nexuslog_event_contract.py`.
@@ -205,10 +220,11 @@ Remaining:
 Evidence:
 - Research lookup is modeled as a normalized source adapter and not a mutation path.
 - Existing lookup candidate payloads preserve source claims, prompt, confidence, and source metadata.
+- Controlled research lookup has fixture-backed enabled/disabled tests for regional restaurant lookup candidates.
+- Runtime config includes `RESEARCH_LOOKUP_ENABLED`.
 
 Remaining:
-- Add fixture-backed research-agent adapter tests for restaurant/regional food lookups.
-- Add independent enable/disable config for controlled research lookup.
+- None for v1; real external research-agent execution remains a future adapter.
 
 ## Required V1 Gate
 
@@ -216,7 +232,10 @@ Evidence:
 - `make test` passed locally.
 - `make web-build` passed locally.
 - `make e2e` passed locally.
+- `LIVE_MODEL_TESTS=true LIVE_MODEL_NAME=ornith:9b make test-live-model` is wired; host Python skipped because `pydantic_ai` is not installed locally.
+- Docker API image import check for PydanticAI passed.
+- Container-side live PydanticAI/Ollama smoke with `ornith:9b` passed for seeded chat and text-meal proposal drafting.
 - `docker compose up --build -d` passed locally with healthy API/DB, running web/worker, and web-proxied `/api/health`.
 
 Remaining:
-- Close every required item above or explicitly defer it out of v1.
+- Optional cloud eval with `glm-5.2:cloud` remains opt-in and was not run to conserve credits.

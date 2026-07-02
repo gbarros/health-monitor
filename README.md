@@ -18,6 +18,20 @@ Once dev dependencies are installed, the same tests should be runnable with pyte
 PYTHONPATH=src pytest -n auto
 ```
 
+Live-model gates are explicit because they call Ollama-compatible models:
+
+```bash
+LIVE_MODEL_TESTS=true LIVE_MODEL_NAME=ornith:9b make test-live-model
+```
+
+Cloud model evals are opt-in and should be used sparingly:
+
+```bash
+CLOUD_MODEL_CALLS_ENABLED=true CLOUD_MODEL_NAME=glm-5.2:cloud make test-cloud-evals
+```
+
+The API Docker image installs `pydantic-ai`; the dependency-light host Python environment may skip live tests if that package is not installed locally.
+
 ## Local API
 
 The current bootstrap API is dependency-light and uses a local SQLite snapshot store by default:
