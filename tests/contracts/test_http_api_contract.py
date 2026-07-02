@@ -1655,8 +1655,15 @@ class HttpApiContractTest(unittest.TestCase):
         self.assertEqual(candidates[0]["source_name"], "Open Food Facts")
         self.assertEqual(candidates[0]["warnings"], ["user-contributed data"])
         self.assertEqual(proposal["proposal_type"], "food_version_from_lookup")
+        self.assertEqual(proposal["payload"]["confidence"], 0.82)
         self.assertEqual(applied["status"], "applied")
         self.assertEqual(resolved["reason"], "confirmed_barcode_association")
+        foods = api.handle(
+            "GET",
+            f"/api/foods?household_id={household['id']}&person_id={person['id']}",
+            None,
+        ).body
+        self.assertEqual(foods[0]["version"]["confidence"], 0.82)
 
     def test_recipe_proposal_round_trip_through_http_contract(self) -> None:
         api = HttpApi(HealthMonitorService())

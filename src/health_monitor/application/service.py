@@ -857,6 +857,7 @@ class HealthMonitorService:
             "source_name": candidate.source_name,
             "source_id": candidate.source_id,
             "source_url": candidate.source_url,
+            "confidence": candidate.confidence,
         }
         proposal = self.proposals.create(
             CreateDiaryEntriesProposal(

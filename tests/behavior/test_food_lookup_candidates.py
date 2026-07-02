@@ -98,9 +98,11 @@ class FoodLookupCandidatesTest(unittest.TestCase):
 
         self.assertEqual(proposal.proposal_type, "food_version_from_lookup")
         self.assertEqual(proposal.payload["source_name"], "Open Food Facts")
+        self.assertEqual(proposal.payload["confidence"], 0.82)
         self.assertIn("user-contributed data", proposal.evidence[0]["warnings"])
         self.assertEqual(applied.status, "applied")
         self.assertEqual(resolved.food_version_id, applied.applied_record_ids[1])
+        self.assertEqual(service.catalog.get_version(resolved.food_version_id).confidence, 0.82)
 
 
 if __name__ == "__main__":
