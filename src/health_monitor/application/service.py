@@ -2600,6 +2600,20 @@ class HealthMonitorService:
     def get_proposal(self, proposal_id: str) -> CreateDiaryEntriesProposal:
         return self.proposals.proposals[proposal_id]
 
+    def list_proposals(
+        self,
+        *,
+        person_id: str | None = None,
+        status: str | None = None,
+    ) -> tuple[CreateDiaryEntriesProposal, ...]:
+        proposals = list(self.proposals.proposals.values())
+        if person_id is not None:
+            proposals = [proposal for proposal in proposals if proposal.person_id == person_id]
+        if status is not None:
+            proposals = [proposal for proposal in proposals if proposal.status == status]
+        proposals.sort(key=lambda proposal: (proposal.created_at, proposal.id), reverse=True)
+        return tuple(proposals)
+
     def get_agent_run(self, agent_run_id: str) -> AgentRun:
         return self.agent_runs[agent_run_id]
 

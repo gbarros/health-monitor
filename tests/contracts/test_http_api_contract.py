@@ -1193,6 +1193,91 @@ class HttpApiContractTest(unittest.TestCase):
         self.assertEqual(edited["totals"]["protein_g"], 10)
         self.assertEqual(summary["meals"]["breakfast"][0]["food_version_id"], protein_food["version"]["id"])
 
+    def test_proposals_can_be_listed_by_person_and_status_through_http_contract(self) -> None:
+        api = HttpApi(HealthMonitorService())
+        household = api.handle("POST", "/api/households", {"name": "Casa"}).body
+        gabriel = api.handle(
+            "POST",
+            "/api/people",
+            {
+                "household_id": household["id"],
+                "name": "Gabriel",
+                "timezone": "America/Sao_Paulo",
+            },
+        ).body
+        partner = api.handle(
+            "POST",
+            "/api/people",
+            {
+                "household_id": household["id"],
+                "name": "Partner",
+                "timezone": "America/Sao_Paulo",
+            },
+        ).body
+        api.handle(
+            "POST",
+            "/api/foods",
+            {
+                "household_id": household["id"],
+                "name": "Queijo Minas",
+                "brand": None,
+                "version_label": "current",
+                "source": "label_scan",
+                "nutrients_per_100g": {
+                    "calories_kcal": 315,
+                    "protein_g": 23,
+                    "carbs_g": 2.6,
+                    "fat_g": 23.5,
+                },
+                "aliases": ["queijo"],
+            },
+        )
+        first = api.handle(
+            "POST",
+            "/api/agent/text-meal",
+            {
+                "person_id": gabriel["id"],
+                "logged_at_local": "2026-07-01T10:00:00",
+                "text": "100g queijo",
+                "agent_settings": {"external_lookup": False},
+            },
+        ).body
+        second = api.handle(
+            "POST",
+            "/api/agent/text-meal",
+            {
+                "person_id": gabriel["id"],
+                "logged_at_local": "2026-07-02T10:00:00",
+                "text": "50g queijo",
+                "agent_settings": {"external_lookup": False},
+            },
+        ).body
+        partner_proposal = api.handle(
+            "POST",
+            "/api/agent/text-meal",
+            {
+                "person_id": partner["id"],
+                "logged_at_local": "2026-07-02T10:00:00",
+                "text": "80g queijo",
+                "agent_settings": {"external_lookup": False},
+            },
+        ).body
+        api.handle("POST", f"/api/proposals/{first['id']}/confirm", None)
+
+        gabriel_all = api.handle("GET", f"/api/proposals?person_id={gabriel['id']}", None).body
+        gabriel_drafts = api.handle(
+            "GET",
+            f"/api/proposals?person_id={gabriel['id']}&status=draft",
+            None,
+        ).body
+        partner_all = api.handle("GET", f"/api/proposals?person_id={partner['id']}", None).body
+
+        self.assertEqual({proposal["id"] for proposal in gabriel_all}, {first["id"], second["id"]})
+        self.assertEqual([proposal["id"] for proposal in gabriel_drafts], [second["id"]])
+        self.assertEqual([proposal["id"] for proposal in partner_all], [partner_proposal["id"]])
+        self.assertEqual(gabriel_drafts[0]["status"], "draft")
+        self.assertIn("created_at", gabriel_drafts[0])
+
     def test_diary_entry_correction_round_trip_through_http_contract(self) -> None:
         api = HttpApi(HealthMonitorService())
         household = api.handle("POST", "/api/households", {"name": "Casa"}).body

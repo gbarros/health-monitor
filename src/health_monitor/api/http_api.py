@@ -557,6 +557,13 @@ class HttpApi:
             )
             return HttpResponse(201, agent_chat_response_to_dict(response, self.service))
 
+        if method == "GET" and path == "/api/proposals":
+            proposals = self.service.list_proposals(
+                person_id=query.get("person_id"),
+                status=query.get("status"),
+            )
+            return HttpResponse(200, [proposal_to_dict(proposal, self.service) for proposal in proposals])
+
         if method == "GET" and path.startswith("/api/proposals/"):
             proposal_id = path.removeprefix("/api/proposals/")
             proposal = self.service.get_proposal(proposal_id)
