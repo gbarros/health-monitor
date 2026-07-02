@@ -1,0 +1,49 @@
+{
+  "format": "health-monitor.week-replay",
+  "version": 1,
+  "source": "synthetic",
+  "anonymized": true,
+  "start_day": "2026-07-06",
+  "household": "Casa Week Replay",
+  "profiles": ["Person A", "Person B"],
+  "actions": [
+    { "type": "setup_household", "day": "2026-07-06" },
+    {
+      "type": "label_scan",
+      "day": "2026-07-06",
+      "barcode": "7891000000000",
+      "table_text": "Produto: semanaqueijo\nMarca: Synthetic\nPorcao: 100 g\nValor energetico: 315 kcal\nProteinas: 23 g\nCarboidratos: 3 g\nGorduras totais: 24 g",
+      "quantity_g": 100
+    },
+    { "type": "confirm_latest_proposal", "day": "2026-07-06" },
+    { "type": "text_meal", "day": "2026-07-07", "text": "10am 80g semanaqueijo" },
+    { "type": "confirm_latest_proposal", "day": "2026-07-07" },
+    {
+      "type": "recipe",
+      "day": "2026-07-08",
+      "recipe_text": "Recipe: Replay breakfast batch\nYield: 1000 g\nIngredients:\n1000g semanaqueijo",
+      "quantity_g": 120
+    },
+    { "type": "confirm_latest_proposal", "day": "2026-07-08" },
+    {
+      "type": "chat_question",
+      "day": "2026-07-09",
+      "message": "Estimate a KFC Double Crunch combo in Brazil and explain confidence."
+    },
+    {
+      "type": "correction_request",
+      "day": "2026-07-10",
+      "message": "Na verdade, corrigir o queijo para 50g."
+    },
+    {
+      "type": "review_note_request",
+      "day": "2026-07-11",
+      "message": "Create a review note about weekly consistency."
+    },
+    { "type": "switch_profile", "day": "2026-07-11", "profile": "Person B" },
+    { "type": "text_meal", "day": "2026-07-11", "text": "8am 170g iogurte proteico" },
+    { "type": "switch_profile", "day": "2026-07-12", "profile": "Person A" },
+    { "type": "weight_entry", "day": "2026-07-12", "weight_kg": 91.0 },
+    { "type": "expect_day_totals", "day": "2026-07-12" }
+  ]
+}

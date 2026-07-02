@@ -91,6 +91,24 @@ class BackgroundJobsTest(unittest.TestCase):
             self.assertEqual(persisted.status, "succeeded")
             self.assertEqual(proposal.summary, "1 diary entries drafted from text meal")
 
+    def test_client_request_id_makes_job_enqueue_idempotent(self) -> None:
+        service = HealthMonitorService()
+        first = service.enqueue_job(
+            job_type="agent_chat",
+            payload={"person_id": "person_1", "message": "first"},
+            client_request_id="offline-item-1",
+        )
+        second = service.enqueue_job(
+            job_type="agent_chat",
+            payload={"person_id": "person_1", "message": "duplicate retry"},
+            client_request_id="offline-item-1",
+        )
+
+        self.assertEqual(second.id, first.id)
+        self.assertEqual(second.client_request_id, "offline-item-1")
+        self.assertEqual(second.payload["message"], "first")
+        self.assertEqual(len(service.list_jobs(person_id="person_1")), 1)
+
     def test_worker_helper_processes_one_pending_job(self) -> None:
         service = HealthMonitorService()
         household = service.create_household(name="Casa")

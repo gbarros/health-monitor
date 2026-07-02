@@ -496,6 +496,7 @@ class HttpApi:
             job = self.service.enqueue_job(
                 job_type=body["job_type"],
                 payload=body.get("payload", {}),
+                client_request_id=body.get("client_request_id"),
             )
             return HttpResponse(201, job_to_dict(job))
 
@@ -1070,6 +1071,7 @@ def job_to_dict(job: BackgroundJob) -> dict[str, Any]:
         "job_type": job.job_type,
         "status": job.status,
         "payload": job.payload,
+        "client_request_id": job.client_request_id,
         "result": job.result,
         "last_error": job.last_error,
         "attempts": job.attempts,

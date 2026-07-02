@@ -1,4 +1,4 @@
-.PHONY: test test-unit test-behavior test-live-model test-cloud-evals test-private-ocr-evals dev-api dev-web web-install web-build e2e
+.PHONY: test test-unit test-behavior test-live-model test-cloud-evals test-private-ocr-evals dev-api dev-web web-install web-build e2e e2e-private-week
 
 PYTHON ?= python3
 
@@ -34,3 +34,6 @@ web-build:
 
 e2e:
 	cd web && bun run e2e
+
+e2e-private-week:
+	cd web && CHATGPT_WEEK_SCENARIO=../private/e2e/chatgpt-week-scenario.json bun run e2e -- e2e/offline-outbox-and-week.spec.ts

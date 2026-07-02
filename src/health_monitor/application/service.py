@@ -163,6 +163,7 @@ class BackgroundJob:
     job_type: str
     status: str
     payload: dict[str, Any]
+    client_request_id: str | None = None
     result: dict[str, Any] = field(default_factory=dict)
     last_error: str | None = None
     attempts: int = 0
@@ -3295,14 +3296,25 @@ class HealthMonitorService:
                 return turn
         raise KeyError(agent_run_id)
 
-    def enqueue_job(self, *, job_type: str, payload: dict[str, Any]) -> BackgroundJob:
+    def enqueue_job(
+        self,
+        *,
+        job_type: str,
+        payload: dict[str, Any],
+        client_request_id: str | None = None,
+    ) -> BackgroundJob:
         if job_type not in {"agent_text_meal", "agent_label_scan", "agent_recipe", "agent_chat"}:
             raise ValueError(f"unsupported job type: {job_type}")
+        if client_request_id:
+            for existing in self.jobs.values():
+                if existing.client_request_id == client_request_id:
+                    return existing
         job = BackgroundJob(
             id=self._next_id("job"),
             job_type=job_type,
             status="pending",
             payload=dict(payload),
+            client_request_id=client_request_id,
         )
         self.jobs[job.id] = job
         self._persist()
@@ -3341,6 +3353,7 @@ class HealthMonitorService:
             job_type=job.job_type,
             status="running",
             payload=job.payload,
+            client_request_id=job.client_request_id,
             result=job.result,
             last_error=None,
             attempts=job.attempts + 1,
@@ -3360,6 +3373,7 @@ class HealthMonitorService:
                 job_type=running.job_type,
                 status="failed",
                 payload=running.payload,
+                client_request_id=running.client_request_id,
                 result=running.result,
                 last_error=str(exc),
                 attempts=running.attempts,
@@ -3377,6 +3391,7 @@ class HealthMonitorService:
             job_type=running.job_type,
             status="succeeded",
             payload=running.payload,
+            client_request_id=running.client_request_id,
             result=result,
             last_error=None,
             attempts=running.attempts,
@@ -4900,6 +4915,7 @@ def background_job_to_snapshot(job: BackgroundJob) -> dict[str, Any]:
         "job_type": job.job_type,
         "status": job.status,
         "payload": job.payload,
+        "client_request_id": job.client_request_id,
         "result": job.result,
         "last_error": job.last_error,
         "attempts": job.attempts,
@@ -4916,6 +4932,7 @@ def background_job_from_snapshot(value: dict[str, Any]) -> BackgroundJob:
         job_type=value["job_type"],
         status=value["status"],
         payload=dict(value.get("payload", {})),
+        client_request_id=value.get("client_request_id"),
         result=dict(value.get("result", {})),
         last_error=value.get("last_error"),
         attempts=int(value.get("attempts", 0)),

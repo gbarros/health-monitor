@@ -207,6 +207,7 @@ type BackgroundJob = {
   job_type: string;
   status: string;
   payload: Record<string, unknown>;
+  client_request_id: string | null;
   result: Record<string, unknown>;
   last_error: string | null;
   attempts: number;
@@ -214,6 +215,30 @@ type BackgroundJob = {
   updated_at: string;
   started_at: string | null;
   completed_at: string | null;
+};
+type OfflineOutboxKind = "agent_text_meal" | "agent_chat" | "agent_label_scan" | "agent_recipe";
+type OfflineOutboxStatus = "pending" | "replaying" | "failed" | "sent";
+type OfflineOutboxFile = {
+  field: string;
+  object_type: string;
+  filename: string | null;
+  mime_type: string;
+  blob: Blob;
+};
+type OfflineOutboxItem = {
+  id: string;
+  client_request_id: string;
+  kind: OfflineOutboxKind;
+  household_id: string | null;
+  person_id: string;
+  selected_day: string;
+  payload: Record<string, unknown>;
+  files: OfflineOutboxFile[];
+  status: OfflineOutboxStatus;
+  attempts: number;
+  last_error: string | null;
+  created_at: string;
+  replayed_at: string | null;
 };
 
 type AppState = {
@@ -234,6 +259,8 @@ type AppState = {
   chatResponse: AgentChatResponse | null;
   chatHistory: AgentChatTurn[];
   jobs: BackgroundJob[];
+  offlineOutbox: OfflineOutboxItem[];
+  isOfflineReplayRunning: boolean;
   lastDeletedEntry: DiaryEntryRecord | null;
   exportText: string;
   notice: string | null;
@@ -241,6 +268,8 @@ type AppState = {
 };
 
 const sessionStorageKey = "health-monitor.session.v1";
+const outboxDbName = "health-monitor-offline-v1";
+const outboxStoreName = "offline_outbox";
 const state: AppState = {
   household: null,
   people: [],
@@ -259,6 +288,8 @@ const state: AppState = {
   chatResponse: null,
   chatHistory: [],
   jobs: [],
+  offlineOutbox: [],
+  isOfflineReplayRunning: false,
   lastDeletedEntry: null,
   exportText: "",
   notice: null,
@@ -269,8 +300,18 @@ const appRoot = requireAppRoot();
 let jobPollTimer: number | null = null;
 
 render();
+void loadOfflineOutbox();
 void hydrateStoredSession();
 registerServiceWorker();
+window.addEventListener("online", () => {
+  state.notice = "Connection restored. Replaying offline notes.";
+  render();
+  void replayOfflineOutbox();
+});
+window.addEventListener("offline", () => {
+  state.notice = "Offline mode: agent notes and uploads will be saved locally.";
+  render();
+});
 
 function render(): void {
   appRoot.innerHTML = `
@@ -291,6 +332,7 @@ function render(): void {
           ${renderReview()}
           ${renderProposal()}
           ${renderProposalInbox()}
+          ${renderOfflineOutbox()}
           ${renderJobs()}
         </div>
         <aside class="side">
@@ -921,6 +963,56 @@ function renderJobs(): string {
   `;
 }
 
+function renderOfflineOutbox(): string {
+  const rows = state.offlineOutbox
+    .slice()
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))
+    .map((item) => {
+      const active = item.status === "pending" || item.status === "replaying";
+      return `
+        <li>
+          <div>
+            <strong>${escapeHtml(jobLabel(item.kind))}</strong>
+            <span${active ? ' class="job-status-active"' : ""}>${escapeHtml(item.status)} · ${item.attempts} attempt${item.attempts === 1 ? "" : "s"} · ${escapeHtml(item.created_at.slice(0, 19))}</span>
+            <span>${escapeHtml(item.selected_day)} · ${item.files.length} upload${item.files.length === 1 ? "" : "s"}</span>
+            ${item.last_error ? `<span class="job-error">${escapeHtml(item.last_error)}</span>` : ""}
+          </div>
+          <div class="button-row">
+            ${
+              item.status === "pending" || item.status === "failed"
+                ? `<button class="offline-retry" type="button" data-outbox-id="${escapeHtml(item.id)}">Retry</button>`
+                : ""
+            }
+            ${
+              item.status !== "replaying"
+                ? `<button class="offline-delete" type="button" data-outbox-id="${escapeHtml(item.id)}">Delete</button>`
+                : ""
+            }
+          </div>
+        </li>
+      `;
+    })
+    .join("");
+  const connection = navigator.onLine ? "online" : "waiting for connection";
+  return `
+    <section class="today offline-outbox" aria-label="Offline outbox">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">PWA outbox</p>
+          <h2>Offline notes</h2>
+        </div>
+        <button id="replay-offline-outbox" type="button" ${state.isOfflineReplayRunning ? "disabled" : ""}>Retry all</button>
+      </div>
+      <p class="hint">${escapeHtml(connection)} · agent inputs are saved here when the API is unreachable.</p>
+      ${
+        rows
+          ? `<ul class="job-list offline-list">${rows}</ul>`
+          : `<p class="empty">No offline notes waiting to replay.</p>`
+      }
+    </section>
+  `;
+}
+
 function renderFoodVersionProposalPayload(proposal: Proposal): string {
   const nutrients = proposal.payload.nutrients_per_100g as Partial<Nutrients> | undefined;
   return `
@@ -1444,6 +1536,9 @@ function bindEvents(): void {
   document.querySelector<HTMLButtonElement>("#refresh-review")?.addEventListener("click", safeAsync(refreshReview));
   document.querySelector<HTMLButtonElement>("#refresh-proposals")?.addEventListener("click", safeAsync(refreshProposals));
   document.querySelector<HTMLButtonElement>("#refresh-jobs")?.addEventListener("click", safeAsync(refreshJobs));
+  document
+    .querySelector<HTMLButtonElement>("#replay-offline-outbox")
+    ?.addEventListener("click", safeAsync(onReplayOfflineOutbox));
   document.querySelector<HTMLButtonElement>("#export-data")?.addEventListener("click", safeAsync(onExportData));
   document.querySelector<HTMLButtonElement>("#confirm-proposal")?.addEventListener("click", safeAsync(confirmProposal));
   document.querySelector<HTMLButtonElement>("#reject-proposal")?.addEventListener("click", safeAsync(rejectProposal));
@@ -1479,6 +1574,12 @@ function bindEvents(): void {
     .querySelectorAll<HTMLButtonElement>(".job-open-chat")
     .forEach((button) => button.addEventListener("click", safeAsync(onJobOpenChat)));
   document
+    .querySelectorAll<HTMLButtonElement>(".offline-retry")
+    .forEach((button) => button.addEventListener("click", safeAsync(onOfflineRetry)));
+  document
+    .querySelectorAll<HTMLButtonElement>(".offline-delete")
+    .forEach((button) => button.addEventListener("click", safeAsync(onOfflineDelete)));
+  document
     .querySelectorAll<HTMLButtonElement>(".proposal-load-related")
     .forEach((button) => button.addEventListener("click", safeAsync(onRelatedProposalLoad)));
   document
@@ -1507,6 +1608,219 @@ function reportUiError(error: unknown): void {
   state.errorMessage = error instanceof Error ? error.message : "Something went wrong.";
   state.notice = null;
   render();
+}
+
+async function loadOfflineOutbox(): Promise<void> {
+  state.offlineOutbox = await offlineOutboxAll();
+  render();
+  if (navigator.onLine) {
+    await replayOfflineOutbox();
+  }
+}
+
+async function onReplayOfflineOutbox(): Promise<void> {
+  await replayOfflineOutbox();
+}
+
+async function onOfflineRetry(event: Event): Promise<void> {
+  const id = (event.currentTarget as HTMLButtonElement).dataset.outboxId;
+  if (!id) return;
+  const item = state.offlineOutbox.find((candidate) => candidate.id === id);
+  if (!item) return;
+  await saveOfflineOutboxItem({ ...item, status: "pending", last_error: null });
+  await loadOfflineOutbox();
+  await replayOfflineOutbox();
+}
+
+async function onOfflineDelete(event: Event): Promise<void> {
+  const id = (event.currentTarget as HTMLButtonElement).dataset.outboxId;
+  if (!id) return;
+  await deleteOfflineOutboxItem(id);
+  state.offlineOutbox = state.offlineOutbox.filter((item) => item.id !== id);
+  state.notice = "Offline note deleted.";
+  render();
+}
+
+async function queueOfflineAgent(
+  kind: OfflineOutboxKind,
+  payload: Record<string, unknown>,
+  files: OfflineOutboxFile[] = [],
+  error: unknown = null
+): Promise<void> {
+  if (!state.person) return;
+  const requestId = newClientRequestId();
+  const item: OfflineOutboxItem = {
+    id: requestId,
+    client_request_id: requestId,
+    kind,
+    household_id: state.household?.id ?? null,
+    person_id: state.person.id,
+    selected_day: state.selectedDay,
+    payload,
+    files,
+    status: "pending",
+    attempts: 0,
+    last_error: error instanceof Error ? error.message : null,
+    created_at: new Date().toISOString(),
+    replayed_at: null
+  };
+  await saveOfflineOutboxItem(item);
+  state.offlineOutbox = await offlineOutboxAll();
+  state.notice = `${jobLabel(kind)} saved offline. It will queue for the worker when reconnected.`;
+  render();
+}
+
+async function replayOfflineOutbox(): Promise<void> {
+  if (state.isOfflineReplayRunning || !navigator.onLine) {
+    if (!navigator.onLine) {
+      state.notice = "Waiting for connection before replaying offline notes.";
+      render();
+    }
+    return;
+  }
+  const candidates = (await offlineOutboxAll()).filter(
+    (item) => item.status === "pending" || item.status === "failed"
+  );
+  if (!candidates.length) {
+    state.offlineOutbox = await offlineOutboxAll();
+    render();
+    return;
+  }
+  state.isOfflineReplayRunning = true;
+  state.offlineOutbox = await offlineOutboxAll();
+  render();
+  for (const item of candidates) {
+    let current: OfflineOutboxItem = {
+      ...item,
+      status: "replaying",
+      attempts: item.attempts + 1,
+      last_error: null
+    };
+    await saveOfflineOutboxItem(current);
+    state.offlineOutbox = await offlineOutboxAll();
+    render();
+    try {
+      const payload = { ...current.payload };
+      if (!payload.attachment_id && current.files.length) {
+        const attachment = await uploadQueuedAttachment(current, current.files[0]);
+        payload.attachment_id = attachment.id;
+      }
+      const job = await apiPost<BackgroundJob>("/api/jobs", {
+        job_type: current.kind,
+        payload,
+        client_request_id: current.client_request_id
+      });
+      replaceJob(job);
+      current = {
+        ...current,
+        payload,
+        status: "sent",
+        last_error: null,
+        replayed_at: new Date().toISOString()
+      };
+      await saveOfflineOutboxItem(current);
+    } catch (error) {
+      current = {
+        ...current,
+        status: "failed",
+        last_error: error instanceof Error ? error.message : "Replay failed"
+      };
+      await saveOfflineOutboxItem(current);
+      if (isProbablyOfflineError(error)) {
+        break;
+      }
+    }
+  }
+  state.isOfflineReplayRunning = false;
+  state.offlineOutbox = await offlineOutboxAll();
+  state.notice = state.offlineOutbox.some((item) => item.status === "failed")
+    ? "Some offline notes still need retry."
+    : "Offline notes replayed to the worker queue.";
+  await refreshJobsIfPossible();
+  render();
+}
+
+async function uploadQueuedAttachment(
+  item: OfflineOutboxItem,
+  queuedFile: OfflineOutboxFile
+): Promise<AttachmentObject> {
+  if (!item.household_id) {
+    throw new Error("Queued upload is missing household context.");
+  }
+  return apiPost<AttachmentObject>("/api/attachments", {
+    household_id: item.household_id,
+    person_id: item.person_id,
+    object_type: queuedFile.object_type,
+    mime_type: queuedFile.mime_type || "application/octet-stream",
+    filename: queuedFile.filename,
+    content_base64: await blobToBase64(queuedFile.blob),
+    retention_policy: "keep"
+  });
+}
+
+async function refreshJobsIfPossible(): Promise<void> {
+  if (!state.person) return;
+  try {
+    await refreshJobs();
+  } catch {
+    // Keep replay status visible even if the jobs list cannot refresh yet.
+  }
+}
+
+function isProbablyOfflineError(error: unknown): boolean {
+  return !navigator.onLine || error instanceof TypeError;
+}
+
+function newClientRequestId(): string {
+  return `offline_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+}
+
+function openOutboxDb(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    if (!("indexedDB" in window)) {
+      reject(new Error("IndexedDB is unavailable in this browser."));
+      return;
+    }
+    const request = indexedDB.open(outboxDbName, 1);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(outboxStoreName)) {
+        db.createObjectStore(outboxStoreName, { keyPath: "id" });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error ?? new Error("Failed to open offline outbox."));
+  });
+}
+
+async function withOutboxStore<T>(
+  mode: IDBTransactionMode,
+  operation: (store: IDBObjectStore) => IDBRequest<T>
+): Promise<T> {
+  const db = await openOutboxDb();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(outboxStoreName, mode);
+    const request = operation(transaction.objectStore(outboxStoreName));
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error ?? new Error("Offline outbox operation failed."));
+    transaction.oncomplete = () => db.close();
+    transaction.onerror = () => {
+      db.close();
+      reject(transaction.error ?? new Error("Offline outbox transaction failed."));
+    };
+  });
+}
+
+async function offlineOutboxAll(): Promise<OfflineOutboxItem[]> {
+  return withOutboxStore<OfflineOutboxItem[]>("readonly", (store) => store.getAll());
+}
+
+async function saveOfflineOutboxItem(item: OfflineOutboxItem): Promise<void> {
+  await withOutboxStore<IDBValidKey>("readwrite", (store) => store.put(item));
+}
+
+async function deleteOfflineOutboxItem(id: string): Promise<void> {
+  await withOutboxStore<undefined>("readwrite", (store) => store.delete(id));
 }
 
 async function onSetup(event: SubmitEvent): Promise<void> {
@@ -1894,10 +2208,21 @@ async function onTextMeal(event: SubmitEvent): Promise<void> {
     }
   };
   if (form.get("background_job") === "on") {
-    await enqueueJob("agent_text_meal", payload);
+    try {
+      await enqueueJob("agent_text_meal", payload);
+    } catch (error) {
+      if (!isProbablyOfflineError(error)) throw error;
+      await queueOfflineAgent("agent_text_meal", payload, [], error);
+    }
     return;
   }
-  state.proposal = await apiPost<Proposal>("/api/agent/text-meal", payload);
+  try {
+    state.proposal = await apiPost<Proposal>("/api/agent/text-meal", payload);
+  } catch (error) {
+    if (!isProbablyOfflineError(error)) throw error;
+    await queueOfflineAgent("agent_text_meal", payload, [], error);
+    return;
+  }
   state.notice = "Proposal drafted. Review before applying.";
   await refreshProposals();
 }
@@ -1918,10 +2243,21 @@ async function onAgentChat(event: SubmitEvent): Promise<void> {
     }
   };
   if (form.get("background_job") === "on") {
-    await enqueueJob("agent_chat", payload);
+    try {
+      await enqueueJob("agent_chat", payload);
+    } catch (error) {
+      if (!isProbablyOfflineError(error)) throw error;
+      await queueOfflineAgent("agent_chat", payload, [], error);
+    }
     return;
   }
-  state.chatResponse = await apiPost<AgentChatResponse>("/api/agent/chat", payload);
+  try {
+    state.chatResponse = await apiPost<AgentChatResponse>("/api/agent/chat", payload);
+  } catch (error) {
+    if (!isProbablyOfflineError(error)) throw error;
+    await queueOfflineAgent("agent_chat", payload, [], error);
+    return;
+  }
   await refreshChatHistory();
   if (state.chatResponse.proposal) {
     state.proposal = state.chatResponse.proposal;
@@ -1940,24 +2276,58 @@ async function onLabelScan(event: SubmitEvent): Promise<void> {
   event.preventDefault();
   if (!state.household || !state.person) return;
   const form = new FormData(event.currentTarget as HTMLFormElement);
-  const attachment = await uploadOptionalAttachment(form, "attachment", "nutrition_label_image");
   const quantityG = optionalNumber(form, "quantity_g");
+  const queuedFiles = queuedFilesFromForm(form, "attachment", "nutrition_label_image");
   const payload = {
     household_id: state.household.id,
     person_id: state.person.id,
     table_text: optionalText(form, "table_text") ?? "",
     barcode: optionalText(form, "barcode"),
     set_as_default: true,
-    attachment_id: attachment?.id ?? null,
+    attachment_id: null as string | null,
     logged_at_local: quantityG === null ? null : requiredText(form, "logged_at_local"),
     quantity_g: quantityG,
     meal_type: quantityG === null ? null : requiredText(form, "meal_type")
   };
-  if (form.get("background_job") === "on") {
-    await enqueueJob("agent_label_scan", payload);
+  if (!navigator.onLine) {
+    await queueOfflineAgent("agent_label_scan", payload, queuedFiles);
     return;
   }
-  state.proposal = await apiPost<Proposal>("/api/agent/label-scan", payload);
+  let attachment: AttachmentObject | null = null;
+  try {
+    attachment = await uploadOptionalAttachment(form, "attachment", "nutrition_label_image");
+    payload.attachment_id = attachment?.id ?? null;
+  } catch (error) {
+    if (!isProbablyOfflineError(error)) throw error;
+    await queueOfflineAgent("agent_label_scan", payload, queuedFiles, error);
+    return;
+  }
+  if (form.get("background_job") === "on") {
+    try {
+      await enqueueJob("agent_label_scan", payload);
+    } catch (error) {
+      if (!isProbablyOfflineError(error)) throw error;
+      await queueOfflineAgent(
+        "agent_label_scan",
+        attachment ? payload : { ...payload, attachment_id: null },
+        attachment ? [] : queuedFiles,
+        error
+      );
+    }
+    return;
+  }
+  try {
+    state.proposal = await apiPost<Proposal>("/api/agent/label-scan", payload);
+  } catch (error) {
+    if (!isProbablyOfflineError(error)) throw error;
+    await queueOfflineAgent(
+      "agent_label_scan",
+      attachment ? payload : { ...payload, attachment_id: null },
+      attachment ? [] : queuedFiles,
+      error
+    );
+    return;
+  }
   state.notice = attachment
     ? "Food version proposal drafted with attachment evidence."
     : "Food version proposal drafted.";
@@ -1978,10 +2348,21 @@ async function onRecipe(event: SubmitEvent): Promise<void> {
     meal_type: quantityG === null ? null : requiredText(form, "meal_type")
   };
   if (form.get("background_job") === "on") {
-    await enqueueJob("agent_recipe", payload);
+    try {
+      await enqueueJob("agent_recipe", payload);
+    } catch (error) {
+      if (!isProbablyOfflineError(error)) throw error;
+      await queueOfflineAgent("agent_recipe", payload, [], error);
+    }
     return;
   }
-  state.proposal = await apiPost<Proposal>("/api/agent/recipe", payload);
+  try {
+    state.proposal = await apiPost<Proposal>("/api/agent/recipe", payload);
+  } catch (error) {
+    if (!isProbablyOfflineError(error)) throw error;
+    await queueOfflineAgent("agent_recipe", payload, [], error);
+    return;
+  }
   state.notice = "Recipe proposal drafted.";
   await refreshProposals();
 }
@@ -2033,10 +2414,15 @@ async function rejectProposal(): Promise<void> {
   await refreshProposals();
 }
 
-async function enqueueJob(jobType: string, payload: Record<string, unknown>): Promise<void> {
+async function enqueueJob(
+  jobType: string,
+  payload: Record<string, unknown>,
+  clientRequestId: string | null = null
+): Promise<void> {
   const job = await apiPost<BackgroundJob>("/api/jobs", {
     job_type: jobType,
-    payload
+    payload,
+    client_request_id: clientRequestId
   });
   replaceJob(job);
   syncJobPolling();
@@ -2325,8 +2711,26 @@ async function uploadOptionalAttachment(
   });
 }
 
+function queuedFilesFromForm(form: FormData, key: string, objectType: string): OfflineOutboxFile[] {
+  const file = form.get(key);
+  if (!(file instanceof File) || file.size === 0) return [];
+  return [
+    {
+      field: key,
+      object_type: objectType,
+      filename: file.name || null,
+      mime_type: file.type || "application/octet-stream",
+      blob: file
+    }
+  ];
+}
+
 async function fileToBase64(file: File): Promise<string> {
-  const buffer = await file.arrayBuffer();
+  return blobToBase64(file);
+}
+
+async function blobToBase64(blob: Blob): Promise<string> {
+  const buffer = await blob.arrayBuffer();
   const bytes = new Uint8Array(buffer);
   let binary = "";
   for (const byte of bytes) {
