@@ -737,6 +737,7 @@ def food_version_to_dict(version: FoodVersion) -> dict[str, Any]:
         "nutrients_per_100g": nutrients_to_dict(version.nutrients_per_100g),
         "source": version.source,
         "serving_size_g": version.serving_size_g,
+        "confidence": version.confidence,
         "created_at": version.created_at.isoformat(),
         "archived": version.archived,
     }
@@ -813,6 +814,8 @@ def day_summary_entry_to_dict(entry: DaySummaryEntry) -> dict[str, Any]:
         "quantity_g": entry.quantity_g,
         "nutrients": nutrients_to_dict(entry.nutrients.rounded()),
         "source": entry.source,
+        "evidence_status": entry.evidence_status,
+        "confidence": entry.confidence,
     }
 
 

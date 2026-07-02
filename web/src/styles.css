@@ -398,6 +398,34 @@ td:first-child {
   font-size: 13px;
 }
 
+.evidence-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  margin-left: 6px;
+  border: 1px solid #cbd3c8;
+  border-radius: 6px;
+  background: #f3f6f1;
+  color: #3d493f;
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.evidence-estimated {
+  border-color: #e5c27a;
+  background: #fff8e6;
+  color: #6f4f12;
+}
+
+.evidence-looked-up,
+.evidence-inferred {
+  border-color: #9fc3d0;
+  background: #eef7fa;
+  color: #225465;
+}
+
 .proposal-list li {
   border: 1px solid #ead4b5;
   background: #fffaf2;

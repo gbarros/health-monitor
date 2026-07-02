@@ -63,6 +63,8 @@ class DaySummaryEntry:
     quantity_g: float
     nutrients: Nutrients
     source: str
+    evidence_status: str
+    confidence: float
 
 
 @dataclass(frozen=True)
@@ -591,6 +593,7 @@ class HealthMonitorService:
         aliases: list[str] | None = None,
         barcode: str | None = None,
         serving_size_g: float | None = None,
+        confidence: float = 1.0,
         food_id: str | None = None,
         version_id: str | None = None,
     ) -> tuple[Food, FoodVersion]:
@@ -616,6 +619,7 @@ class HealthMonitorService:
                 nutrients_per_100g=nutrients_per_100g,
                 source=source,
                 serving_size_g=serving_size_g,
+                confidence=confidence,
             ),
             make_default=True,
         )
@@ -1219,6 +1223,7 @@ class HealthMonitorService:
             food = self.catalog.foods[version.food_id]
             nutrients = version.nutrients_per_100g.scale(entry.quantity_g / 100)
             totals += nutrients
+            evidence_status = day_summary_evidence_status(entry.source, version.source)
             meals.setdefault(entry.meal_type, []).append(
                 DaySummaryEntry(
                     id=entry.id,
@@ -1232,6 +1237,11 @@ class HealthMonitorService:
                     quantity_g=entry.quantity_g,
                     nutrients=nutrients,
                     source=entry.source,
+                    evidence_status=evidence_status,
+                    confidence=day_summary_confidence(
+                        evidence_status=evidence_status,
+                        version_confidence=version.confidence,
+                    ),
                 )
             )
         target_profile = self.active_goal_profile(person_id=person_id, day=day)
@@ -1549,6 +1559,7 @@ class HealthMonitorService:
                         nutrients_per_100g=lookup_candidate.nutrients_per_100g,
                         source="external_lookup",
                         serving_size_g=lookup_candidate.serving_size_g,
+                        confidence=lookup_candidate.confidence,
                     )
                     estimated_food_versions.append(
                         {
@@ -1597,6 +1608,7 @@ class HealthMonitorService:
                         label="model estimate",
                         nutrients_per_100g=estimate.nutrients_per_100g,
                         source=estimate.source,
+                        confidence=estimate.confidence,
                     )
                     estimated_food_versions.append(
                         {
@@ -2781,6 +2793,7 @@ class HealthMonitorService:
             aliases=[food_name.casefold()],
             barcode=payload.get("barcode") if payload.get("barcode") is None else str(payload["barcode"]),
             serving_size_g=float(payload["serving_size_g"]),
+            confidence=float(payload.get("confidence", 1.0)),
             food_id=requested_food_id,
             version_id=str(payload["food_version_id"]) if payload.get("food_version_id") is not None else None,
         )
@@ -2854,6 +2867,7 @@ class HealthMonitorService:
             aliases=[food_name.casefold()],
             barcode=None,
             serving_size_g=None,
+            confidence=float(payload.get("confidence", 1.0)),
             food_id=(
                 existing_food.id
                 if existing_food is not None
@@ -2969,6 +2983,7 @@ class HealthMonitorService:
                 serving_size_g=float(estimate_payload["serving_size_g"])
                 if estimate_payload.get("serving_size_g") is not None
                 else None,
+                confidence=float(estimate_payload.get("confidence", 1.0)),
                 food_id=str(estimate_payload["food_id"]),
                 version_id=str(estimate_payload["food_version_id"]),
             )
@@ -3624,6 +3639,24 @@ def food_from_snapshot(value: dict[str, Any]) -> Food:
     )
 
 
+def day_summary_evidence_status(entry_source: str, version_source: str) -> str:
+    entry_source = entry_source.casefold()
+    version_source = version_source.casefold()
+    if "model_estimate" in version_source or "estimate" in version_source:
+        return "estimated"
+    if "external_lookup" in version_source or "lookup" in entry_source:
+        return "looked_up"
+    if entry_source.startswith("agent"):
+        return "inferred"
+    return "exact"
+
+
+def day_summary_confidence(*, evidence_status: str, version_confidence: float) -> float:
+    if evidence_status == "exact":
+        return 1.0
+    return version_confidence
+
+
 def food_version_to_snapshot(version: FoodVersion) -> dict[str, Any]:
     return {
         "id": version.id,
@@ -3632,6 +3665,7 @@ def food_version_to_snapshot(version: FoodVersion) -> dict[str, Any]:
         "nutrients_per_100g": nutrients_to_snapshot(version.nutrients_per_100g),
         "source": version.source,
         "serving_size_g": version.serving_size_g,
+        "confidence": version.confidence,
         "created_at": version.created_at.isoformat(),
         "archived": version.archived,
     }
@@ -3645,6 +3679,7 @@ def food_version_from_snapshot(value: dict[str, Any]) -> FoodVersion:
         nutrients_per_100g=nutrients_from_snapshot(value["nutrients_per_100g"]),
         source=value["source"],
         serving_size_g=value.get("serving_size_g"),
+        confidence=float(value.get("confidence", 1.0)),
         created_at=datetime.fromisoformat(value["created_at"]),
         archived=bool(value.get("archived", False)),
     )

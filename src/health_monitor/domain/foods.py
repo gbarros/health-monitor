@@ -28,6 +28,7 @@ class FoodVersion:
     nutrients_per_100g: Nutrients
     source: str
     serving_size_g: float | None = None
+    confidence: float = 1.0
     created_at: datetime = field(default_factory=utc_now)
     archived: bool = False
 

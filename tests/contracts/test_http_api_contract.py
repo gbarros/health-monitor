@@ -81,6 +81,8 @@ class HttpApiContractTest(unittest.TestCase):
         self.assertEqual(summary["totals"]["calories_kcal"], 120)
         self.assertEqual(summary["totals"]["protein_g"], 15)
         self.assertEqual(summary["meals"]["breakfast"][0]["food_name"], "Iogurte Batavo")
+        self.assertEqual(summary["meals"]["breakfast"][0]["evidence_status"], "exact")
+        self.assertEqual(summary["meals"]["breakfast"][0]["confidence"], 1.0)
 
     def test_manual_diary_log_can_use_serving_count_through_http_contract(self) -> None:
         api = HttpApi(HealthMonitorService())

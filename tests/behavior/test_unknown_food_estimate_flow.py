@@ -157,6 +157,8 @@ class UnknownFoodEstimateFlowTest(unittest.TestCase):
         self.assertEqual(applied.status, "applied")
         self.assertEqual(len(applied.applied_record_ids), 3)
         self.assertEqual(summary.totals.rounded(), Nutrients(780, 33, 72, 39))
+        self.assertEqual(summary.meals["dinner"][0].evidence_status, "estimated")
+        self.assertEqual(summary.meals["dinner"][0].confidence, 0.42)
         self.assertEqual(resolution.food_version_id, proposal.entries[0].food_version_id)
 
     def test_rejecting_unknown_food_estimate_does_not_create_reusable_food(self) -> None:

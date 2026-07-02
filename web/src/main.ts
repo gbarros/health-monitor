@@ -34,6 +34,8 @@ type FoodVersion = {
   label: string;
   nutrients_per_100g: Nutrients;
   serving_size_g: number | null;
+  source?: string;
+  confidence?: number;
 };
 type Food = { id: string; name: string; brand: string | null; default_version_id: string; archived?: boolean };
 type FoodResponse = {
@@ -81,6 +83,8 @@ type SummaryEntry = {
   quantity_g: number;
   nutrients: Nutrients;
   source: string;
+  evidence_status: string;
+  confidence: number;
 };
 type DiaryEntryRecord = {
   id: string;
@@ -320,7 +324,7 @@ function renderToday(): string {
             <tr>
               <td>
                 <strong>${escapeHtml(entry.food_name)}</strong>
-                <span>${escapeHtml(entry.food_version_label)} · ${escapeHtml(entry.source)}</span>
+                <span>${escapeHtml(entry.food_version_label)} · ${escapeHtml(entry.source)} ${evidenceBadge(entry)}</span>
                 <span>${entry.nutrients.fiber_g} g fiber · ${entry.nutrients.sodium_mg} mg sodium</span>
                 <form class="entry-edit-form" data-entry-id="${entry.id}">
                   <input name="quantity_g" type="number" step="0.1" value="${entry.quantity_g}" aria-label="Quantity grams" />
@@ -2096,6 +2100,24 @@ function normalizeSearch(value: string): string {
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
     .trim();
+}
+
+function evidenceBadge(entry: SummaryEntry): string {
+  const status = entry.evidence_status || "unknown";
+  const className = normalizeSearch(status).replace(/[^a-z0-9-]/g, "-") || "unknown";
+  const confidence = Math.round(entry.confidence * 100);
+  return `<span class="evidence-badge evidence-${className}">${escapeHtml(evidenceLabel(status))} · ${confidence}% confidence</span>`;
+}
+
+function evidenceLabel(status: string): string {
+  const labels: Record<string, string> = {
+    estimated: "Estimated",
+    exact: "Exact",
+    inferred: "Inferred",
+    looked_up: "Looked up",
+    unknown: "Unknown"
+  };
+  return labels[status] ?? titleCase(status.replace(/_/g, " "));
 }
 
 function mealOptions(selected: string): string {
