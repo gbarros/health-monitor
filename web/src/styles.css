@@ -342,7 +342,25 @@ td:first-child {
   gap: 10px;
 }
 
+.proposal-inbox-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
 .job-list li {
+  border: 1px solid #d9ded5;
+  border-radius: 6px;
+  padding: 10px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+}
+
+.proposal-inbox-list li {
   border: 1px solid #d9ded5;
   border-radius: 6px;
   padding: 10px;
@@ -357,12 +375,27 @@ td:first-child {
   gap: 3px;
 }
 
+.proposal-inbox-list li > div:first-child {
+  display: grid;
+  gap: 3px;
+}
+
 .job-list span {
   color: #657064;
   font-size: 13px;
 }
 
+.proposal-inbox-list span {
+  color: #657064;
+  font-size: 13px;
+}
+
 .job-list .job-status-active {
+  color: #225465;
+  font-weight: 700;
+}
+
+.proposal-inbox-list .proposal-status-active {
   color: #225465;
   font-weight: 700;
 }
@@ -751,6 +784,7 @@ textarea {
   .grid-two,
   .payload-grid,
   .job-list li,
+  .proposal-inbox-list li,
   .entry-edit-form,
   .proposal-entry-edit-form,
   .weight-edit-form {

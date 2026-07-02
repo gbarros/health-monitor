@@ -201,6 +201,7 @@ type AppState = {
   weightTrend: WeightTrend | null;
   reviewNotes: ReviewNote[];
   proposal: Proposal | null;
+  proposalQueue: Proposal[];
   chatResponse: AgentChatResponse | null;
   jobs: BackgroundJob[];
   lastDeletedEntry: DiaryEntryRecord | null;
@@ -224,6 +225,7 @@ const state: AppState = {
   weightTrend: null,
   reviewNotes: [],
   proposal: null,
+  proposalQueue: [],
   chatResponse: null,
   jobs: [],
   lastDeletedEntry: null,
@@ -257,6 +259,7 @@ function render(): void {
           ${renderToday()}
           ${renderReview()}
           ${renderProposal()}
+          ${renderProposalInbox()}
           ${renderJobs()}
         </div>
         <aside class="side">
@@ -622,6 +625,42 @@ function renderProposalAudit(proposal: Proposal): string {
           : ""
       }
     </dl>
+  `;
+}
+
+function renderProposalInbox(): string {
+  const disabled = state.person ? "" : "disabled";
+  const rows = state.proposalQueue
+    .slice(0, 8)
+    .map((proposal) => {
+      const active = proposal.status === "draft" || proposal.status === "needs_clarification";
+      return `
+        <li>
+          <div>
+            <strong>${escapeHtml(proposal.summary || proposal.proposal_type)}</strong>
+            <span${active ? ' class="proposal-status-active"' : ""}>${escapeHtml(proposal.status)} · ${escapeHtml(proposal.proposal_type)} · ${escapeHtml(formatDateTime(proposal.created_at))}</span>
+            <span>${proposal.totals.calories_kcal} kcal · ${proposal.totals.protein_g} g protein</span>
+          </div>
+          <button class="proposal-open" type="button" data-proposal-id="${escapeHtml(proposal.id)}">Open</button>
+        </li>
+      `;
+    })
+    .join("");
+  return `
+    <section class="today">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Proposal inbox</p>
+          <h2>Recent drafts and history</h2>
+        </div>
+        <button id="refresh-proposals" type="button" ${disabled}>Refresh</button>
+      </div>
+      ${
+        rows
+          ? `<ul class="proposal-inbox-list">${rows}</ul>`
+          : `<p class="empty">No proposals for this profile yet.</p>`
+      }
+    </section>
   `;
 }
 
@@ -1285,6 +1324,7 @@ function bindEvents(): void {
   document.querySelector<HTMLInputElement>("#selected-day")?.addEventListener("change", safeAsync(onSelectedDayChange));
   document.querySelector<HTMLButtonElement>("#refresh-summary")?.addEventListener("click", safeAsync(refreshSummary));
   document.querySelector<HTMLButtonElement>("#refresh-review")?.addEventListener("click", safeAsync(refreshReview));
+  document.querySelector<HTMLButtonElement>("#refresh-proposals")?.addEventListener("click", safeAsync(refreshProposals));
   document.querySelector<HTMLButtonElement>("#refresh-jobs")?.addEventListener("click", safeAsync(refreshJobs));
   document.querySelector<HTMLButtonElement>("#export-data")?.addEventListener("click", safeAsync(onExportData));
   document.querySelector<HTMLButtonElement>("#confirm-proposal")?.addEventListener("click", safeAsync(confirmProposal));
@@ -1320,6 +1360,9 @@ function bindEvents(): void {
   document
     .querySelectorAll<HTMLButtonElement>(".proposal-load-related")
     .forEach((button) => button.addEventListener("click", safeAsync(onRelatedProposalLoad)));
+  document
+    .querySelectorAll<HTMLButtonElement>(".proposal-open")
+    .forEach((button) => button.addEventListener("click", safeAsync(onProposalOpen)));
 }
 
 function safeAsync<T extends Event>(handler: (event: T) => Promise<void>): (event: T) => void {
@@ -1482,7 +1525,7 @@ async function onProposalEntryEdit(event: SubmitEvent): Promise<void> {
     meal_type: requiredText(form, "meal_type")
   });
   state.notice = "Proposal entry updated.";
-  render();
+  await refreshProposals();
 }
 
 async function onEntryDelete(event: Event): Promise<void> {
@@ -1573,7 +1616,7 @@ async function onLookupPropose(event: Event): Promise<void> {
     candidate_id: candidateId
   });
   state.notice = "Lookup proposal drafted.";
-  render();
+  await refreshProposals();
 }
 
 async function onClarificationCandidate(event: Event): Promise<void> {
@@ -1587,7 +1630,7 @@ async function onClarificationCandidate(event: Event): Promise<void> {
     food_version_id: foodVersionId
   });
   state.notice = "Clarification resolved. Review before applying.";
-  render();
+  await refreshProposals();
 }
 
 async function onJobProcess(event: Event): Promise<void> {
@@ -1597,6 +1640,7 @@ async function onJobProcess(event: Event): Promise<void> {
   replaceJob(job);
   await adoptJobProposal(job);
   state.notice = `Job ${job.status}.`;
+  await refreshProposals();
   render();
 }
 
@@ -1610,6 +1654,12 @@ async function onRelatedProposalLoad(event: Event): Promise<void> {
   const proposalId = (event.currentTarget as HTMLButtonElement).dataset.proposalId;
   if (!proposalId) return;
   await loadProposal(proposalId, "Loaded related proposal.");
+}
+
+async function onProposalOpen(event: Event): Promise<void> {
+  const proposalId = (event.currentTarget as HTMLButtonElement).dataset.proposalId;
+  if (!proposalId) return;
+  await loadProposal(proposalId, "Loaded proposal from inbox.");
 }
 
 async function loadProposal(proposalId: string, notice: string): Promise<void> {
@@ -1719,7 +1769,7 @@ async function onTextMeal(event: SubmitEvent): Promise<void> {
   }
   state.proposal = await apiPost<Proposal>("/api/agent/text-meal", payload);
   state.notice = "Proposal drafted. Review before applying.";
-  render();
+  await refreshProposals();
 }
 
 async function onAgentChat(event: SubmitEvent): Promise<void> {
@@ -1746,6 +1796,10 @@ async function onAgentChat(event: SubmitEvent): Promise<void> {
     state.notice = "Chat drafted a proposal. Review before applying.";
   } else {
     state.notice = "Chat answered from app data.";
+  }
+  if (state.chatResponse.proposal) {
+    await refreshProposals();
+    return;
   }
   render();
 }
@@ -1775,7 +1829,7 @@ async function onLabelScan(event: SubmitEvent): Promise<void> {
   state.notice = attachment
     ? "Food version proposal drafted with attachment evidence."
     : "Food version proposal drafted.";
-  render();
+  await refreshProposals();
 }
 
 async function onRecipe(event: SubmitEvent): Promise<void> {
@@ -1797,7 +1851,7 @@ async function onRecipe(event: SubmitEvent): Promise<void> {
   }
   state.proposal = await apiPost<Proposal>("/api/agent/recipe", payload);
   state.notice = "Recipe proposal drafted.";
-  render();
+  await refreshProposals();
 }
 
 async function onExportData(): Promise<void> {
@@ -1844,7 +1898,7 @@ async function rejectProposal(): Promise<void> {
   if (!state.proposal) return;
   state.proposal = await apiPost<Proposal>(`/api/proposals/${state.proposal.id}/reject`, {});
   state.notice = "Proposal rejected.";
-  render();
+  await refreshProposals();
 }
 
 async function enqueueJob(jobType: string, payload: Record<string, unknown>): Promise<void> {
@@ -1907,10 +1961,21 @@ async function refreshJobs(): Promise<void> {
   render();
 }
 
+async function refreshProposals(): Promise<void> {
+  if (!state.person) {
+    state.proposalQueue = [];
+    render();
+    return;
+  }
+  state.proposalQueue = await apiGet<Proposal[]>(`/api/proposals?person_id=${state.person.id}`);
+  render();
+}
+
 async function refreshAllReadSurfaces(): Promise<void> {
   if (!state.person) {
     await refreshFoodLibrary();
     state.reviewNotes = [];
+    state.proposalQueue = [];
     state.jobs = [];
     syncJobPolling();
     render();
@@ -1925,6 +1990,7 @@ async function refreshAllReadSurfaces(): Promise<void> {
     `/api/summaries/week?person_id=${state.person.id}&start=${weekRange.start}&end=${weekRange.end}`
   );
   state.reviewNotes = await apiGet<ReviewNote[]>(`/api/review-notes?person_id=${state.person.id}`);
+  state.proposalQueue = await apiGet<Proposal[]>(`/api/proposals?person_id=${state.person.id}`);
   state.jobs = await apiGet<BackgroundJob[]>(`/api/jobs?person_id=${state.person.id}`);
   syncJobPolling();
   render();
@@ -1986,6 +2052,7 @@ function clearPersonScopedState(): void {
   state.weightTrend = null;
   state.reviewNotes = [];
   state.proposal = null;
+  state.proposalQueue = [];
   state.chatResponse = null;
   state.jobs = [];
   syncJobPolling();
