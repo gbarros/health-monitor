@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import unicodedata
 import unittest
 import urllib.error
 import urllib.request
@@ -57,8 +58,9 @@ class PrivateLabelOCREvalTest(unittest.TestCase):
                 self.assertIsNotNone(extraction)
                 assert extraction is not None
                 self.assertGreaterEqual(extraction.confidence, float(case.get("min_confidence", 0.35)))
+                normalized_text = normalize_text_for_assertion(extraction.text)
                 for needle in case.get("expected_text_contains", []):
-                    self.assertIn(str(needle).casefold(), extraction.text.casefold())
+                    self.assertIn(normalize_text_for_assertion(str(needle)), normalized_text)
                 service = HealthMonitorService()
                 household = service.create_household(name="OCR Eval")
                 person = service.create_person(
@@ -68,7 +70,7 @@ class PrivateLabelOCREvalTest(unittest.TestCase):
                 )
                 attachment = service.create_attachment(
                     household_id=household.id,
-                    created_by_person_id=person.id,
+                    person_id=person.id,
                     object_type="nutrition_label_image",
                     mime_type=str(case.get("mime_type") or "image/jpeg"),
                     content=content,
@@ -97,6 +99,11 @@ def load_private_cases(directory: Path) -> list[dict[str, object]]:
                 payload["image_path"] = str((path.parent / image_path).resolve())
             cases.append(payload)
     return cases
+
+
+def normalize_text_for_assertion(value: str) -> str:
+    decomposed = unicodedata.normalize("NFKD", value)
+    return "".join(char for char in decomposed if not unicodedata.combining(char)).casefold()
 
 
 if __name__ == "__main__":

@@ -82,6 +82,103 @@ class OllamaLookupParserTest(unittest.TestCase):
             )
         )
 
+    def test_label_parser_accepts_table_json_from_thinking_field(self) -> None:
+        extraction = parse_ollama_label_payload(
+            {
+                "response": "",
+                "thinking": json.dumps(
+                    {
+                        "table": [
+                            {
+                                "row1_cell_0": "",
+                                "row1_cell_1": "100 ml",
+                                "row1_cell_2": "250 ml",
+                            },
+                            {
+                                "row2_cell_0": "Valor energético (kcal)",
+                                "row2_cell_1": "70",
+                                "row2_cell_2": "174",
+                            },
+                            {
+                                "row3_cell_0": "Proteínas (g)",
+                                "row3_cell_1": "9,2",
+                                "row3_cell_2": "23",
+                            },
+                        ]
+                    }
+                ),
+            },
+            model="qwen3.5:latest",
+        )
+
+        self.assertIsNotNone(extraction)
+        assert extraction is not None
+        self.assertIn("Valor energético", extraction.text)
+        self.assertIn("Proteínas", extraction.text)
+
+    def test_label_parser_accepts_qwen35_irregular_ocr_shapes(self) -> None:
+        embedded = parse_ollama_label_payload(
+            {
+                "response": "",
+                "thinking": json.dumps(
+                    {
+                        "text": json.dumps(
+                            [
+                                {"Porcao": "50 g"},
+                                {"Valor energetico": "126 kcal"},
+                                {"Proteinas": "4.2 g"},
+                            ]
+                        ),
+                        "confidence": [0.97],
+                        "warnings": [],
+                    }
+                ),
+            },
+            model="qwen3.5:latest",
+        )
+        text_content = parse_ollama_label_payload(
+            {
+                "response": "",
+                "thinking": json.dumps(
+                    {
+                        "text_content": "Porção: 250 ml Valor energético 70 Proteínas 9,2",
+                    }
+                ),
+            },
+            model="qwen3.5:latest",
+        )
+
+        self.assertIsNotNone(embedded)
+        self.assertIsNotNone(text_content)
+        assert embedded is not None
+        assert text_content is not None
+        self.assertEqual(embedded.confidence, 0.97)
+        self.assertIn("Valor energetico: 126 kcal", embedded.text)
+        self.assertIn("Proteínas", text_content.text)
+
+    def test_label_parser_flattens_nested_ocr_dicts(self) -> None:
+        extraction = parse_ollama_label_payload(
+            {
+                "response": "",
+                "thinking": json.dumps(
+                    {
+                        "Serving Size (Porção)": "250 ml",
+                        "Nutritional Information per Serving": {
+                            "Calories (Valor energético)": "174 kcal",
+                            "Proteins (Proteínas)": "23 g",
+                            "Salt/Sodium (Sódio)": "337 mg",
+                        },
+                    }
+                ),
+            },
+            model="qwen3.5:latest",
+        )
+
+        self.assertIsNotNone(extraction)
+        assert extraction is not None
+        self.assertIn("Valor energético", extraction.text)
+        self.assertIn("Proteínas", extraction.text)
+
     def test_parsers_accept_fenced_json_model_output(self) -> None:
         estimate = parse_ollama_estimate_payload(
             {
