@@ -1000,6 +1000,7 @@ class HealthMonitorService:
         *,
         proposal_id: str,
         entry_id: str,
+        food_version_id: str | None = None,
         quantity_g: float | None = None,
         meal_type: str | None = None,
     ) -> CreateDiaryEntriesProposal:
@@ -1008,6 +1009,8 @@ class HealthMonitorService:
             raise ValueError("only draft proposals can be edited")
         if not proposal.entries:
             raise ValueError("proposal has no editable diary entries")
+        if food_version_id is not None:
+            self.catalog.get_version(food_version_id)
         if quantity_g is not None and quantity_g <= 0:
             raise ValueError("quantity_g must be positive")
 
@@ -1024,7 +1027,7 @@ class HealthMonitorService:
                     person_id=entry.person_id,
                     logged_at=entry.logged_at,
                     meal_type=meal_type or entry.meal_type,
-                    food_version_id=entry.food_version_id,
+                    food_version_id=food_version_id or entry.food_version_id,
                     quantity_g=float(quantity_g) if quantity_g is not None else entry.quantity_g,
                     source=entry.source,
                     deleted_at=entry.deleted_at,
@@ -1038,8 +1041,13 @@ class HealthMonitorService:
             payload=proposal.payload,
         )
         evidence = tuple(
-            self._updated_proposal_evidence_item(item, tuple(updated_entries))
-            for item in proposal.evidence
+            self._updated_proposal_evidence_item(
+                item,
+                old_entries=proposal.entries,
+                updated_entries=tuple(updated_entries),
+                item_index=index,
+            )
+            for index, item in enumerate(proposal.evidence)
         )
         payload = dict(proposal.payload)
         if len(updated_entries) == 1:
@@ -1169,13 +1177,31 @@ class HealthMonitorService:
     def _updated_proposal_evidence_item(
         self,
         item: dict[str, object],
-        entries: tuple[DiaryEntry, ...],
+        *,
+        old_entries: tuple[DiaryEntry, ...],
+        updated_entries: tuple[DiaryEntry, ...],
+        item_index: int,
     ) -> dict[str, object]:
         updated = dict(item)
         food_version_id = item.get("food_version_id")
         if food_version_id is None:
             return updated
-        for entry in entries:
+
+        if (
+            item_index < len(old_entries)
+            and old_entries[item_index].food_version_id == food_version_id
+            and item_index < len(updated_entries)
+        ):
+            entry = updated_entries[item_index]
+            updated["quantity_g"] = entry.quantity_g
+            updated["meal_type"] = entry.meal_type
+            updated["food_version_id"] = entry.food_version_id
+            if entry.food_version_id != food_version_id:
+                updated["previous_food_version_id"] = str(food_version_id)
+                updated["resolution_reason"] = "user_edited_food_match"
+            return updated
+
+        for entry in updated_entries:
             if entry.food_version_id == food_version_id:
                 updated["quantity_g"] = entry.quantity_g
                 updated["meal_type"] = entry.meal_type

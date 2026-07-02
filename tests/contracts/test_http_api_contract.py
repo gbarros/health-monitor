@@ -1099,6 +1099,83 @@ class HttpApiContractTest(unittest.TestCase):
         self.assertEqual(summary["meals"]["snack"][0]["quantity_g"], 50)
         self.assertEqual(summary["totals"]["calories_kcal"], 157.5)
 
+    def test_text_meal_proposal_entry_food_match_can_be_changed_through_http_contract(self) -> None:
+        api = HttpApi(HealthMonitorService())
+        household = api.handle("POST", "/api/households", {"name": "Casa"}).body
+        person = api.handle(
+            "POST",
+            "/api/people",
+            {
+                "household_id": household["id"],
+                "name": "Gabriel",
+                "timezone": "America/Sao_Paulo",
+            },
+        ).body
+        regular_food = api.handle(
+            "POST",
+            "/api/foods",
+            {
+                "household_id": household["id"],
+                "name": "Leite integral",
+                "brand": None,
+                "version_label": "regular",
+                "source": "reference",
+                "nutrients_per_100g": {
+                    "calories_kcal": 61,
+                    "protein_g": 3.2,
+                    "carbs_g": 4.8,
+                    "fat_g": 3.3,
+                },
+                "aliases": ["leite"],
+            },
+        ).body
+        protein_food = api.handle(
+            "POST",
+            "/api/foods",
+            {
+                "household_id": household["id"],
+                "name": "Leite mais proteico",
+                "brand": None,
+                "version_label": "extra protein",
+                "source": "label_scan",
+                "nutrients_per_100g": {
+                    "calories_kcal": 50,
+                    "protein_g": 10,
+                    "carbs_g": 4,
+                    "fat_g": 0.5,
+                },
+                "aliases": ["leite proteico"],
+            },
+        ).body
+        proposal = api.handle(
+            "POST",
+            "/api/agent/text-meal",
+            {
+                "person_id": person["id"],
+                "logged_at_local": "2026-07-01T10:00:00",
+                "text": "100g leite",
+                "agent_settings": {"external_lookup": False},
+            },
+        ).body
+
+        edited = api.handle(
+            "PATCH",
+            f"/api/proposals/{proposal['id']}/entries/{proposal['entries'][0]['id']}",
+            {"food_version_id": protein_food["version"]["id"]},
+        ).body
+        api.handle("POST", f"/api/proposals/{proposal['id']}/confirm", None)
+        summary = api.handle(
+            "GET",
+            f"/api/diary/day?person_id={person['id']}&day=2026-07-01",
+            None,
+        ).body
+
+        self.assertEqual(proposal["entries"][0]["food_version_id"], regular_food["version"]["id"])
+        self.assertEqual(edited["entries"][0]["food_version_id"], protein_food["version"]["id"])
+        self.assertEqual(edited["entries"][0]["food_name"], "Leite mais proteico")
+        self.assertEqual(edited["totals"]["protein_g"], 10)
+        self.assertEqual(summary["meals"]["breakfast"][0]["food_version_id"], protein_food["version"]["id"])
+
     def test_diary_entry_correction_round_trip_through_http_contract(self) -> None:
         api = HttpApi(HealthMonitorService())
         household = api.handle("POST", "/api/households", {"name": "Casa"}).body

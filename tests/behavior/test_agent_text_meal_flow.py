@@ -241,6 +241,55 @@ class AgentTextMealFlowTest(unittest.TestCase):
         self.assertEqual(summary.totals.rounded(), Nutrients(157.5, 11.5, 1.3, 11.75))
         self.assertEqual(summary.meals["snack"][0].quantity_g, 50)
 
+    def test_draft_text_meal_entry_food_match_can_be_replaced_before_confirmation(self) -> None:
+        service = HealthMonitorService()
+        household = service.create_household(name="Casa")
+        person = service.create_person(
+            household_id=household.id,
+            name="Gabriel",
+            timezone="America/Sao_Paulo",
+        )
+        _, regular = service.create_food_with_version(
+            household_id=household.id,
+            name="Leite integral",
+            brand=None,
+            version_label="regular",
+            nutrients_per_100g=Nutrients(calories_kcal=61, protein_g=3.2, carbs_g=4.8, fat_g=3.3),
+            source="reference",
+            aliases=["leite"],
+        )
+        _, protein = service.create_food_with_version(
+            household_id=household.id,
+            name="Leite mais proteico",
+            brand=None,
+            version_label="extra protein",
+            nutrients_per_100g=Nutrients(calories_kcal=50, protein_g=10, carbs_g=4, fat_g=0.5),
+            source="label_scan",
+            aliases=["leite proteico"],
+        )
+        proposal = service.propose_text_meal(
+            person_id=person.id,
+            logged_at_local="2026-07-01T10:00:00",
+            text="100g leite",
+            agent_settings={"external_lookup": False},
+        )
+
+        edited = service.update_proposal_entry(
+            proposal_id=proposal.id,
+            entry_id=proposal.entries[0].id,
+            food_version_id=protein.id,
+        )
+        applied = service.confirm_proposal(edited.id)
+        summary = service.day_summary(person.id, date(2026, 7, 1))
+
+        self.assertEqual(proposal.entries[0].food_version_id, regular.id)
+        self.assertEqual(edited.entries[0].food_version_id, protein.id)
+        self.assertEqual(edited.totals.rounded(), Nutrients(50, 10, 4, 0.5))
+        self.assertEqual(edited.evidence[0]["food_version_id"], protein.id)
+        self.assertEqual(applied.applied_record_ids, (proposal.entries[0].id,))
+        self.assertEqual(summary.meals["breakfast"][0].food_name, "Leite mais proteico")
+        self.assertEqual(summary.totals.rounded(), Nutrients(50, 10, 4, 0.5))
+
     def test_same_breakfast_as_yesterday_copies_structured_entries_as_proposal(self) -> None:
         service = HealthMonitorService()
         household = service.create_household(name="Casa")

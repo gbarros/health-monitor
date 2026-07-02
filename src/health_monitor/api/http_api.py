@@ -581,6 +581,7 @@ class HttpApi:
             proposal = self.service.update_proposal_entry(
                 proposal_id=proposal_part,
                 entry_id=entry_id,
+                food_version_id=body.get("food_version_id"),
                 quantity_g=float(body["quantity_g"]) if body.get("quantity_g") is not None else None,
                 meal_type=body.get("meal_type"),
             )
