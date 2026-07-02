@@ -179,6 +179,7 @@ type AppState = {
   selectedDay: string;
   activeGoal: GoalProfile | null;
   foods: FoodResponse[];
+  foodFilter: string;
   lookupCandidates: FoodLookupCandidate[];
   summary: DaySummary | null;
   week: WeekSummary | null;
@@ -200,6 +201,7 @@ const state: AppState = {
   selectedDay: localDateInputValue(new Date()),
   activeGoal: null,
   foods: [],
+  foodFilter: "",
   lookupCandidates: [],
   summary: null,
   week: null,
@@ -924,7 +926,8 @@ function renderGoalForm(): string {
 
 function renderFoodForm(): string {
   const disabled = state.household ? "" : "disabled";
-  const foods = state.foods
+  const filtered = filteredFoods();
+  const foods = filtered
     .map(
       (item) => `
         <li>
@@ -955,7 +958,14 @@ function renderFoodForm(): string {
       <label>Aliases <input name="aliases" value="queijo, queijo minas" ${disabled} /></label>
       <label>Barcode <input name="barcode" placeholder="optional" ${disabled} /></label>
       <button type="submit" ${disabled}>Save food</button>
-      ${foods ? `<ul class="lookup-list">${foods}</ul>` : `<p class="hint">No saved food versions yet.</p>`}
+      <label>Find saved food <input class="food-filter" data-filter-id="library" type="search" value="${escapeHtml(state.foodFilter)}" placeholder="name, brand, label" ${state.foods.length ? "" : "disabled"} /></label>
+      ${
+        foods
+          ? `<ul class="lookup-list">${foods}</ul>`
+          : state.foods.length
+            ? `<p class="hint">No saved foods match this filter.</p>`
+            : `<p class="hint">No saved food versions yet.</p>`
+      }
     </form>
   `;
 }
@@ -991,16 +1001,19 @@ function renderFoodLookup(): string {
 }
 
 function renderManualLog(): string {
-  const disabled = state.person && state.foods.length ? "" : "disabled";
+  const filtered = filteredFoods();
+  const disabled = state.person && filtered.length ? "" : "disabled";
   const quickDisabled = state.household && state.person ? "" : "disabled";
-  const options = state.foods
+  const options = filtered
     .map((item) => `<option value="${item.version.id}">${escapeHtml(foodLabel(item))}</option>`)
     .join("");
   return `
     <form id="manual-log-form" class="panel">
       <p class="eyebrow">Manual log</p>
       <h2>Diary entry</h2>
+      <label>Find food <input class="food-filter" data-filter-id="manual" type="search" value="${escapeHtml(state.foodFilter)}" placeholder="queijo, iogurte, protein" ${state.person && state.foods.length ? "" : "disabled"} /></label>
       <label>Food <select name="food_version_id" ${disabled}>${options}</select></label>
+      ${!filtered.length && state.foods.length ? `<p class="hint">No saved foods match this filter.</p>` : ""}
       <label>Time <input name="logged_at_local" type="datetime-local" value="${defaultDateTime("10:00")}" ${disabled} /></label>
       <div class="grid-two">
         <label>Quantity <input name="quantity" type="number" step="0.1" value="100" ${disabled} /></label>
@@ -1200,6 +1213,9 @@ function bindEvents(): void {
   document
     .querySelectorAll<HTMLSelectElement>(".profile-select")
     .forEach((select) => select.addEventListener("change", onProfileSelect));
+  document
+    .querySelectorAll<HTMLInputElement>(".food-filter")
+    .forEach((input) => input.addEventListener("input", onFoodFilterInput));
   document.querySelector<HTMLInputElement>("#selected-day")?.addEventListener("change", onSelectedDayChange);
   document.querySelector<HTMLButtonElement>("#refresh-summary")?.addEventListener("click", refreshSummary);
   document.querySelector<HTMLButtonElement>("#refresh-review")?.addEventListener("click", refreshReview);
@@ -1313,6 +1329,19 @@ async function onSelectedDayChange(event: Event): Promise<void> {
   saveSession();
   state.notice = `Showing ${selectedDay}.`;
   await refreshAllReadSurfaces();
+}
+
+function onFoodFilterInput(event: Event): void {
+  const input = event.currentTarget as HTMLInputElement;
+  const filterId = input.dataset.filterId ?? "";
+  const cursor = input.selectionStart ?? input.value.length;
+  state.foodFilter = input.value;
+  render();
+  const nextInput = document.querySelector<HTMLInputElement>(
+    `.food-filter[data-filter-id="${filterId}"]`
+  );
+  nextInput?.focus();
+  nextInput?.setSelectionRange(cursor, cursor);
 }
 
 async function onGoal(event: SubmitEvent): Promise<void> {
@@ -2004,6 +2033,33 @@ function metric(label: string, value: string, unit: string): string {
 function foodLabel(item: FoodResponse): string {
   const brand = item.food.brand ? `${item.food.brand} ` : "";
   return `${brand}${item.food.name} · ${item.version.label}`;
+}
+
+function filteredFoods(): FoodResponse[] {
+  return state.foods.filter(matchesFoodFilter);
+}
+
+function matchesFoodFilter(item: FoodResponse): boolean {
+  const query = normalizeSearch(state.foodFilter);
+  if (!query) return true;
+  return [
+    item.food.name,
+    item.food.brand,
+    item.version.label,
+    foodLabel(item),
+    item.food.default_version_id,
+    item.version.id
+  ]
+    .filter((value): value is string => typeof value === "string")
+    .some((value) => normalizeSearch(value).includes(query));
+}
+
+function normalizeSearch(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
 }
 
 function mealOptions(selected: string): string {
