@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -122,6 +122,10 @@ class AgentRun:
     settings: dict[str, Any]
     status: str
     proposal_id: str | None = None
+    runtime: str | None = None
+    model_name: str | None = None
+    tool_loop_count: int = 0
+    fallback_reason: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -1261,14 +1265,11 @@ class HealthMonitorService:
         )
         if proposal.source_agent_run_id is not None and proposal.source_agent_run_id in self.agent_runs:
             run = self.agent_runs[proposal.source_agent_run_id]
-            self.agent_runs[run.id] = AgentRun(
-                id=run.id,
-                person_id=run.person_id,
-                input_text=run.input_text,
-                settings=run.settings,
+            self.agent_runs[run.id] = replace(
+                run,
                 status="proposal_created",
                 proposal_id=resolved.id,
-                created_at=run.created_at,
+                tool_loop_count=len(self.agent_tool_calls_for_run(run.id)),
             )
         self._persist()
         return resolved
@@ -1540,6 +1541,8 @@ class HealthMonitorService:
         settings = dict(agent_settings or {})
         settings.setdefault("agent_runtime", self.agent_runtime)
         settings.setdefault("model_provider", self.model_provider)
+        settings.setdefault("max_tool_loops", 6)
+        settings.setdefault("effort", "normal")
         if self.agent_model is not None:
             settings.setdefault("model_name", self.agent_model)
         elif "model_profile" in settings:
@@ -1547,6 +1550,16 @@ class HealthMonitorService:
         else:
             settings.setdefault("model_name", "deterministic")
         return settings
+
+    def _run_metadata(self, settings: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "runtime": str(settings.get("agent_runtime") or "deterministic"),
+            "model_name": str(settings.get("model_name") or settings.get("model_profile") or "deterministic"),
+        }
+
+    def _current_fallback_reason(self, run: AgentRun) -> str | None:
+        current = self.agent_runs.get(run.id)
+        return current.fallback_reason if current is not None else run.fallback_reason
 
     def _try_pydantic_ai_chat(
         self,
@@ -1559,9 +1572,10 @@ class HealthMonitorService:
     ) -> AgentChatResponse | None:
         if settings.get("agent_runtime") != "pydantic-ai":
             return None
+        metadata = self._run_metadata(settings)
         person = self._require_person(person_id)
         agent = PydanticAINutritionAgent(
-            model_name=str(settings.get("model_name") or self.agent_model or "qwen3"),
+            model_name=metadata["model_name"],
             ollama_base_url=self.ollama_base_url,
         )
         try:
@@ -1580,6 +1594,7 @@ class HealthMonitorService:
                 message=message,
             )
         except PydanticAIUnavailable as exc:
+            fallback_reason = f"pydantic_ai unavailable: {exc}"
             self._record_agent_tool_call(
                 run=run,
                 tool_name="pydantic_ai_chat",
@@ -1588,8 +1603,17 @@ class HealthMonitorService:
                 status="failed",
                 error=str(exc),
             )
+            self.agent_runs[run.id] = replace(
+                run,
+                status="fallback",
+                runtime=metadata["runtime"],
+                model_name=metadata["model_name"],
+                tool_loop_count=len(self.agent_tool_calls_for_run(run.id)),
+                fallback_reason=fallback_reason,
+            )
             return None
         except Exception as exc:
+            fallback_reason = f"pydantic_ai failed: {exc}"
             self._record_agent_tool_call(
                 run=run,
                 tool_name="pydantic_ai_chat",
@@ -1597,6 +1621,14 @@ class HealthMonitorService:
                 output_summary="pydantic_ai failed; using deterministic fallback",
                 status="failed",
                 error=str(exc),
+            )
+            self.agent_runs[run.id] = replace(
+                run,
+                status="fallback",
+                runtime=metadata["runtime"],
+                model_name=metadata["model_name"],
+                tool_loop_count=len(self.agent_tool_calls_for_run(run.id)),
+                fallback_reason=fallback_reason,
             )
             return None
 
@@ -1606,13 +1638,13 @@ class HealthMonitorService:
             input_summary="runtime=pydantic-ai",
             output_summary=f"behavior={response.behavior_label}",
         )
-        self.agent_runs[run.id] = AgentRun(
-            id=run.id,
-            person_id=run.person_id,
-            input_text=run.input_text,
-            settings=run.settings,
+        self.agent_runs[run.id] = replace(
+            run,
             status="answered",
-            created_at=run.created_at,
+            runtime=metadata["runtime"],
+            model_name=metadata["model_name"],
+            tool_loop_count=len(self.agent_tool_calls_for_run(run.id)),
+            fallback_reason=None,
         )
         return AgentChatResponse(
             run_id=run.id,
@@ -1622,6 +1654,130 @@ class HealthMonitorService:
             citations=response.citations,
             proposal_id=response.proposal_id,
         )
+
+    def _try_pydantic_ai_text_meal(
+        self,
+        *,
+        person_id: str,
+        logged_at_local: str,
+        text: str,
+        run: AgentRun,
+        settings: dict[str, Any],
+    ) -> CreateDiaryEntriesProposal | None:
+        if settings.get("agent_runtime") != "pydantic-ai":
+            return None
+        metadata = self._run_metadata(settings)
+        person = self._require_person(person_id)
+        agent = PydanticAINutritionAgent(
+            model_name=metadata["model_name"],
+            ollama_base_url=self.ollama_base_url,
+        )
+        try:
+            response = agent.draft_text_meal(
+                deps=AgentDeps(
+                    service=self,
+                    person_id=person_id,
+                    household_id=person.household_id,
+                    today=self._parse_person_datetime(logged_at_local, person).date(),
+                    settings=settings,
+                    source_config={
+                        "openfoodfacts_enabled": self.food_lookup_provider is not None,
+                        "research_lookup_enabled": self.research_lookup_provider is not None,
+                    },
+                ),
+                logged_at_local=logged_at_local,
+                text=text,
+            )
+        except PydanticAIUnavailable as exc:
+            fallback_reason = f"pydantic_ai unavailable: {exc}"
+            self._record_agent_tool_call(
+                run=run,
+                tool_name="pydantic_ai_text_meal",
+                input_summary="runtime=pydantic-ai",
+                output_summary="pydantic_ai unavailable; using deterministic fallback",
+                status="failed",
+                error=str(exc),
+            )
+            self.agent_runs[run.id] = replace(
+                run,
+                status="fallback",
+                runtime=metadata["runtime"],
+                model_name=metadata["model_name"],
+                tool_loop_count=len(self.agent_tool_calls_for_run(run.id)),
+                fallback_reason=fallback_reason,
+            )
+            return None
+        except Exception as exc:
+            fallback_reason = f"pydantic_ai failed: {exc}"
+            self._record_agent_tool_call(
+                run=run,
+                tool_name="pydantic_ai_text_meal",
+                input_summary="runtime=pydantic-ai",
+                output_summary="pydantic_ai failed; using deterministic fallback",
+                status="failed",
+                error=str(exc),
+            )
+            self.agent_runs[run.id] = replace(
+                run,
+                status="fallback",
+                runtime=metadata["runtime"],
+                model_name=metadata["model_name"],
+                tool_loop_count=len(self.agent_tool_calls_for_run(run.id)),
+                fallback_reason=fallback_reason,
+            )
+            return None
+
+        if response.proposal_id is None:
+            self._record_agent_tool_call(
+                run=run,
+                tool_name="pydantic_ai_text_meal",
+                input_summary="runtime=pydantic-ai",
+                output_summary="live model did not draft a proposal; using deterministic fallback",
+                status="failed",
+                error="missing proposal_id",
+            )
+            self.agent_runs[run.id] = replace(
+                run,
+                status="fallback",
+                runtime=metadata["runtime"],
+                model_name=metadata["model_name"],
+                tool_loop_count=len(self.agent_tool_calls_for_run(run.id)),
+                fallback_reason="pydantic_ai text meal returned no proposal_id",
+            )
+            return None
+
+        proposal = self.get_proposal(response.proposal_id)
+        updated = replace(
+            proposal,
+            payload={
+                **proposal.payload,
+                "live_agent_orchestration": {
+                    "runtime": metadata["runtime"],
+                    "model_name": metadata["model_name"],
+                    "deterministic_source_agent_run_id": proposal.source_agent_run_id,
+                },
+            },
+            source_agent_run_id=run.id,
+        )
+        self.proposals.proposals[updated.id] = updated
+        self._record_agent_tool_call(
+            run=run,
+            tool_name="pydantic_ai_text_meal",
+            input_summary="runtime=pydantic-ai",
+            output_summary=f"proposal={updated.id}; behavior={response.behavior_label}",
+            source_record_ids=(updated.id,),
+        )
+        self.agent_runs[run.id] = replace(
+            run,
+            status="proposal_created",
+            proposal_id=updated.id,
+            runtime=metadata["runtime"],
+            model_name=metadata["model_name"],
+            tool_loop_count=len(self.agent_tool_calls_for_run(run.id)),
+            fallback_reason=None,
+        )
+        self._persist()
+        return updated
 
     def chat(
         self,
@@ -1639,6 +1795,7 @@ class HealthMonitorService:
             input_text=message,
             settings=settings,
             status="started",
+            **self._run_metadata(settings),
         )
         self.agent_runs[run.id] = run
 
@@ -1732,13 +1889,13 @@ class HealthMonitorService:
             ),
             behavior_label="answer_question",
         )
-        self.agent_runs[run.id] = AgentRun(
-            id=run.id,
-            person_id=run.person_id,
-            input_text=run.input_text,
-            settings=run.settings,
+        self.agent_runs[run.id] = replace(
+            run,
             status="answered",
-            created_at=run.created_at,
+            runtime=self._run_metadata(settings)["runtime"],
+            model_name=self._run_metadata(settings)["model_name"],
+            tool_loop_count=len(self.agent_tool_calls_for_run(run.id)),
+            fallback_reason=self._current_fallback_reason(run),
         )
         return finish(response)
 
@@ -1760,8 +1917,18 @@ class HealthMonitorService:
             input_text=text,
             settings=settings,
             status="started",
+            **self._run_metadata(settings),
         )
         self.agent_runs[run.id] = run
+        pydantic_proposal = self._try_pydantic_ai_text_meal(
+            person_id=person_id,
+            logged_at_local=logged_at_local,
+            text=text,
+            run=run,
+            settings=settings,
+        )
+        if pydantic_proposal is not None:
+            return pydantic_proposal
         if repeated_meal is not None:
             source_day, meal_type = repeated_meal
             proposal = self._create_repeated_meal_proposal(
@@ -2033,14 +2200,12 @@ class HealthMonitorService:
                 source_agent_run_id=run.id,
             )
         )
-        self.agent_runs[run.id] = AgentRun(
-            id=run.id,
-            person_id=run.person_id,
-            input_text=run.input_text,
-            settings=run.settings,
+        self.agent_runs[run.id] = replace(
+            run,
             status="proposal_created",
             proposal_id=proposal.id,
-            created_at=run.created_at,
+            tool_loop_count=len(self.agent_tool_calls_for_run(run.id)),
+            fallback_reason=self._current_fallback_reason(run),
         )
         self._persist()
         return proposal
@@ -2145,14 +2310,12 @@ class HealthMonitorService:
                 source_agent_run_id=run.id,
             )
         )
-        self.agent_runs[run.id] = AgentRun(
-            id=run.id,
-            person_id=run.person_id,
-            input_text=run.input_text,
-            settings=run.settings,
+        self.agent_runs[run.id] = replace(
+            run,
             status="needs_clarification",
             proposal_id=proposal.id,
-            created_at=run.created_at,
+            tool_loop_count=len(self.agent_tool_calls_for_run(run.id)),
+            fallback_reason=self._current_fallback_reason(run),
         )
         return proposal
 
@@ -2227,14 +2390,12 @@ class HealthMonitorService:
                 source_agent_run_id=run.id,
             )
         )
-        self.agent_runs[run.id] = AgentRun(
-            id=run.id,
-            person_id=run.person_id,
-            input_text=run.input_text,
-            settings=run.settings,
+        self.agent_runs[run.id] = replace(
+            run,
             status="proposal_created",
             proposal_id=proposal.id,
-            created_at=run.created_at,
+            tool_loop_count=len(self.agent_tool_calls_for_run(run.id)),
+            fallback_reason=self._current_fallback_reason(run),
         )
         return proposal
 
@@ -2280,13 +2441,10 @@ class HealthMonitorService:
             ),
             source_record_ids=tuple(item["record_id"] for item in citations),
         )
-        self.agent_runs[run.id] = AgentRun(
-            id=run.id,
-            person_id=run.person_id,
-            input_text=run.input_text,
-            settings=run.settings,
+        self.agent_runs[run.id] = replace(
+            run,
             status="answered",
-            created_at=run.created_at,
+            tool_loop_count=len(self.agent_tool_calls_for_run(run.id)),
         )
         return AgentChatResponse(
             run_id=run.id,
@@ -2388,13 +2546,10 @@ class HealthMonitorService:
             ),
             source_record_ids=tuple(item["record_id"] for item in citations),
         )
-        self.agent_runs[run.id] = AgentRun(
-            id=run.id,
-            person_id=run.person_id,
-            input_text=run.input_text,
-            settings=run.settings,
+        self.agent_runs[run.id] = replace(
+            run,
             status="answered",
-            created_at=run.created_at,
+            tool_loop_count=len(self.agent_tool_calls_for_run(run.id)),
         )
         return AgentChatResponse(
             run_id=run.id,
@@ -2437,13 +2592,10 @@ class HealthMonitorService:
                 status="failed",
                 error="no matching food in local library",
             )
-            self.agent_runs[run.id] = AgentRun(
-                id=run.id,
-                person_id=run.person_id,
-                input_text=run.input_text,
-                settings=run.settings,
+            self.agent_runs[run.id] = replace(
+                run,
                 status="answered",
-                created_at=run.created_at,
+                tool_loop_count=len(self.agent_tool_calls_for_run(run.id)),
             )
             return AgentChatResponse(
                 run_id=run.id,
@@ -2516,13 +2668,10 @@ class HealthMonitorService:
             ),
             source_record_ids=tuple(item["record_id"] for item in citations),
         )
-        self.agent_runs[run.id] = AgentRun(
-            id=run.id,
-            person_id=run.person_id,
-            input_text=run.input_text,
-            settings=run.settings,
+        self.agent_runs[run.id] = replace(
+            run,
             status="answered",
-            created_at=run.created_at,
+            tool_loop_count=len(self.agent_tool_calls_for_run(run.id)),
         )
         return AgentChatResponse(
             run_id=run.id,
@@ -2607,13 +2756,10 @@ class HealthMonitorService:
             ),
             source_record_ids=tuple(item["record_id"] for item in citations),
         )
-        self.agent_runs[run.id] = AgentRun(
-            id=run.id,
-            person_id=run.person_id,
-            input_text=run.input_text,
-            settings=run.settings,
+        self.agent_runs[run.id] = replace(
+            run,
             status="answered",
-            created_at=run.created_at,
+            tool_loop_count=len(self.agent_tool_calls_for_run(run.id)),
         )
         return AgentChatResponse(
             run_id=run.id,
@@ -2675,14 +2821,11 @@ class HealthMonitorService:
             output_summary=f"proposal_id={proposal.id}; title={title}",
             source_record_ids=(proposal.id,),
         )
-        self.agent_runs[run.id] = AgentRun(
-            id=run.id,
-            person_id=run.person_id,
-            input_text=run.input_text,
-            settings=run.settings,
+        self.agent_runs[run.id] = replace(
+            run,
             status="proposal_created",
             proposal_id=proposal.id,
-            created_at=run.created_at,
+            tool_loop_count=len(self.agent_tool_calls_for_run(run.id)),
         )
         return AgentChatResponse(
             run_id=run.id,
@@ -2724,13 +2867,10 @@ class HealthMonitorService:
             error=None if matches else "no matching diary entries",
         )
         if not matches:
-            self.agent_runs[run.id] = AgentRun(
-                id=run.id,
-                person_id=run.person_id,
-                input_text=run.input_text,
-                settings=run.settings,
+            self.agent_runs[run.id] = replace(
+                run,
                 status="answered",
-                created_at=run.created_at,
+                tool_loop_count=len(self.agent_tool_calls_for_run(run.id)),
             )
             return AgentChatResponse(
                 run_id=run.id,
@@ -2778,14 +2918,11 @@ class HealthMonitorService:
             output_summary=f"proposal_id={proposal.id}; food={selected.food_name}",
             source_record_ids=(selected.id, proposal.id),
         )
-        self.agent_runs[run.id] = AgentRun(
-            id=run.id,
-            person_id=run.person_id,
-            input_text=run.input_text,
-            settings=run.settings,
+        self.agent_runs[run.id] = replace(
+            run,
             status="proposal_created",
             proposal_id=proposal.id,
-            created_at=run.created_at,
+            tool_loop_count=len(self.agent_tool_calls_for_run(run.id)),
         )
         return AgentChatResponse(
             run_id=run.id,
@@ -4638,6 +4775,10 @@ def agent_run_to_snapshot(run: AgentRun) -> dict[str, Any]:
         "settings": run.settings,
         "status": run.status,
         "proposal_id": run.proposal_id,
+        "runtime": run.runtime,
+        "model_name": run.model_name,
+        "tool_loop_count": run.tool_loop_count,
+        "fallback_reason": run.fallback_reason,
         "created_at": run.created_at.isoformat(),
     }
 
@@ -4650,6 +4791,10 @@ def agent_run_from_snapshot(value: dict[str, Any]) -> AgentRun:
         settings=dict(value.get("settings", {})),
         status=value["status"],
         proposal_id=value.get("proposal_id"),
+        runtime=value.get("runtime"),
+        model_name=value.get("model_name"),
+        tool_loop_count=int(value.get("tool_loop_count") or 0),
+        fallback_reason=value.get("fallback_reason"),
         created_at=datetime.fromisoformat(value["created_at"]),
     )
 

@@ -174,6 +174,10 @@ type Proposal = {
     id: string;
     settings: Record<string, string | number | boolean>;
     status: string;
+    runtime: string | null;
+    model_name: string | null;
+    tool_loop_count: number;
+    fallback_reason: string | null;
     tool_calls: AgentToolCall[];
   } | null;
   entries: ProposalEntry[];
@@ -662,9 +666,20 @@ function renderProposalAudit(proposal: Proposal): string {
     typeof proposal.payload.superseded_by_proposal_id === "string"
       ? proposal.payload.superseded_by_proposal_id
       : null;
+  const run = proposal.agent_run;
   return `
     <dl class="audit-list">
       <div><dt>Created</dt><dd>${escapeHtml(formatDateTime(proposal.created_at))}</dd></div>
+      ${
+        run
+          ? `<div><dt>Runtime</dt><dd>${escapeHtml(run.runtime ?? "deterministic")} · ${escapeHtml(run.model_name ?? "deterministic")} · ${run.tool_loop_count} loop${run.tool_loop_count === 1 ? "" : "s"}</dd></div>`
+          : ""
+      }
+      ${
+        run?.fallback_reason
+          ? `<div><dt>Fallback</dt><dd>${escapeHtml(run.fallback_reason)}</dd></div>`
+          : ""
+      }
       ${
         proposal.confirmed_at
           ? `<div><dt>Confirmed</dt><dd>${escapeHtml(formatDateTime(proposal.confirmed_at))}</dd></div>`

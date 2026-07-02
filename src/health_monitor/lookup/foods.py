@@ -77,6 +77,31 @@ class CompositeFoodLookupProvider:
         return results
 
 
+class ControlledResearchLookupProvider:
+    def __init__(
+        self,
+        provider: FoodLookupProvider,
+        *,
+        enabled: bool = False,
+    ) -> None:
+        self.provider = provider
+        self.enabled = enabled
+
+    def lookup(
+        self,
+        *,
+        phrase: str | None = None,
+        barcode: str | None = None,
+    ) -> list[FoodLookupCandidate]:
+        if not self.enabled:
+            return []
+        return [
+            candidate
+            for candidate in self.provider.lookup(phrase=phrase, barcode=barcode)
+            if candidate.source_type == "research_agent"
+        ]
+
+
 class OpenFoodFactsLookupProvider:
     def __init__(
         self,

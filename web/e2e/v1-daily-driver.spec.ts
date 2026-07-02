@@ -31,6 +31,11 @@ test("v1 daily driver workflow", async ({ page }) => {
   await expect(page.getByText("Diary entry added.")).toBeVisible();
   await expect(page.getByText("315 kcal").first()).toBeVisible();
 
+  await page.locator(".entry-edit-form input[name='quantity_g']").first().fill("80");
+  await page.locator(".entry-edit-form button[type='submit']").first().click();
+  await expect(page.getByText("Diary entry updated.")).toBeVisible();
+  await expect(page.getByText("252 kcal").first()).toBeVisible();
+
   await page.locator("#text-meal-form input[name='text']").fill("50g queijo");
   await page.locator("#text-meal-form input[name='external_lookup']").uncheck();
   await page.locator("#text-meal-form input[name='research_lookup']").uncheck();
@@ -39,7 +44,7 @@ test("v1 daily driver workflow", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "draft", exact: true })).toBeVisible();
   await page.locator("#confirm-proposal").click();
   await expect(page.getByText("Proposal applied.")).toBeVisible();
-  await expect(page.getByText("472.5").first()).toBeVisible();
+  await expect(page.getByText("409.5").first()).toBeVisible();
 
   await page.locator("#label-scan-form input[name='barcode']").fill("7891000000000");
   await page.locator("#label-scan-form input[name='quantity_g']").fill("170");
@@ -49,6 +54,27 @@ test("v1 daily driver workflow", async ({ page }) => {
   await page.locator("#confirm-proposal").click();
   await expect(page.getByText("Proposal applied.")).toBeVisible();
   await expect(page.getByText("7891000000000").first()).toBeVisible();
+
+  await page.locator("#recipe-form input[name='quantity_g']").fill("100");
+  await page.locator("#recipe-form textarea[name='recipe_text']").fill(`Recipe: Queijo batch
+Yield: 1000 g
+Ingredients:
+1000g queijo`);
+  await page.locator("#recipe-form button[type='submit']").click();
+  await expect(page.getByText("Recipe proposal drafted.")).toBeVisible();
+  await expect(page.locator(".proposal").getByText("Queijo batch").first()).toBeVisible();
+  await page.locator("#confirm-proposal").click();
+  await expect(page.getByText("Proposal applied.")).toBeVisible();
+
+  await page.locator("#weight-form input[name='weight_kg']").fill("91.2");
+  await page.locator("#weight-form button[type='submit']").click();
+  await expect(page.getByText("Weight added.")).toBeVisible();
+  await expect(page.getByText("91.2 kg").first()).toBeVisible();
+  await expect(page.locator(".weight-chart")).toBeVisible();
+  await page.locator(".weight-edit-form input[name='weight_kg']").first().fill("90.9");
+  await page.locator(".weight-edit-form button[type='submit']").first().click();
+  await expect(page.getByText("Weight updated.")).toBeVisible();
+  await expect(page.getByText("90.9 kg").first()).toBeVisible();
 
   await page.locator("#agent-chat-form textarea[name='message']").fill("Why was 2026-07-02 high in calories?");
   await page.locator("#agent-chat-form input[name='background_job']").check();
@@ -65,7 +91,14 @@ test("v1 daily driver workflow", async ({ page }) => {
   await expect(page.getByText("No diary entries for this day yet.").first()).toBeVisible();
 
   await page.locator(".profile-select").first().selectOption({ label: "Gabriel" });
+  await page.locator(".entry-delete").first().click();
+  await expect(page.getByText("Diary entry deleted.")).toBeVisible();
+  await page.locator("#undo-delete").click();
+  await expect(page.getByText(/Restored .* g entry\./)).toBeVisible();
+
   await page.locator("#export-data").click();
   await expect(page.getByText("Export generated.")).toBeVisible();
   await expect(page.locator("#import-form textarea[name='import_json']")).toContainText("\"households\"");
+  await page.locator("#import-form button[type='submit']").click();
+  await expect(page.getByText("import target must be empty")).toBeVisible();
 });

@@ -82,6 +82,50 @@ class OllamaLookupParserTest(unittest.TestCase):
             )
         )
 
+    def test_parsers_accept_fenced_json_model_output(self) -> None:
+        estimate = parse_ollama_estimate_payload(
+            {
+                "response": "```json\n"
+                + json.dumps(
+                    {
+                        "food_name": "Arroz branco",
+                        "calories_kcal": 130,
+                        "protein_g": 2.7,
+                        "carbs_g": 28,
+                        "fat_g": 0.3,
+                        "fiber_g": 0.4,
+                        "sodium_mg": 1,
+                        "confidence": 0.5,
+                        "notes": "generic estimate",
+                    }
+                )
+                + "\n```"
+            },
+            phrase="arroz",
+            model="ornith:9b",
+        )
+        label = parse_ollama_label_payload(
+            {
+                "response": "```\n"
+                + json.dumps(
+                    {
+                        "text": "Produto: Leite proteico\nProteinas: 20 g",
+                        "confidence": 0.7,
+                        "warnings": "sodium not visible",
+                    }
+                )
+                + "\n```"
+            },
+            model="llava",
+        )
+
+        self.assertIsNotNone(estimate)
+        self.assertIsNotNone(label)
+        assert estimate is not None
+        assert label is not None
+        self.assertEqual(estimate.food_name, "Arroz branco")
+        self.assertEqual(label.warnings, ("sodium not visible",))
+
 
 if __name__ == "__main__":
     unittest.main()

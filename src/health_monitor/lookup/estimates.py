@@ -82,7 +82,7 @@ def parse_ollama_estimate_payload(
         raw_response = payload.get("response") or payload.get("thinking")
         if not raw_response:
             return None
-        estimate = json.loads(raw_response)
+        estimate = json.loads(strip_json_fence(str(raw_response)))
         nutrition = (
             estimate.get("nutrition_100g")
             or estimate.get("nutrition")
@@ -115,6 +115,18 @@ def parse_ollama_estimate_payload(
         )
     except (KeyError, TypeError, ValueError, json.JSONDecodeError):
         return None
+
+
+def strip_json_fence(value: str) -> str:
+    stripped = value.strip()
+    if stripped.startswith("```"):
+        lines = stripped.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].startswith("```"):
+            lines = lines[:-1]
+        return "\n".join(lines).strip()
+    return stripped
 
 
 def read_float(payload: dict[str, object], *keys: str) -> float:

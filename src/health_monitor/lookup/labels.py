@@ -6,6 +6,8 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Protocol
 
+from health_monitor.lookup.estimates import strip_json_fence
+
 
 @dataclass(frozen=True)
 class LabelTextExtraction:
@@ -98,7 +100,7 @@ def parse_ollama_label_payload(
         raw_response = payload.get("response") or payload.get("thinking")
         if not raw_response:
             return None
-        parsed = json.loads(raw_response)
+        parsed = json.loads(strip_json_fence(str(raw_response)))
         text = str(parsed.get("text") or parsed.get("ocr_text") or "").strip()
         if not text:
             return None

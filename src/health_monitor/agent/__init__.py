@@ -7,6 +7,7 @@ from health_monitor.agent.runtime import (
     AgentRuntimeResponse,
     PydanticAINutritionAgent,
     PydanticAIUnavailable,
+    normalize_agent_runtime_output,
     normalize_ollama_base_url,
 )
 from health_monitor.agent.tools import NutritionAgentTools
@@ -21,5 +22,6 @@ __all__ = [
     "NutritionAgentTools",
     "PydanticAINutritionAgent",
     "PydanticAIUnavailable",
+    "normalize_agent_runtime_output",
     "normalize_ollama_base_url",
 ]

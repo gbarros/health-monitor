@@ -1034,6 +1034,10 @@ def agent_run_to_dict(
         "settings": run.settings,
         "status": run.status,
         "proposal_id": run.proposal_id,
+        "runtime": run.runtime,
+        "model_name": run.model_name,
+        "tool_loop_count": run.tool_loop_count,
+        "fallback_reason": run.fallback_reason,
         "created_at": run.created_at.isoformat(),
         "tool_calls": [
             agent_tool_call_to_dict(call)

@@ -1,4 +1,4 @@
-.PHONY: test test-unit test-behavior dev-api dev-web web-install web-build e2e
+.PHONY: test test-unit test-behavior test-live-model test-cloud-evals dev-api dev-web web-install web-build e2e
 
 PYTHON ?= python3
 
@@ -10,6 +10,12 @@ test-unit:
 
 test-behavior:
 	PYTHONPATH=src $(PYTHON) -m unittest discover -s tests/behavior -p 'test_*.py'
+
+test-live-model:
+	LIVE_MODEL_TESTS=true PYTHONPATH=src $(PYTHON) -m unittest discover -s tests/live -p 'test_*.py'
+
+test-cloud-evals:
+	CLOUD_MODEL_CALLS_ENABLED=true PYTHONPATH=src $(PYTHON) -m unittest discover -s tests/live -p 'test_cloud_*.py'
 
 dev-api:
 	PYTHONPATH=src $(PYTHON) -m health_monitor api --host 127.0.0.1 --port 8765

@@ -23,6 +23,11 @@ class AppConfig:
     openfoodfacts_enabled: bool = True
     usda_enabled: bool = False
     usda_api_key: str | None = None
+    research_lookup_enabled: bool = False
+    live_model_tests: bool = False
+    live_model_name: str = "ornith:9b"
+    cloud_model_calls_enabled: bool = False
+    cloud_model_name: str = "glm-5.2:cloud"
 
 
 def load_config() -> AppConfig:
@@ -58,4 +63,14 @@ def load_config() -> AppConfig:
         usda_enabled=os.environ.get("USDA_ENABLED", "false").casefold()
         in {"1", "true", "yes", "on"},
         usda_api_key=os.environ.get("USDA_API_KEY") or None,
+        research_lookup_enabled=os.environ.get("RESEARCH_LOOKUP_ENABLED", "false").casefold()
+        in {"1", "true", "yes", "on"},
+        live_model_tests=os.environ.get("LIVE_MODEL_TESTS", "false").casefold()
+        in {"1", "true", "yes", "on"},
+        live_model_name=os.environ.get("LIVE_MODEL_NAME", "ornith:9b"),
+        cloud_model_calls_enabled=os.environ.get(
+            "CLOUD_MODEL_CALLS_ENABLED", "false"
+        ).casefold()
+        in {"1", "true", "yes", "on"},
+        cloud_model_name=os.environ.get("CLOUD_MODEL_NAME", "glm-5.2:cloud"),
     )
