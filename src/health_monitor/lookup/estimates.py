@@ -69,43 +69,52 @@ class OllamaFoodEstimator:
                 payload = json.loads(response.read().decode("utf-8"))
         except OSError:
             return None
-        try:
-            raw_response = payload.get("response") or payload.get("thinking")
-            if not raw_response:
-                return None
-            estimate = json.loads(raw_response)
-            nutrition = (
-                estimate.get("nutrition_100g")
-                or estimate.get("nutrition")
-                or estimate.get("per_100g")
-                or estimate
-            )
-            return NutritionEstimate(
-                phrase=phrase,
-                food_name=str(
-                    estimate.get("food_name")
-                    or estimate.get("food")
-                    or estimate.get("name")
-                    or phrase
-                ),
-                nutrients_per_100g=Nutrients(
-                    calories_kcal=read_float(nutrition, "calories_kcal", "calories", "kcal"),
-                    protein_g=read_float(nutrition, "protein_g", "protein"),
-                    carbs_g=read_float(nutrition, "carbs_g", "carbs", "carbohydrates"),
-                    fat_g=read_float(nutrition, "fat_g", "fat"),
-                    fiber_g=read_float(nutrition, "fiber_g", "fiber"),
-                    sodium_mg=read_float(nutrition, "sodium_mg", "sodium"),
-                ),
-                source=f"ollama:{self.model}",
-                confidence=float(estimate.get("confidence", 0.35)),
-                notes=str(
-                    estimate.get("notes")
-                    or estimate.get("data_source_notes")
-                    or "Ollama model estimate"
-                ),
-            )
-        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return parse_ollama_estimate_payload(payload, phrase=phrase, model=self.model)
+
+
+def parse_ollama_estimate_payload(
+    payload: dict[str, object],
+    *,
+    phrase: str,
+    model: str,
+) -> NutritionEstimate | None:
+    try:
+        raw_response = payload.get("response") or payload.get("thinking")
+        if not raw_response:
             return None
+        estimate = json.loads(raw_response)
+        nutrition = (
+            estimate.get("nutrition_100g")
+            or estimate.get("nutrition")
+            or estimate.get("per_100g")
+            or estimate
+        )
+        return NutritionEstimate(
+            phrase=phrase,
+            food_name=str(
+                estimate.get("food_name")
+                or estimate.get("food")
+                or estimate.get("name")
+                or phrase
+            ),
+            nutrients_per_100g=Nutrients(
+                calories_kcal=read_float(nutrition, "calories_kcal", "calories", "kcal"),
+                protein_g=read_float(nutrition, "protein_g", "protein"),
+                carbs_g=read_float(nutrition, "carbs_g", "carbs", "carbohydrates"),
+                fat_g=read_float(nutrition, "fat_g", "fat"),
+                fiber_g=read_float(nutrition, "fiber_g", "fiber"),
+                sodium_mg=read_float(nutrition, "sodium_mg", "sodium"),
+            ),
+            source=f"ollama:{model}",
+            confidence=float(estimate.get("confidence", 0.35)),
+            notes=str(
+                estimate.get("notes")
+                or estimate.get("data_source_notes")
+                or "Ollama model estimate"
+            ),
+        )
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return None
 
 
 def read_float(payload: dict[str, object], *keys: str) -> float:

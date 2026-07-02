@@ -86,24 +86,32 @@ class OllamaLabelTextExtractor:
                 payload = json.loads(response.read().decode("utf-8"))
         except OSError:
             return None
-        try:
-            raw_response = payload.get("response") or payload.get("thinking")
-            if not raw_response:
-                return None
-            parsed = json.loads(raw_response)
-            text = str(parsed.get("text") or parsed.get("ocr_text") or "").strip()
-            if not text:
-                return None
-            warnings = parsed.get("warnings", ())
-            if isinstance(warnings, str):
-                warning_items = (warnings,)
-            else:
-                warning_items = tuple(str(item) for item in warnings)
-            return LabelTextExtraction(
-                text=text,
-                source=f"ollama_vision:{self.model}",
-                confidence=float(parsed.get("confidence", 0.45)),
-                warnings=warning_items,
-            )
-        except (TypeError, ValueError, json.JSONDecodeError):
+        return parse_ollama_label_payload(payload, model=self.model)
+
+
+def parse_ollama_label_payload(
+    payload: dict[str, object],
+    *,
+    model: str,
+) -> LabelTextExtraction | None:
+    try:
+        raw_response = payload.get("response") or payload.get("thinking")
+        if not raw_response:
             return None
+        parsed = json.loads(raw_response)
+        text = str(parsed.get("text") or parsed.get("ocr_text") or "").strip()
+        if not text:
+            return None
+        warnings = parsed.get("warnings", ())
+        if isinstance(warnings, str):
+            warning_items = (warnings,)
+        else:
+            warning_items = tuple(str(item) for item in warnings)
+        return LabelTextExtraction(
+            text=text,
+            source=f"ollama_vision:{model}",
+            confidence=float(parsed.get("confidence", 0.45)),
+            warnings=warning_items,
+        )
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None

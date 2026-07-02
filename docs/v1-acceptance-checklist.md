@@ -32,10 +32,12 @@ Evidence:
 - Local lookup is first, with barcode associations before external providers.
 - Open Food Facts adapter supports barcode and Brazil-biased phrase search.
 - USDA FoodData Central is optional behind `USDA_ENABLED` and `USDA_API_KEY`.
-- Behavior/unit coverage in `tests/behavior/test_food_lookup_candidates.py` and `tests/unit/test_usda_lookup_provider.py`.
+- Lookup source ordering composes Open Food Facts before optional USDA.
+- Ollama estimate parser preserves calories, macros, fiber, sodium, confidence, and source notes from strict JSON.
+- Behavior/unit coverage in `tests/behavior/test_food_lookup_candidates.py`, `tests/unit/test_openfoodfacts_lookup_provider.py`, `tests/unit/test_usda_lookup_provider.py`, `tests/unit/test_lookup_config.py`, and `tests/unit/test_ollama_lookup_parsers.py`.
 
 Remaining:
-- Add recorded Open Food Facts fixtures and optional live smoke tests.
+- Add optional live smoke tests for OFF and Ollama.
 - Expand controlled source ranking tests across local, OFF, USDA, research, and estimate fallback.
 
 ### F-004: Today Diary
@@ -72,10 +74,10 @@ Remaining:
 Evidence:
 - Label text/table parsing creates proposal-gated food versions with warnings and preserved attachment evidence.
 - Barcode evidence can create local barcode associations when confirmed.
-- Behavior coverage in `tests/behavior/test_label_scan_proposal_flow.py`, `tests/behavior/test_label_image_extraction.py`, and `tests/behavior/test_barcode_association.py`.
+- Ollama Brazilian label OCR parser preserves raw extracted text, warnings, confidence, barcode text, and attachment evidence through the label proposal flow.
+- Behavior/unit coverage in `tests/behavior/test_label_scan_proposal_flow.py`, `tests/behavior/test_label_image_extraction.py`, `tests/behavior/test_barcode_association.py`, and `tests/unit/test_ollama_lookup_parsers.py`.
 
 Remaining:
-- Improve Brazilian label OCR prompt fixtures and failure-mode coverage.
 - Browser e2e should scan/paste label plus barcode and confirm a food version.
 
 ### F-008: Recipe And Batch Food Registration
