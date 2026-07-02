@@ -213,6 +213,93 @@ class AgentChatHarnessTest(unittest.TestCase):
         )
         self.assertEqual(tool_calls[0].source_record_ids, (entry_id,))
 
+    def test_chat_answers_whether_new_food_label_is_default_and_used(self) -> None:
+        service = HealthMonitorService()
+        household = service.create_household(name="Casa")
+        person = service.create_person(
+            household_id=household.id,
+            name="Gabriel",
+            timezone="America/Sao_Paulo",
+        )
+        _, old_version = service.create_food_with_version(
+            household_id=household.id,
+            name="Iogurte Batavo Protein",
+            brand="Batavo",
+            version_label="old label",
+            nutrients_per_100g=Nutrients(80, 8, 7, 2),
+            source="label_scan",
+            aliases=["iogurte batavo"],
+        )
+        old_entry = service.log_diary_entry(
+            person_id=person.id,
+            logged_at_local="2026-07-01T10:00:00",
+            food_version_id=old_version.id,
+            quantity_g=100,
+            source="manual",
+        )
+        proposal = service.propose_label_scan(
+            household_id=household.id,
+            person_id=person.id,
+            table_text="\n".join(
+                [
+                    "Produto: Iogurte Batavo Protein",
+                    "Marca: Batavo",
+                    "Porcao: 170 g",
+                    "Valor energetico: 120 kcal",
+                    "Proteinas: 15 g",
+                    "Carboidratos: 10 g",
+                    "Gorduras totais: 2 g",
+                ]
+            ),
+            set_as_default=True,
+        )
+        applied = service.confirm_proposal(proposal.id)
+        new_version_id = applied.applied_record_ids[1]
+        new_entry = service.log_diary_entry(
+            person_id=person.id,
+            logged_at_local="2026-07-02T10:00:00",
+            food_version_id=new_version_id,
+            quantity_g=170,
+            source="manual",
+        )
+
+        response = service.chat(
+            person_id=person.id,
+            message="Did we start using the new Iogurte Batavo label?",
+            today=date(2026, 7, 3),
+        )
+
+        self.assertEqual(response.behavior_label, "explain_food_version_use")
+        self.assertIn("current default", response.message.casefold())
+        self.assertIn("2026-07-02", response.message)
+        self.assertIn("old label", response.message)
+        self.assertIn("label scan", response.message)
+        self.assertIn(
+            {"record_type": "food_version", "record_id": old_version.id},
+            response.citations,
+        )
+        self.assertIn(
+            {"record_type": "food_version", "record_id": new_version_id},
+            response.citations,
+        )
+        self.assertIn(
+            {"record_type": "diary_entry", "record_id": old_entry.id},
+            response.citations,
+        )
+        self.assertIn(
+            {"record_type": "diary_entry", "record_id": new_entry.id},
+            response.citations,
+        )
+        tool_calls = service.agent_tool_calls_for_run(response.run_id)
+        self.assertEqual(
+            [(call.tool_name, call.status) for call in tool_calls],
+            [("inspect_food_version_usage", "completed")],
+        )
+        self.assertEqual(
+            set(tool_calls[0].source_record_ids),
+            {old_version.id, new_version_id, old_entry.id, new_entry.id},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1482,6 +1482,16 @@ class HealthMonitorService:
             self._persist()
             return response
 
+        version_use_phrase = parse_chat_food_version_use_question(message)
+        if version_use_phrase is not None:
+            response = self._chat_explain_food_version_use(
+                person_id=person_id,
+                run=run,
+                phrase=version_use_phrase,
+            )
+            self._persist()
+            return response
+
         if parse_chat_micronutrient_question(message):
             response = self._chat_analyze_micronutrients(
                 person_id=person_id,
@@ -2181,6 +2191,138 @@ class HealthMonitorService:
             person_id=person_id,
             message=answer,
             behavior_label=behavior_label,
+            citations=citations,
+        )
+
+    def _chat_explain_food_version_use(
+        self,
+        *,
+        person_id: str,
+        run: AgentRun,
+        phrase: str,
+    ) -> AgentChatResponse:
+        person = self._require_person(person_id)
+        normalized = phrase.casefold().strip()
+        matches = [
+            food
+            for food in self.catalog.foods.values()
+            if food.household_id == person.household_id
+            and not food.archived
+            and self._food_matches_query(food, normalized)
+            and food.default_version_id is not None
+        ]
+        matches.sort(
+            key=lambda food: (
+                0 if normalized in food.name.casefold() else 1,
+                food.name.casefold(),
+                food.brand.casefold() if food.brand is not None else "",
+            )
+        )
+        if not matches:
+            self._record_agent_tool_call(
+                run=run,
+                tool_name="inspect_food_version_usage",
+                input_summary=f"person_id={person_id}; phrase={phrase}",
+                output_summary="no matching food",
+                status="failed",
+                error="no matching food in local library",
+            )
+            self.agent_runs[run.id] = AgentRun(
+                id=run.id,
+                person_id=run.person_id,
+                input_text=run.input_text,
+                settings=run.settings,
+                status="answered",
+                created_at=run.created_at,
+            )
+            return AgentChatResponse(
+                run_id=run.id,
+                person_id=person_id,
+                message=(
+                    f"I could not find a local food matching '{phrase}', so I cannot tell "
+                    "whether a new label is being used yet."
+                ),
+                behavior_label="answer_question",
+            )
+
+        food = matches[0]
+        versions = [
+            version
+            for version in self.catalog.versions.values()
+            if version.food_id == food.id and not version.archived
+        ]
+        versions.sort(key=lambda version: version.created_at)
+        current_version = self.catalog.get_version(str(food.default_version_id))
+        entries: list[tuple[DiaryEntry, FoodVersion]] = []
+        for entry in self.diary.entries.values():
+            if entry.person_id != person_id or entry.deleted_at is not None:
+                continue
+            version = self.catalog.versions.get(entry.food_version_id)
+            if version is None or version.food_id != food.id:
+                continue
+            entries.append((entry, version))
+        entries.sort(key=lambda pair: pair[0].logged_at, reverse=True)
+        latest_entry = entries[0] if entries else None
+        older_logged_versions = [
+            version
+            for _, version in entries
+            if version.id != current_version.id
+        ]
+        old_version_sentence = ""
+        if older_logged_versions:
+            seen_labels: list[str] = []
+            for version in older_logged_versions:
+                if version.label not in seen_labels:
+                    seen_labels.append(version.label)
+            old_version_sentence = (
+                f" Earlier logs also used: {', '.join(seen_labels[:3])}."
+            )
+        usage_sentence = "I do not see any diary entries for it yet."
+        if latest_entry is not None:
+            latest_diary_entry, latest_version = latest_entry
+            status = (
+                "are using the current default"
+                if latest_version.id == current_version.id
+                else "are still using an older version"
+            )
+            usage_sentence = (
+                f"Recent logs {status}: latest was {latest_diary_entry.logged_at.date().isoformat()} "
+                f"with {latest_version.label} for {latest_diary_entry.quantity_g:g} g."
+            )
+        citations = tuple(
+            [{"record_type": "food_version", "record_id": version.id} for version in versions]
+            + [
+                {"record_type": "diary_entry", "record_id": entry.id}
+                for entry, _ in entries
+            ]
+        )
+        self._record_agent_tool_call(
+            run=run,
+            tool_name="inspect_food_version_usage",
+            input_summary=f"person_id={person_id}; phrase={phrase}",
+            output_summary=(
+                f"food={food.name}; versions={len(versions)}; entries={len(entries)}; "
+                f"default={current_version.label}"
+            ),
+            source_record_ids=tuple(item["record_id"] for item in citations),
+        )
+        self.agent_runs[run.id] = AgentRun(
+            id=run.id,
+            person_id=run.person_id,
+            input_text=run.input_text,
+            settings=run.settings,
+            status="answered",
+            created_at=run.created_at,
+        )
+        return AgentChatResponse(
+            run_id=run.id,
+            person_id=person_id,
+            message=(
+                f"{food.name}'s current default is {current_version.label}. "
+                f"{usage_sentence}{old_version_sentence} "
+                "This answer is based on local food versions and diary records."
+            ),
+            behavior_label="explain_food_version_use",
             citations=citations,
         )
 
@@ -3638,6 +3780,40 @@ def parse_chat_micronutrient_question(message: str) -> bool:
             "mineral",
         )
     )
+
+
+def parse_chat_food_version_use_question(message: str) -> str | None:
+    lowered = message.casefold()
+    if not any(
+        marker in lowered
+        for marker in (
+            "new label",
+            "new version",
+            "using the new",
+            "novo rótulo",
+            "novo rotulo",
+            "nova versão",
+            "nova versao",
+            "nova embalagem",
+        )
+    ):
+        return None
+
+    patterns = (
+        r"\bnew\s+(.+?)\s+(?:label|version)\b",
+        r"\b(?:novo|nova)\s+(.+?)\s+(?:r[oó]tulo|rotulo|vers[aã]o|versao|embalagem)\b",
+        r"\b(?:bought|comprei)\s+(?:a|an|o|a|um|uma)?\s*(?:new|novo|nova)\s+(.+?)(?:[.?]|$)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, message, re.I)
+        if match is None:
+            continue
+        phrase = normalize_food_phrase(match.group(1))
+        phrase = re.sub(r"\b(?:the|o|a|um|uma)\b", " ", phrase, flags=re.I)
+        phrase = re.sub(r"\s+", " ", phrase).strip(" .?")
+        if phrase:
+            return phrase
+    return None
 
 
 def parse_chat_quantity_correction(message: str) -> dict[str, object] | None:

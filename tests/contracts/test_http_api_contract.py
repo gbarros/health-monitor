@@ -2342,6 +2342,110 @@ class HttpApiContractTest(unittest.TestCase):
         self.assertEqual(notes[0]["starts_on"], "2026-07-01")
         self.assertIn("Social dinners", notes[0]["body"])
 
+    def test_agent_chat_food_version_usage_answer_through_http_contract(self) -> None:
+        api = HttpApi(HealthMonitorService())
+        household = api.handle("POST", "/api/households", {"name": "Casa"}).body
+        person = api.handle(
+            "POST",
+            "/api/people",
+            {
+                "household_id": household["id"],
+                "name": "Gabriel",
+                "timezone": "America/Sao_Paulo",
+            },
+        ).body
+        old_food = api.handle(
+            "POST",
+            "/api/foods",
+            {
+                "household_id": household["id"],
+                "name": "Iogurte Batavo Protein",
+                "brand": "Batavo",
+                "version_label": "old label",
+                "source": "label_scan",
+                "nutrients_per_100g": {
+                    "calories_kcal": 80,
+                    "protein_g": 8,
+                    "carbs_g": 7,
+                    "fat_g": 2,
+                },
+                "aliases": ["iogurte batavo"],
+            },
+        ).body
+        old_entry = api.handle(
+            "POST",
+            "/api/diary",
+            {
+                "person_id": person["id"],
+                "logged_at_local": "2026-07-01T10:00:00",
+                "food_version_id": old_food["version"]["id"],
+                "quantity_g": 100,
+                "source": "manual",
+            },
+        ).body
+        label = api.handle(
+            "POST",
+            "/api/agent/label-scan",
+            {
+                "household_id": household["id"],
+                "person_id": person["id"],
+                "table_text": "\n".join(
+                    [
+                        "Produto: Iogurte Batavo Protein",
+                        "Marca: Batavo",
+                        "Porcao: 170 g",
+                        "Valor energetico: 120 kcal",
+                        "Proteinas: 15 g",
+                        "Carboidratos: 10 g",
+                        "Gorduras totais: 2 g",
+                    ]
+                ),
+                "set_as_default": True,
+            },
+        ).body
+        applied = api.handle("POST", f"/api/proposals/{label['id']}/confirm", None).body
+        new_entry = api.handle(
+            "POST",
+            "/api/diary",
+            {
+                "person_id": person["id"],
+                "logged_at_local": "2026-07-02T10:00:00",
+                "food_version_id": applied["applied_record_ids"][1],
+                "quantity_g": 170,
+                "source": "manual",
+            },
+        ).body
+
+        response = api.handle(
+            "POST",
+            "/api/agent/chat",
+            {
+                "person_id": person["id"],
+                "message": "Did we start using the new Iogurte Batavo label?",
+                "today": "2026-07-03",
+            },
+        ).body
+
+        self.assertEqual(response["behavior_label"], "explain_food_version_use")
+        self.assertIn("current default", response["message"].casefold())
+        self.assertIn("2026-07-02", response["message"])
+        self.assertIn(
+            {"record_type": "food_version", "record_id": old_food["version"]["id"]},
+            response["citations"],
+        )
+        self.assertIn(
+            {"record_type": "food_version", "record_id": applied["applied_record_ids"][1]},
+            response["citations"],
+        )
+        self.assertIn(
+            {"record_type": "diary_entry", "record_id": old_entry["id"]},
+            response["citations"],
+        )
+        self.assertIn(
+            {"record_type": "diary_entry", "record_id": new_entry["id"]},
+            response["citations"],
+        )
+
     def test_agent_chat_week_explanation_through_http_contract(self) -> None:
         api = HttpApi(HealthMonitorService())
         household = api.handle("POST", "/api/households", {"name": "Casa"}).body
