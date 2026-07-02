@@ -297,6 +297,16 @@ td:first-child {
   align-items: center;
 }
 
+.proposal-entry-edit-form {
+  grid-template-columns: minmax(190px, 1.8fr) 90px minmax(110px, 1fr) auto;
+}
+
+.proposal-entry-edit-form label {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+}
+
 .weight-edit-form {
   display: grid;
   grid-template-columns: minmax(170px, 1fr) 90px minmax(130px, 1fr) auto;

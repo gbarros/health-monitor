@@ -511,8 +511,15 @@ function renderProposal(): string {
           ${
             editable
               ? `<form class="proposal-entry-edit-form" data-entry-id="${entry.id}">
-                  <input name="quantity_g" type="number" step="0.1" value="${entry.quantity_g}" aria-label="Proposal quantity grams" />
-                  <select name="meal_type" aria-label="Proposal meal type">${mealOptions(entry.meal_type)}</select>
+                  <label>Food
+                    <select name="food_version_id">${proposalFoodOptions(entry)}</select>
+                  </label>
+                  <label>Quantity
+                    <input name="quantity_g" type="number" step="0.1" value="${entry.quantity_g}" />
+                  </label>
+                  <label>Meal
+                    <select name="meal_type">${mealOptions(entry.meal_type)}</select>
+                  </label>
                   <button type="submit">Update</button>
                 </form>`
               : ""
@@ -1430,6 +1437,7 @@ async function onProposalEntryEdit(event: SubmitEvent): Promise<void> {
   if (!entryId) return;
   const form = new FormData(formElement);
   state.proposal = await apiPatch<Proposal>(`/api/proposals/${state.proposal.id}/entries/${entryId}`, {
+    food_version_id: requiredText(form, "food_version_id"),
     quantity_g: numberField(form, "quantity_g"),
     meal_type: requiredText(form, "meal_type")
   });
@@ -2139,6 +2147,16 @@ function mealOptions(selected: string): string {
   return ["breakfast", "lunch", "snack", "dinner", "late"]
     .map((meal) => `<option value="${meal}" ${meal === selected ? "selected" : ""}>${titleCase(meal)}</option>`)
     .join("");
+}
+
+function proposalFoodOptions(entry: ProposalEntry): string {
+  const currentLabel = `${entry.food_name} · ${entry.food_version_label}`;
+  const current = `<option value="${entry.food_version_id}" selected>${escapeHtml(currentLabel)}</option>`;
+  const saved = state.foods
+    .filter((item) => item.version.id !== entry.food_version_id)
+    .map((item) => `<option value="${item.version.id}">${escapeHtml(foodOptionLabel(item))}</option>`)
+    .join("");
+  return `${current}${saved}`;
 }
 
 function addAppliedFoodProposalToLocalLibrary(proposal: Proposal): void {
