@@ -7,6 +7,7 @@ from health_monitor.agent import AgentDeps
 from health_monitor.agent.tools import NutritionAgentTools
 from health_monitor.application.service import HealthMonitorService
 from health_monitor.domain.nutrients import Nutrients
+from health_monitor.lookup.labels import LabelTextExtraction, StaticLabelTextExtractor
 
 
 class NutritionAgentToolsTest(unittest.TestCase):
@@ -103,6 +104,51 @@ class NutritionAgentToolsTest(unittest.TestCase):
         self.assertEqual(service.day_summary(deps.person_id, date(2026, 7, 1)).totals.rounded(), Nutrients(315, 23, 2.6, 23.5, sodium_mg=620))
         self.assertEqual(service.day_summary(deps.person_id, date(2026, 7, 2)).totals, Nutrients())
         self.assertEqual(service.review_notes_for_person(deps.person_id), ())
+
+    def test_ocr_tool_extracts_label_text_from_attachment(self) -> None:
+        service = HealthMonitorService(
+            label_text_extractor=StaticLabelTextExtractor(
+                LabelTextExtraction(
+                    text="Produto: Iogurte\nValor energetico: 120 kcal",
+                    source="static_ocr",
+                    confidence=0.88,
+                    warnings=("glare",),
+                )
+            )
+        )
+        household = service.create_household(name="Casa")
+        person = service.create_person(
+            household_id=household.id,
+            name="Gabriel",
+            timezone="America/Sao_Paulo",
+        )
+        attachment = service.create_attachment(
+            household_id=household.id,
+            person_id=person.id,
+            object_type="nutrition_label_image",
+            mime_type="image/png",
+            content=b"fake-label-image",
+            filename="label.png",
+        )
+        deps = AgentDeps(
+            service=service,
+            person_id=person.id,
+            household_id=household.id,
+            today=date(2026, 7, 2),
+            settings={"agent_runtime": "pydantic-ai", "model_name": "qwen3"},
+            source_config={"ocr_enabled": True},
+        )
+
+        result = NutritionAgentTools().extract_label_text_from_attachment(
+            deps,
+            attachment_id=attachment.id,
+        )
+
+        self.assertEqual(result["attachment_id"], attachment.id)
+        self.assertEqual(result["source"], "static_ocr")
+        self.assertEqual(result["confidence"], 0.88)
+        self.assertIn("Valor energetico", result["text"])
+        self.assertEqual(result["warnings"], ["glare"])
 
 
 if __name__ == "__main__":

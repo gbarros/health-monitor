@@ -50,7 +50,7 @@ def build_service(config: Any | None = None) -> HealthMonitorService:
     if config.label_text_extractor == "ollama":
         label_text_extractor = OllamaLabelTextExtractor(
             base_url=config.ollama_base_url,
-            model=config.ollama_vision_model,
+            model=config.ocr_model,
         )
     elif config.label_text_extractor != "none":
         raise ValueError(f"unsupported label text extractor: {config.label_text_extractor}")

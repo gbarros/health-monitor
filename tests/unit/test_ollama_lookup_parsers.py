@@ -65,11 +65,11 @@ class OllamaLookupParserTest(unittest.TestCase):
             )
         }
 
-        extraction = parse_ollama_label_payload(payload, model="llava")
+        extraction = parse_ollama_label_payload(payload, model="glm-ocr:latest")
 
         self.assertIsNotNone(extraction)
         assert extraction is not None
-        self.assertEqual(extraction.source, "ollama_vision:llava")
+        self.assertEqual(extraction.source, "ollama_ocr:glm-ocr:latest")
         self.assertEqual(extraction.confidence, 0.88)
         self.assertIn("Codigo de barras", extraction.text)
         self.assertEqual(extraction.warnings, ("review sodium manually",))
@@ -78,7 +78,7 @@ class OllamaLookupParserTest(unittest.TestCase):
         self.assertIsNone(
             parse_ollama_label_payload(
                 {"response": json.dumps({"text": "", "confidence": 0.2})},
-                model="llava",
+                model="glm-ocr:latest",
             )
         )
 
@@ -213,7 +213,7 @@ class OllamaLookupParserTest(unittest.TestCase):
                 )
                 + "\n```"
             },
-            model="llava",
+            model="glm-ocr:latest",
         )
 
         self.assertIsNotNone(estimate)

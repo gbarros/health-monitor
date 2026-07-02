@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from health_monitor.application.service import HealthMonitorService
+from health_monitor.lookup.labels import LabelTextExtraction, StaticLabelTextExtractor
 
 
 LABEL_TEXT = "\n".join(
@@ -20,8 +21,15 @@ LABEL_TEXT = "\n".join(
 
 
 class AttachmentsEvidenceTest(unittest.TestCase):
+    def service_with_ocr(self) -> HealthMonitorService:
+        return HealthMonitorService(
+            label_text_extractor=StaticLabelTextExtractor(
+                LabelTextExtraction(text=LABEL_TEXT, source="static_ocr", confidence=0.91)
+            )
+        )
+
     def test_uploaded_attachment_preserves_blob_metadata_and_hash(self) -> None:
-        service = HealthMonitorService()
+        service = self.service_with_ocr()
         household = service.create_household(name="Casa")
         person = service.create_person(
             household_id=household.id,
@@ -48,7 +56,7 @@ class AttachmentsEvidenceTest(unittest.TestCase):
         self.assertEqual(attachment.linked_record_type, None)
 
     def test_label_scan_can_link_attachment_to_confirmed_food_version(self) -> None:
-        service = HealthMonitorService()
+        service = self.service_with_ocr()
         household = service.create_household(name="Casa")
         person = service.create_person(
             household_id=household.id,
@@ -79,7 +87,7 @@ class AttachmentsEvidenceTest(unittest.TestCase):
         self.assertEqual(linked.linked_record_id, applied.applied_record_ids[1])
 
     def test_food_version_attachment_can_be_listed_after_label_confirmation(self) -> None:
-        service = HealthMonitorService()
+        service = self.service_with_ocr()
         household = service.create_household(name="Casa")
         person = service.create_person(
             household_id=household.id,
@@ -117,7 +125,7 @@ class AttachmentsEvidenceTest(unittest.TestCase):
         self.assertEqual(restored.content, b"fake-label-image")
 
     def test_rejected_proposal_keeps_attachment_for_audit_without_linking(self) -> None:
-        service = HealthMonitorService()
+        service = self.service_with_ocr()
         household = service.create_household(name="Casa")
         person = service.create_person(
             household_id=household.id,

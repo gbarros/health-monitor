@@ -225,6 +225,9 @@ type OfflineOutboxFile = {
   mime_type: string;
   blob: Blob;
 };
+type BrowserBarcodeDetector = {
+  detect(source: HTMLVideoElement): Promise<Array<{ rawValue?: string }>>;
+};
 type OfflineOutboxItem = {
   id: string;
   client_request_id: string;
@@ -258,6 +261,8 @@ type AppState = {
   proposalQueue: Proposal[];
   chatResponse: AgentChatResponse | null;
   chatHistory: AgentChatTurn[];
+  logMode: LogMode;
+  logEvents: LogEvent[];
   jobs: BackgroundJob[];
   offlineOutbox: OfflineOutboxItem[];
   isOfflineReplayRunning: boolean;
@@ -265,6 +270,16 @@ type AppState = {
   exportText: string;
   notice: string | null;
   errorMessage: string | null;
+};
+type AppPage = "log" | "diary" | "review" | "library" | "work" | "settings";
+type LogMode = "meal" | "label" | "recipe" | "chat";
+type LogEvent = {
+  id: string;
+  mode: LogMode;
+  title: string;
+  message: string;
+  result: string;
+  created_at: string;
 };
 
 const sessionStorageKey = "health-monitor.session.v1";
@@ -287,6 +302,8 @@ const state: AppState = {
   proposalQueue: [],
   chatResponse: null,
   chatHistory: [],
+  logMode: "chat",
+  logEvents: [],
   jobs: [],
   offlineOutbox: [],
   isOfflineReplayRunning: false,
@@ -298,6 +315,8 @@ const state: AppState = {
 
 const appRoot = requireAppRoot();
 let jobPollTimer: number | null = null;
+let barcodeScannerStream: MediaStream | null = null;
+let barcodeScannerTimer: number | null = null;
 
 render();
 void loadOfflineOutbox();
@@ -312,43 +331,32 @@ window.addEventListener("offline", () => {
   state.notice = "Offline mode: agent notes and uploads will be saved locally.";
   render();
 });
+window.addEventListener("hashchange", () => render());
 
 function render(): void {
+  const needsSetup = !state.household || !state.person;
+  const activePage = resolveActivePage(needsSetup);
   appRoot.innerHTML = `
+    <a class="skip-link" href="#main-content">Skip to main</a>
     <section class="shell">
       <header class="topbar">
-        <div>
+        <div class="brand-block">
           <p class="eyebrow">Private household tracker</p>
           <h1>Health Monitor</h1>
+          <p class="topbar-subtitle">${escapeHtml(state.selectedDay)}${state.person ? ` · ${escapeHtml(state.person.name)}` : ""}</p>
         </div>
-        ${renderProfileSwitcher("topbar")}
+        <div class="topbar-actions">
+          ${renderConnectionStatus()}
+          ${renderProfileSwitcher("topbar")}
+        </div>
       </header>
 
+      ${renderAppNav(activePage, needsSetup)}
       ${renderNoticeBanner()}
 
-      <section class="workspace">
-        <div class="primary">
-          ${renderToday()}
-          ${renderReview()}
-          ${renderProposal()}
-          ${renderProposalInbox()}
-          ${renderOfflineOutbox()}
-          ${renderJobs()}
-        </div>
-        <aside class="side">
-          ${renderSetup()}
-          ${renderGoalForm()}
-          ${renderFoodForm()}
-          ${renderFoodLookup()}
-          ${renderManualLog()}
-          ${renderWeightForm()}
-          ${renderTextMeal()}
-          ${renderAgentChat()}
-          ${renderLabelScan()}
-          ${renderRecipeForm()}
-          ${renderDataPortability()}
-        </aside>
-      </section>
+      <main class="page-shell" id="main-content">
+        ${needsSetup ? renderSetupPage() : renderPage(activePage)}
+      </main>
     </section>
   `;
   bindEvents();
@@ -364,7 +372,7 @@ function requireAppRoot(): HTMLDivElement {
 
 function renderProfileSwitcher(placement: "topbar" | "setup"): string {
   if (!state.household || !state.people.length) {
-    return `<div class="person-switch">No profile</div>`;
+    return `<div class="person-switch person-switch-empty">No profile</div>`;
   }
   const options = state.people
     .map(
@@ -381,6 +389,62 @@ function renderProfileSwitcher(placement: "topbar" | "setup"): string {
   `;
 }
 
+function renderConnectionStatus(): string {
+  const pending = state.offlineOutbox.filter(
+    (item) => item.status === "pending" || item.status === "failed" || item.status === "replaying"
+  ).length;
+  const activeJobs = state.jobs.filter((job) => isActiveJobStatus(job.status)).length;
+  const offline = !navigator.onLine;
+  return `
+    <div class="status-pills" aria-label="System status">
+      <span class="status-pill ${offline ? "status-offline" : "status-online"}">${offline ? "Offline" : "Online"}</span>
+      ${pending ? `<span class="status-pill status-warning">${pending} outbox</span>` : ""}
+      ${activeJobs ? `<span class="status-pill status-active">${activeJobs} job${activeJobs === 1 ? "" : "s"}</span>` : ""}
+    </div>
+  `;
+}
+
+function resolveActivePage(needsSetup: boolean): AppPage {
+  if (needsSetup) return "settings";
+  const page = window.location.hash.replace(/^#\/?/, "");
+  if (
+    page === "log" ||
+    page === "diary" ||
+    page === "review" ||
+    page === "library" ||
+    page === "work" ||
+    page === "settings"
+  ) {
+    return page;
+  }
+  return "log";
+}
+
+function renderAppNav(activePage: AppPage, needsSetup: boolean): string {
+  if (needsSetup) {
+    return `
+      <nav class="app-nav" aria-label="Primary">
+        ${navLink("settings", "Setup", activePage)}
+        ${navLink("work", "Work", activePage)}
+      </nav>
+    `;
+  }
+  return `
+    <nav class="app-nav" aria-label="Primary">
+      ${navLink("log", "Log", activePage)}
+      ${navLink("diary", "Diary", activePage)}
+      ${navLink("review", "Review", activePage)}
+      ${navLink("library", "Library", activePage)}
+      ${navLink("work", "Work", activePage)}
+      ${navLink("settings", "Settings", activePage)}
+    </nav>
+  `;
+}
+
+function navLink(page: AppPage, label: string, activePage: AppPage): string {
+  return `<a href="#/${page}" ${page === activePage ? 'aria-current="page"' : ""}>${label}</a>`;
+}
+
 function renderNoticeBanner(): string {
   if (state.errorMessage) {
     return `<div class="notice notice-error" role="alert">${escapeHtml(state.errorMessage)}</div>`;
@@ -388,9 +452,243 @@ function renderNoticeBanner(): string {
   if (!state.notice) {
     return "";
   }
-  return `<div class="notice">${escapeHtml(state.notice)}${
+  return `<div class="notice" role="status" aria-live="polite">${escapeHtml(state.notice)}${
     state.lastDeletedEntry ? ` <button id="undo-delete" type="button">Undo</button>` : ""
   }</div>`;
+}
+
+function renderCaptureHub(): string {
+  return `
+    <section class="capture-zone" id="capture">
+      <div class="chat-workspace">
+        <aside class="chat-mode-rail" aria-label="Log modes">
+          ${renderLogModeButton("chat", "Chat", "Questions and fixes")}
+          ${renderLogModeButton("meal", "Meal note", "Foods, portions, context")}
+          ${renderLogModeButton("label", "Product label", "Photos, barcode, table")}
+          ${renderLogModeButton("recipe", "Recipe", "Batch food or prep")}
+        </aside>
+        <section class="chat-panel" aria-label="Agent log workspace">
+          ${renderLogTranscript()}
+          ${renderModeComposer(state.logMode)}
+        </section>
+      </div>
+    </section>
+  `;
+}
+
+function renderLogModeButton(mode: LogMode, label: string, description: string): string {
+  const active = state.logMode === mode;
+  return `
+    <button class="log-mode-button${active ? " active" : ""}" type="button" data-log-mode="${mode}" aria-pressed="${active}">
+      <strong>${escapeHtml(label)}</strong>
+      <span>${escapeHtml(description)}</span>
+    </button>
+  `;
+}
+
+function renderModeComposer(mode: LogMode): string {
+  if (mode === "label") return renderLabelScan();
+  if (mode === "recipe") return renderRecipeForm();
+  if (mode === "chat") return renderAgentChat();
+  return renderTextMeal();
+}
+
+function renderLogTranscript(): string {
+  const rows = state.logEvents
+    .slice(-8)
+    .map(
+      (event) => `
+        <article class="chat-turn">
+          <div class="chat-message chat-message-user">
+            <div class="chat-message-meta">
+              <strong>${escapeHtml(event.title)}</strong>
+              <span>${escapeHtml(formatDateTime(event.created_at))}</span>
+            </div>
+            <pre>${escapeHtml(event.message)}</pre>
+          </div>
+          <div class="chat-message chat-message-assistant">
+            <p>${escapeHtml(event.result)}</p>
+          </div>
+        </article>
+      `
+    )
+    .join("");
+  const response = state.chatResponse
+    ? `<article class="chat-turn">
+        <div class="chat-message chat-message-assistant">
+          <div class="chat-message-meta">
+            <strong>${escapeHtml(state.chatResponse.behavior_label)}</strong>
+            <span>${state.chatResponse.citations.length} citation${state.chatResponse.citations.length === 1 ? "" : "s"}</span>
+          </div>
+          <p>${escapeHtml(state.chatResponse.message)}</p>
+        </div>
+      </article>`
+    : "";
+  const proposal = state.proposal
+    ? `<article class="chat-turn">
+        <div class="chat-message chat-message-assistant">
+          <div class="chat-message-meta">
+            <strong>Proposal ready</strong>
+            <span>${escapeHtml(state.proposal.status)}</span>
+          </div>
+          <p>${escapeHtml(state.proposal.summary)}</p>
+        </div>
+      </article>`
+    : "";
+  return `
+    <section class="chat-transcript" aria-label="Log conversation">
+      ${
+        rows || response || proposal
+          ? `${rows}${response}${proposal}`
+          : `<article class="chat-turn">
+              <div class="chat-message chat-message-assistant">
+                <p>Choose a mode and send a first message. Drafts stay reviewable before anything is written.</p>
+              </div>
+            </article>`
+      }
+    </section>
+  `;
+}
+
+function renderSetupPage(): string {
+  return `
+    <section class="page-header">
+      <div>
+        <p class="eyebrow">Start here</p>
+        <h2>Household setup</h2>
+        <p>Create the household and first profile before logging meals.</p>
+      </div>
+    </section>
+    <section class="page-grid two-column">
+      <div class="primary">
+        ${renderSetup()}
+      </div>
+      <aside class="side">
+        ${state.offlineOutbox.length || !navigator.onLine ? renderOfflineOutbox() : ""}
+        ${state.jobs.length ? renderJobs() : ""}
+        ${renderDataPortability()}
+      </aside>
+    </section>
+  `;
+}
+
+function renderPage(page: AppPage): string {
+  if (page === "diary") return renderDiaryPage();
+  if (page === "review") return renderReviewPage();
+  if (page === "library") return renderLibraryPage();
+  if (page === "work") return renderWorkPage();
+  if (page === "settings") return renderSettingsPage();
+  return renderLogPage();
+}
+
+function renderLogPage(): string {
+  return `
+    ${renderPageHeader("Log", "Capture meals, labels, recipes, and loose agent notes.", [
+      state.selectedDay,
+      state.person?.name ?? "No profile"
+    ])}
+    <section class="page-grid two-column">
+      <div class="primary">
+        ${renderCaptureHub()}
+      </div>
+      <aside class="side">
+        ${renderProposal()}
+        ${renderOfflineOutbox()}
+      </aside>
+    </section>
+  `;
+}
+
+function renderDiaryPage(): string {
+  return `
+    ${renderPageHeader("Diary", "Review and correct the selected day.", [state.selectedDay])}
+    <section class="page-grid two-column wide-primary">
+      <div class="primary">
+        ${renderToday()}
+      </div>
+      <aside class="side">
+        ${renderManualLog()}
+        ${renderWeightForm()}
+      </aside>
+    </section>
+  `;
+}
+
+function renderReviewPage(): string {
+  return `
+    ${renderPageHeader("Review", "Weekly macro trends, weight movement, and saved review notes.", [])}
+    <section class="page-grid single-column">
+      ${renderReview()}
+    </section>
+  `;
+}
+
+function renderLibraryPage(): string {
+  return `
+    ${renderPageHeader("Library", "Manage food versions, labels, barcode references, and external lookups.", [])}
+    <section class="page-grid two-column">
+      <div class="primary" id="library-admin">
+        ${renderFoodLookup()}
+        ${renderFoodForm()}
+      </div>
+      <aside class="side">
+        ${renderProposal()}
+        ${renderProposalInbox()}
+      </aside>
+    </section>
+  `;
+}
+
+function renderWorkPage(): string {
+  return `
+    ${renderPageHeader("Work", "Background jobs, offline outbox, proposal history, and agent audit trail.", [
+      navigator.onLine ? "Online" : "Offline"
+    ])}
+    <section class="page-grid two-column">
+      <div class="primary">
+        ${renderJobs()}
+        ${renderOfflineOutbox()}
+      </div>
+      <aside class="side">
+        ${renderProposal()}
+        ${renderProposalInbox()}
+        ${renderAgentChat()}
+      </aside>
+    </section>
+  `;
+}
+
+function renderSettingsPage(): string {
+  return `
+    ${renderPageHeader("Settings", "Household profiles, macro targets, and data portability.", [])}
+    <section class="page-grid two-column">
+      <div class="primary">
+        ${renderSetup()}
+        ${renderGoalForm()}
+      </div>
+      <aside class="side">
+        ${renderDataPortability()}
+      </aside>
+    </section>
+  `;
+}
+
+function renderPageHeader(title: string, subtitle: string, chips: string[]): string {
+  const visibleChips = chips.filter(Boolean);
+  return `
+    <section class="page-header">
+      <div>
+        <p class="eyebrow">Workspace</p>
+        <h2>${escapeHtml(title)}</h2>
+        <p>${escapeHtml(subtitle)}</p>
+      </div>
+      ${
+        visibleChips.length
+          ? `<div class="capture-context">${visibleChips.map((chip) => `<span>${escapeHtml(chip)}</span>`).join("")}</div>`
+          : ""
+      }
+    </section>
+  `;
 }
 
 function renderToday(): string {
@@ -436,7 +734,7 @@ function renderToday(): string {
     .join("");
 
   return `
-    <section class="today">
+    <section class="today" id="today-summary">
       <div class="section-heading">
         <div>
           <p class="eyebrow">Today</p>
@@ -530,7 +828,7 @@ function renderReview(): string {
     )
     .join("");
   return `
-    <section class="today">
+    <section class="today" id="weekly-review">
       <div class="section-heading">
         <div>
           <p class="eyebrow">Review</p>
@@ -572,7 +870,7 @@ function renderReview(): string {
 function renderProposal(): string {
   if (!state.proposal) {
     return `
-      <section class="proposal-empty">
+      <section class="proposal-empty" id="proposal-review">
         <p class="eyebrow">Agent proposal</p>
         <h2>No pending proposal</h2>
       </section>
@@ -642,7 +940,7 @@ function renderProposal(): string {
   const canConfirm = state.proposal.status === "draft";
   const canReject = state.proposal.status === "draft" || state.proposal.status === "needs_clarification";
   return `
-    <section class="proposal">
+    <section class="proposal" id="proposal-review">
       <div class="section-heading">
         <div>
           <p class="eyebrow">Agent proposal</p>
@@ -1003,7 +1301,7 @@ function renderOfflineOutbox(): string {
         </div>
         <button id="replay-offline-outbox" type="button" ${state.isOfflineReplayRunning ? "disabled" : ""}>Retry all</button>
       </div>
-      <p class="hint">${escapeHtml(connection)} · agent inputs are saved here when the API is unreachable.</p>
+      <p class="hint">${escapeHtml(connection)} · Offline capture is ready. Agent work runs after reconnect.</p>
       ${
         rows
           ? `<ul class="job-list offline-list">${rows}</ul>`
@@ -1363,25 +1661,60 @@ function renderWeightForm(): string {
   `;
 }
 
+function renderTemplatePreview(title: string, body: string): string {
+  return `
+    <section class="template-preview" aria-label="${escapeHtml(title)} template">
+      <div>
+        <p class="eyebrow">Message template</p>
+        <h3>${escapeHtml(title)}</h3>
+      </div>
+      <pre>${escapeHtml(body)}</pre>
+    </section>
+  `;
+}
+
+function advancedSettings(content: string): string {
+  return `
+    <details class="advanced-settings">
+      <summary>Advanced settings</summary>
+      <div class="advanced-settings-body">${content}</div>
+    </details>
+  `;
+}
+
 function renderTextMeal(): string {
   const disabled = state.person ? "" : "disabled";
+  const template = `Mode: meal_log
+Day: ${state.selectedDay}
+Instruction: Parse the user's meal note, resolve foods by local library/recency/barcode/web lookup, and draft diary entries only.
+User note: 10am, 100g queijo`;
   return `
-    <form id="text-meal-form" class="panel">
-      <p class="eyebrow">Agent input</p>
-      <h2>Text meal</h2>
-      <label>Text <input name="text" value="10am, 100g queijo" ${disabled} /></label>
-      <label>Model profile <input name="model_profile" value="ollama-local" ${disabled} /></label>
-      <label>Effort
-        <select name="effort" ${disabled}>
-          <option value="low">Low</option>
-          <option value="medium" selected>Medium</option>
-          <option value="high">High</option>
-        </select>
+    <form id="text-meal-form" class="panel chat-composer">
+      <p class="eyebrow">Starter mode</p>
+      <h2>Meal note</h2>
+      ${renderTemplatePreview("Meal log prompt", template)}
+      <label>Message
+        <textarea name="text" ${disabled}>10am
+- 100g queijo
+- cafe com leite
+- banana depois do treino</textarea>
       </label>
-      <label>Max loops <input name="max_tool_loops" type="number" value="4" min="1" max="12" ${disabled} /></label>
-      <label class="check-row"><input name="external_lookup" type="checkbox" checked ${disabled} /> External lookup</label>
-      <label class="check-row"><input name="research_lookup" type="checkbox" checked ${disabled} /> Research lookup</label>
-      <label class="check-row"><input name="background_job" type="checkbox" ${disabled} /> Run in background</label>
+      ${advancedSettings(`
+        <div class="grid-two">
+          <label>Model profile <input name="model_profile" value="ollama-local" ${disabled} /></label>
+          <label>Effort
+            <select name="effort" ${disabled}>
+              <option value="low">Low</option>
+              <option value="medium" selected>Medium</option>
+              <option value="high">High</option>
+            </select>
+          </label>
+          <label>Max loops <input name="max_tool_loops" type="number" value="4" min="1" max="12" ${disabled} /></label>
+        </div>
+        <label class="check-row"><input name="external_lookup" type="checkbox" checked ${disabled} /> External lookup</label>
+        <label class="check-row"><input name="research_lookup" type="checkbox" checked ${disabled} /> Research lookup</label>
+        <label class="check-row"><input name="background_job" type="checkbox" ${disabled} /> Run in background</label>
+      `)}
       <button type="submit" ${disabled}>Draft proposal</button>
     </form>
   `;
@@ -1390,24 +1723,35 @@ function renderTextMeal(): string {
 function renderAgentChat(): string {
   const disabled = state.person ? "" : "disabled";
   const response = state.chatResponse;
+  const template = `Mode: general_chat
+Day: ${state.selectedDay}
+Instruction: Answer from app data, troubleshoot a log, or draft corrections/review notes without direct writes.
+Message: Why was ${state.selectedDay} high in calories?`;
   return `
-    <form id="agent-chat-form" class="panel">
-      <p class="eyebrow">Agent chat</p>
+    <form id="agent-chat-form" class="panel chat-composer">
+      <p class="eyebrow">Starter mode</p>
       <h2>Ask / correct</h2>
+      ${renderTemplatePreview("General chat prompt", template)}
       <textarea name="message" ${disabled}>Why was ${state.selectedDay} high in calories?</textarea>
-      <div class="grid-two">
-        <label>Model profile <input name="model_profile" value="deterministic-local" ${disabled} /></label>
-        <label>Effort
-          <select name="effort" ${disabled}>
-            <option value="low">Low</option>
-            <option value="medium" selected>Medium</option>
-            <option value="high">High</option>
-          </select>
-        </label>
-        <label>Max loops <input name="max_tool_loops" type="number" value="4" min="1" max="12" ${disabled} /></label>
-      </div>
-      <label class="check-row"><input name="research_lookup" type="checkbox" checked ${disabled} /> Research lookup</label>
-      <label class="check-row"><input name="background_job" type="checkbox" ${disabled} /> Run in background</label>
+      <label>Attachments
+        <input name="attachment" type="file" accept="image/*" capture="environment" multiple ${disabled} />
+        <span class="field-hint">Optional. Attach label photos here too; the agent can run OCR when it needs image text.</span>
+      </label>
+      ${advancedSettings(`
+        <div class="grid-two">
+          <label>Model profile <input name="model_profile" value="deterministic-local" ${disabled} /></label>
+          <label>Effort
+            <select name="effort" ${disabled}>
+              <option value="low">Low</option>
+              <option value="medium" selected>Medium</option>
+              <option value="high">High</option>
+            </select>
+          </label>
+          <label>Max loops <input name="max_tool_loops" type="number" value="4" min="1" max="12" ${disabled} /></label>
+        </div>
+        <label class="check-row"><input name="research_lookup" type="checkbox" checked ${disabled} /> Research lookup</label>
+        <label class="check-row"><input name="background_job" type="checkbox" ${disabled} /> Run in background</label>
+      `)}
       <button type="submit" ${disabled}>Send</button>
       ${
         response
@@ -1444,22 +1788,34 @@ function renderChatHistory(): string {
 
 function renderLabelScan(): string {
   const disabled = state.household && state.person ? "" : "disabled";
+  const template = `Mode: label_scan
+Instruction: Extract or create an immutable food version, associate barcode/attachment evidence, and optionally draft a diary entry.
+Barcode: optional
+Nutrition label text or image: Produto, porcao, calorias, macros`;
   return `
-    <form id="label-scan-form" class="panel">
-      <p class="eyebrow">Label scan</p>
-      <h2>Nutrition table</h2>
-      <label>Image <input name="attachment" type="file" accept="image/*" ${disabled} /></label>
-      <label>Barcode <input name="barcode" inputmode="numeric" placeholder="optional separate scan" ${disabled} /></label>
-      <div class="grid-two">
-        <label>Log time <input name="logged_at_local" type="datetime-local" value="${defaultDateTime("10:00")}" ${disabled} /></label>
-        <label>Log grams <input name="quantity_g" type="number" step="0.1" placeholder="optional" ${disabled} /></label>
-        <label>Meal
-          <select name="meal_type" ${disabled}>
-            ${mealOptions("breakfast")}
-          </select>
+    <form id="label-scan-form" class="panel chat-composer">
+      <p class="eyebrow">Starter mode</p>
+      <h2>Product label</h2>
+      ${renderTemplatePreview("Product label prompt", template)}
+      <label>Photos
+        <input name="attachment" type="file" accept="image/*" capture="environment" multiple ${disabled} />
+        <span class="field-hint">Use more than one photo when lighting, glare, or package folds hide part of the table.</span>
+      </label>
+      <div class="barcode-row">
+        <label>Barcode
+          <input name="barcode" inputmode="numeric" autocomplete="off" placeholder="scan or type numbers" ${disabled} />
         </label>
+        <button id="barcode-scan-start" type="button" ${disabled}>Scan</button>
       </div>
-      <textarea name="table_text" placeholder="Optional when an image is attached" ${disabled}>Produto: Iogurte Batavo Protein
+      <section id="barcode-scanner" class="barcode-scanner" hidden>
+        <video id="barcode-video" playsinline muted></video>
+        <div class="button-row">
+          <button id="barcode-scan-stop" type="button">Stop camera</button>
+        </div>
+        <p class="hint">Point the camera at the barcode. If the browser cannot decode it, type the numbers manually.</p>
+      </section>
+      <label>Label text
+        <textarea name="table_text" placeholder="Optional when photos are clear. Paste OCR/table text here when photos are incomplete, blurry, or copied from a website." ${disabled}>Produto: Iogurte Batavo Protein
 Marca: Batavo
 Porcao: 170 g
 Valor energetico: 120 kcal
@@ -1467,7 +1823,20 @@ Proteinas: 15 g
 Carboidratos: 10 g
 Gorduras totais: 2 g
 Codigo de barras: 7891000000000</textarea>
-      <label class="check-row"><input name="background_job" type="checkbox" ${disabled} /> Run in background</label>
+        <span class="field-hint">This is extra evidence for the agent, not a separate product. It helps when an image is unreadable or when you already have table-like text.</span>
+      </label>
+      ${advancedSettings(`
+        <div class="grid-two">
+          <label>Log time <input name="logged_at_local" type="datetime-local" value="${defaultDateTime("10:00")}" ${disabled} /></label>
+          <label>Log grams <input name="quantity_g" type="number" step="0.1" placeholder="optional" ${disabled} /></label>
+          <label>Meal
+            <select name="meal_type" ${disabled}>
+              ${mealOptions("breakfast")}
+            </select>
+          </label>
+        </div>
+        <label class="check-row"><input name="background_job" type="checkbox" ${disabled} /> Run in background</label>
+      `)}
       <button type="submit" ${disabled}>Draft food version</button>
     </form>
   `;
@@ -1475,25 +1844,31 @@ Codigo de barras: 7891000000000</textarea>
 
 function renderRecipeForm(): string {
   const disabled = state.household && state.person ? "" : "disabled";
+  const template = `Mode: recipe
+Instruction: Register a batch food from ingredients, estimate/calculate nutrients, and optionally draft a diary entry for a portion.
+Recipe: name, yield, ingredients`;
   return `
-    <form id="recipe-form" class="panel">
-      <p class="eyebrow">Batch food</p>
+    <form id="recipe-form" class="panel chat-composer">
+      <p class="eyebrow">Starter mode</p>
       <h2>Recipe</h2>
-      <div class="grid-two">
-        <label>Log time <input name="logged_at_local" type="datetime-local" value="${defaultDateTime("12:30")}" ${disabled} /></label>
-        <label>Log grams <input name="quantity_g" type="number" step="0.1" placeholder="optional" ${disabled} /></label>
-        <label>Meal
-          <select name="meal_type" ${disabled}>
-            ${mealOptions("lunch")}
-          </select>
-        </label>
-      </div>
+      ${renderTemplatePreview("Recipe prompt", template)}
       <textarea name="recipe_text" ${disabled}>Recipe: Batch breakfast mix
 Yield: 1000 g
 Ingredients:
 500g queijo
 500g banana</textarea>
-      <label class="check-row"><input name="background_job" type="checkbox" ${disabled} /> Run in background</label>
+      ${advancedSettings(`
+        <div class="grid-two">
+          <label>Log time <input name="logged_at_local" type="datetime-local" value="${defaultDateTime("12:30")}" ${disabled} /></label>
+          <label>Log grams <input name="quantity_g" type="number" step="0.1" placeholder="optional" ${disabled} /></label>
+          <label>Meal
+            <select name="meal_type" ${disabled}>
+              ${mealOptions("lunch")}
+            </select>
+          </label>
+        </div>
+        <label class="check-row"><input name="background_job" type="checkbox" ${disabled} /> Run in background</label>
+      `)}
       <button type="submit" ${disabled}>Draft recipe</button>
     </form>
   `;
@@ -1524,6 +1899,12 @@ function bindEvents(): void {
   document.querySelector<HTMLFormElement>("#agent-chat-form")?.addEventListener("submit", safeAsync(onAgentChat));
   document.querySelector<HTMLFormElement>("#label-scan-form")?.addEventListener("submit", safeAsync(onLabelScan));
   document.querySelector<HTMLFormElement>("#recipe-form")?.addEventListener("submit", safeAsync(onRecipe));
+  document
+    .querySelector<HTMLButtonElement>("#barcode-scan-start")
+    ?.addEventListener("click", safeAsync(onBarcodeScanStart));
+  document
+    .querySelector<HTMLButtonElement>("#barcode-scan-stop")
+    ?.addEventListener("click", safeAsync(onBarcodeScanStop));
   document.querySelector<HTMLFormElement>("#import-form")?.addEventListener("submit", safeAsync(onImportData));
   document
     .querySelectorAll<HTMLSelectElement>(".profile-select")
@@ -1531,6 +1912,9 @@ function bindEvents(): void {
   document
     .querySelectorAll<HTMLInputElement>(".food-filter")
     .forEach((input) => input.addEventListener("input", onFoodFilterInput));
+  document
+    .querySelectorAll<HTMLButtonElement>(".log-mode-button")
+    .forEach((button) => button.addEventListener("click", onLogModeSelect));
   document.querySelector<HTMLInputElement>("#selected-day")?.addEventListener("change", safeAsync(onSelectedDayChange));
   document.querySelector<HTMLButtonElement>("#refresh-summary")?.addEventListener("click", safeAsync(refreshSummary));
   document.querySelector<HTMLButtonElement>("#refresh-review")?.addEventListener("click", safeAsync(refreshReview));
@@ -1585,6 +1969,78 @@ function bindEvents(): void {
   document
     .querySelectorAll<HTMLButtonElement>(".proposal-open")
     .forEach((button) => button.addEventListener("click", safeAsync(onProposalOpen)));
+}
+
+function onLogModeSelect(event: Event): void {
+  const mode = (event.currentTarget as HTMLButtonElement).dataset.logMode as LogMode | undefined;
+  if (!mode) return;
+  stopBarcodeScanner();
+  state.logMode = mode;
+  render();
+}
+
+async function onBarcodeScanStart(): Promise<void> {
+  const detectorCtor = (
+    window as Window & {
+      BarcodeDetector?: new (options?: { formats?: string[] }) => BrowserBarcodeDetector;
+    }
+  ).BarcodeDetector;
+  if (!detectorCtor) {
+    state.notice = "This browser cannot decode barcodes directly. Use the photo upload or type the numbers.";
+    render();
+    return;
+  }
+  const scanner = document.querySelector<HTMLElement>("#barcode-scanner");
+  const video = document.querySelector<HTMLVideoElement>("#barcode-video");
+  const input = document.querySelector<HTMLInputElement>("#label-scan-form input[name='barcode']");
+  if (!scanner || !video || !input) return;
+  stopBarcodeScanner();
+  barcodeScannerStream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: { ideal: "environment" } },
+    audio: false
+  });
+  video.srcObject = barcodeScannerStream;
+  scanner.hidden = false;
+  await video.play();
+  const detector = new detectorCtor({
+    formats: ["ean_13", "ean_8", "upc_a", "upc_e", "code_128"]
+  });
+  barcodeScannerTimer = window.setInterval(() => {
+    void (async () => {
+      if (!barcodeScannerStream || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
+      const results = await detector.detect(video);
+      const value = results[0]?.rawValue?.trim();
+      if (!value) return;
+      input.value = value;
+      stopBarcodeScanner();
+      state.notice = "Barcode scanned.";
+      render();
+    })().catch((error) => {
+      stopBarcodeScanner();
+      reportUiError(error);
+    });
+  }, 450);
+}
+
+async function onBarcodeScanStop(): Promise<void> {
+  stopBarcodeScanner();
+  state.notice = "Barcode camera stopped.";
+  render();
+}
+
+function stopBarcodeScanner(): void {
+  if (barcodeScannerTimer !== null) {
+    window.clearInterval(barcodeScannerTimer);
+    barcodeScannerTimer = null;
+  }
+  if (barcodeScannerStream) {
+    barcodeScannerStream.getTracks().forEach((track) => track.stop());
+    barcodeScannerStream = null;
+  }
+  const scanner = document.querySelector<HTMLElement>("#barcode-scanner");
+  const video = document.querySelector<HTMLVideoElement>("#barcode-video");
+  if (video) video.srcObject = null;
+  if (scanner) scanner.hidden = true;
 }
 
 function safeAsync<T extends Event>(handler: (event: T) => Promise<void>): (event: T) => void {
@@ -1701,9 +2157,22 @@ async function replayOfflineOutbox(): Promise<void> {
     render();
     try {
       const payload = { ...current.payload };
-      if (!payload.attachment_id && current.files.length) {
-        const attachment = await uploadQueuedAttachment(current, current.files[0]);
-        payload.attachment_id = attachment.id;
+      const existingAttachmentIds = Array.isArray(payload.attachment_ids)
+        ? payload.attachment_ids
+        : [];
+      if (!existingAttachmentIds.length && current.files.length) {
+        const attachments: AttachmentObject[] = [];
+        for (const file of current.files) {
+          attachments.push(await uploadQueuedAttachment(current, file));
+        }
+        payload.attachment_ids = attachments.map((attachment) => attachment.id);
+        payload.attachment_id = attachments[0]?.id ?? null;
+        if (current.kind === "agent_chat") {
+          payload.message = appendAttachmentIdsToMessage(
+            String(payload.message ?? ""),
+            payload.attachment_ids as string[]
+          );
+        }
       }
       const job = await apiPost<BackgroundJob>("/api/jobs", {
         job_type: current.kind,
@@ -2191,6 +2660,83 @@ async function onWeightEdit(event: SubmitEvent): Promise<void> {
   await refreshReview();
 }
 
+function recordLogEvent(mode: LogMode, title: string, message: string, result: string): void {
+  state.logEvents = [
+    ...state.logEvents.slice(-7),
+    {
+      id: newClientRequestId(),
+      mode,
+      title,
+      message,
+      result,
+      created_at: new Date().toISOString()
+    }
+  ];
+}
+
+function textMealPromptPreview(payload: {
+  logged_at_local: string;
+  text: string;
+  agent_settings: Record<string, unknown>;
+}): string {
+  return `Mode: meal_log
+Day: ${state.selectedDay}
+Logged at: ${payload.logged_at_local}
+Settings: ${JSON.stringify(payload.agent_settings)}
+User note: ${payload.text}`;
+}
+
+function chatPromptPreview(payload: {
+  today: string;
+  message: string;
+  attachment_ids?: string[];
+  agent_settings: Record<string, unknown>;
+}): string {
+  return `Mode: general_chat
+Day: ${payload.today}
+Settings: ${JSON.stringify(payload.agent_settings)}
+Attachments: ${payload.attachment_ids?.length ? payload.attachment_ids.join(", ") : "none"}
+Message: ${payload.message}`;
+}
+
+function appendAttachmentIdsToMessage(message: string, attachmentIds: string[]): string {
+  if (!attachmentIds.length) return message;
+  return `${message.trim()}
+
+Attached image ids for OCR:
+${attachmentIds.map((id) => `- ${id}`).join("\n")}`;
+}
+
+function labelScanPromptPreview(payload: {
+  table_text: string;
+  barcode: string | null;
+  attachment_id: string | null;
+  attachment_ids?: string[];
+  logged_at_local: string | null;
+  quantity_g: number | null;
+  meal_type: string | null;
+}): string {
+  const photoCount = payload.attachment_ids?.length ?? (payload.attachment_id ? 1 : 0);
+  return `Mode: label_scan
+Barcode: ${payload.barcode ?? "none"}
+Photos: ${photoCount ? `${photoCount} uploaded (${payload.attachment_ids?.join(", ") ?? payload.attachment_id})` : "pending or none"}
+Optional log: ${payload.quantity_g === null ? "none" : `${payload.quantity_g} g at ${payload.logged_at_local} (${payload.meal_type})`}
+Nutrition label:
+${payload.table_text || "[image only]"}`;
+}
+
+function recipePromptPreview(payload: {
+  recipe_text: string;
+  logged_at_local: string | null;
+  quantity_g: number | null;
+  meal_type: string | null;
+}): string {
+  return `Mode: recipe
+Optional log: ${payload.quantity_g === null ? "none" : `${payload.quantity_g} g at ${payload.logged_at_local} (${payload.meal_type})`}
+Recipe:
+${payload.recipe_text}`;
+}
+
 async function onTextMeal(event: SubmitEvent): Promise<void> {
   event.preventDefault();
   if (!state.person) return;
@@ -2214,6 +2760,8 @@ async function onTextMeal(event: SubmitEvent): Promise<void> {
       if (!isProbablyOfflineError(error)) throw error;
       await queueOfflineAgent("agent_text_meal", payload, [], error);
     }
+    recordLogEvent("meal", "Meal note queued", textMealPromptPreview(payload), "Background job queued for proposal drafting.");
+    render();
     return;
   }
   try {
@@ -2221,8 +2769,11 @@ async function onTextMeal(event: SubmitEvent): Promise<void> {
   } catch (error) {
     if (!isProbablyOfflineError(error)) throw error;
     await queueOfflineAgent("agent_text_meal", payload, [], error);
+    recordLogEvent("meal", "Meal note saved offline", textMealPromptPreview(payload), "Saved locally and will replay after reconnect.");
+    render();
     return;
   }
+  recordLogEvent("meal", "Meal note sent", textMealPromptPreview(payload), state.proposal.summary);
   state.notice = "Proposal drafted. Review before applying.";
   await refreshProposals();
 }
@@ -2231,10 +2782,13 @@ async function onAgentChat(event: SubmitEvent): Promise<void> {
   event.preventDefault();
   if (!state.person) return;
   const form = new FormData(event.currentTarget as HTMLFormElement);
+  const queuedFiles = queuedFilesFromForm(form, "attachment", "chat_image");
+  let message = requiredText(form, "message");
   const payload = {
     person_id: state.person.id,
-    message: requiredText(form, "message"),
+    message,
     today: state.selectedDay,
+    attachment_ids: [] as string[],
     agent_settings: {
       model_profile: requiredText(form, "model_profile"),
       effort: requiredText(form, "effort"),
@@ -2242,6 +2796,26 @@ async function onAgentChat(event: SubmitEvent): Promise<void> {
       research_lookup: form.get("research_lookup") === "on"
     }
   };
+  if (!navigator.onLine) {
+    await queueOfflineAgent("agent_chat", payload, queuedFiles);
+    recordLogEvent("chat", "Chat saved offline", chatPromptPreview(payload), "Saved locally and will replay after reconnect.");
+    render();
+    return;
+  }
+  let attachments: AttachmentObject[] = [];
+  try {
+    attachments = await uploadOptionalAttachments(form, "attachment", "chat_image");
+    payload.attachment_ids = attachments.map((attachment) => attachment.id);
+    if (payload.attachment_ids.length) {
+      payload.message = appendAttachmentIdsToMessage(message, payload.attachment_ids);
+    }
+  } catch (error) {
+    if (!isProbablyOfflineError(error)) throw error;
+    await queueOfflineAgent("agent_chat", payload, queuedFiles, error);
+    recordLogEvent("chat", "Chat saved offline", chatPromptPreview(payload), "Saved locally and will replay after reconnect.");
+    render();
+    return;
+  }
   if (form.get("background_job") === "on") {
     try {
       await enqueueJob("agent_chat", payload);
@@ -2249,6 +2823,8 @@ async function onAgentChat(event: SubmitEvent): Promise<void> {
       if (!isProbablyOfflineError(error)) throw error;
       await queueOfflineAgent("agent_chat", payload, [], error);
     }
+    recordLogEvent("chat", "Chat queued", chatPromptPreview(payload), "Background job queued for the worker.");
+    render();
     return;
   }
   try {
@@ -2256,8 +2832,11 @@ async function onAgentChat(event: SubmitEvent): Promise<void> {
   } catch (error) {
     if (!isProbablyOfflineError(error)) throw error;
     await queueOfflineAgent("agent_chat", payload, [], error);
+    recordLogEvent("chat", "Chat saved offline", chatPromptPreview(payload), "Saved locally and will replay after reconnect.");
+    render();
     return;
   }
+  recordLogEvent("chat", "Chat sent", chatPromptPreview(payload), state.chatResponse.message);
   await refreshChatHistory();
   if (state.chatResponse.proposal) {
     state.proposal = state.chatResponse.proposal;
@@ -2285,18 +2864,22 @@ async function onLabelScan(event: SubmitEvent): Promise<void> {
     barcode: optionalText(form, "barcode"),
     set_as_default: true,
     attachment_id: null as string | null,
+    attachment_ids: [] as string[],
     logged_at_local: quantityG === null ? null : requiredText(form, "logged_at_local"),
     quantity_g: quantityG,
     meal_type: quantityG === null ? null : requiredText(form, "meal_type")
   };
   if (!navigator.onLine) {
     await queueOfflineAgent("agent_label_scan", payload, queuedFiles);
+    recordLogEvent("label", "Product label saved offline", labelScanPromptPreview(payload), "Saved locally with upload evidence for replay.");
+    render();
     return;
   }
-  let attachment: AttachmentObject | null = null;
+  let attachments: AttachmentObject[] = [];
   try {
-    attachment = await uploadOptionalAttachment(form, "attachment", "nutrition_label_image");
-    payload.attachment_id = attachment?.id ?? null;
+    attachments = await uploadOptionalAttachments(form, "attachment", "nutrition_label_image");
+    payload.attachment_ids = attachments.map((attachment) => attachment.id);
+    payload.attachment_id = payload.attachment_ids[0] ?? null;
   } catch (error) {
     if (!isProbablyOfflineError(error)) throw error;
     await queueOfflineAgent("agent_label_scan", payload, queuedFiles, error);
@@ -2309,10 +2892,12 @@ async function onLabelScan(event: SubmitEvent): Promise<void> {
       if (!isProbablyOfflineError(error)) throw error;
       await queueOfflineAgent(
         "agent_label_scan",
-        attachment ? payload : { ...payload, attachment_id: null },
-        attachment ? [] : queuedFiles,
+        attachments.length ? payload : { ...payload, attachment_id: null, attachment_ids: [] },
+        attachments.length ? [] : queuedFiles,
         error
       );
+      recordLogEvent("label", "Product label saved offline", labelScanPromptPreview(payload), "Saved locally with upload evidence for replay.");
+      render();
     }
     return;
   }
@@ -2322,14 +2907,17 @@ async function onLabelScan(event: SubmitEvent): Promise<void> {
     if (!isProbablyOfflineError(error)) throw error;
     await queueOfflineAgent(
       "agent_label_scan",
-      attachment ? payload : { ...payload, attachment_id: null },
-      attachment ? [] : queuedFiles,
+      attachments.length ? payload : { ...payload, attachment_id: null, attachment_ids: [] },
+      attachments.length ? [] : queuedFiles,
       error
     );
+    recordLogEvent("label", "Product label saved offline", labelScanPromptPreview(payload), "Saved locally with upload evidence for replay.");
+    render();
     return;
   }
-  state.notice = attachment
-    ? "Food version proposal drafted with attachment evidence."
+  recordLogEvent("label", "Product label sent", labelScanPromptPreview(payload), state.proposal.summary);
+  state.notice = attachments.length
+    ? `Food version proposal drafted with ${attachments.length} attachment${attachments.length === 1 ? "" : "s"}.`
     : "Food version proposal drafted.";
   await refreshProposals();
 }
@@ -2354,6 +2942,8 @@ async function onRecipe(event: SubmitEvent): Promise<void> {
       if (!isProbablyOfflineError(error)) throw error;
       await queueOfflineAgent("agent_recipe", payload, [], error);
     }
+    recordLogEvent("recipe", "Recipe queued", recipePromptPreview(payload), "Background job queued for recipe drafting.");
+    render();
     return;
   }
   try {
@@ -2361,8 +2951,11 @@ async function onRecipe(event: SubmitEvent): Promise<void> {
   } catch (error) {
     if (!isProbablyOfflineError(error)) throw error;
     await queueOfflineAgent("agent_recipe", payload, [], error);
+    recordLogEvent("recipe", "Recipe saved offline", recipePromptPreview(payload), "Saved locally and will replay after reconnect.");
+    render();
     return;
   }
+  recordLogEvent("recipe", "Recipe sent", recipePromptPreview(payload), state.proposal.summary);
   state.notice = "Recipe proposal drafted.";
   await refreshProposals();
 }
@@ -2580,7 +3173,12 @@ async function hydrateStoredSession(): Promise<void> {
       await refreshAllReadSurfaces();
       return;
     }
-  } catch {
+  } catch (error) {
+    if (isProbablyOfflineError(error)) {
+      state.notice = "Offline mode: saved notes remain available in the outbox.";
+      render();
+      return;
+    }
     localStorage.removeItem(sessionStorageKey);
   }
   render();
@@ -2621,8 +3219,6 @@ function registerServiceWorker(): void {
       .register("/service-worker.js")
       .then((registration) => {
         if (!registration.active) return;
-        state.notice ??= "App shell is available offline.";
-        render();
       })
       .catch(() => {
         state.notice ??= "Offline app shell is unavailable in this browser.";
@@ -2692,37 +3288,43 @@ async function apiDelete<T = unknown>(path: string): Promise<T> {
   return parseResponse<T>(await fetch(path, { method: "DELETE" }));
 }
 
-async function uploadOptionalAttachment(
+async function uploadOptionalAttachments(
   form: FormData,
   key: string,
   objectType: string
-): Promise<AttachmentObject | null> {
-  if (!state.household || !state.person) return null;
-  const file = form.get(key);
-  if (!(file instanceof File) || file.size === 0) return null;
-  return apiPost<AttachmentObject>("/api/attachments", {
-    household_id: state.household.id,
-    person_id: state.person.id,
-    object_type: objectType,
-    mime_type: file.type || "application/octet-stream",
-    filename: file.name || null,
-    content_base64: await fileToBase64(file),
-    retention_policy: "keep"
-  });
+): Promise<AttachmentObject[]> {
+  if (!state.household || !state.person) return [];
+  const files = form
+    .getAll(key)
+    .filter((file): file is File => file instanceof File && file.size > 0);
+  const attachments: AttachmentObject[] = [];
+  for (const file of files) {
+    attachments.push(
+      await apiPost<AttachmentObject>("/api/attachments", {
+        household_id: state.household.id,
+        person_id: state.person.id,
+        object_type: objectType,
+        mime_type: file.type || "application/octet-stream",
+        filename: file.name || null,
+        content_base64: await fileToBase64(file),
+        retention_policy: "keep"
+      })
+    );
+  }
+  return attachments;
 }
 
 function queuedFilesFromForm(form: FormData, key: string, objectType: string): OfflineOutboxFile[] {
-  const file = form.get(key);
-  if (!(file instanceof File) || file.size === 0) return [];
-  return [
-    {
+  return form
+    .getAll(key)
+    .filter((file): file is File => file instanceof File && file.size > 0)
+    .map((file) => ({
       field: key,
       object_type: objectType,
       filename: file.name || null,
       mime_type: file.type || "application/octet-stream",
       blob: file
-    }
-  ];
+    }));
 }
 
 async function fileToBase64(file: File): Promise<string> {
@@ -2930,8 +3532,8 @@ function titleCase(value: string): string {
 
 function jobLabel(jobType: string): string {
   const labels: Record<string, string> = {
-    agent_text_meal: "Text meal",
-    agent_label_scan: "Label scan",
+    agent_text_meal: "Meal note",
+    agent_label_scan: "Product label",
     agent_recipe: "Recipe",
     agent_chat: "Agent chat"
   };

@@ -43,7 +43,7 @@ class PrivateLabelOCREvalTest(unittest.TestCase):
             raise unittest.SkipTest(f"no private OCR eval JSON files found in {eval_dir()}")
         extractor = OllamaLabelTextExtractor(
             base_url=os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434"),
-            model=os.environ.get("OLLAMA_VISION_MODEL", "llava"),
+            model=os.environ.get("OCR_MODEL", os.environ.get("OLLAMA_OCR_MODEL", "glm-ocr:latest")),
             timeout_seconds=float(os.environ.get("PRIVATE_OCR_TIMEOUT_SECONDS", "90")),
         )
         for case in cases:

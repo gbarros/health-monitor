@@ -5,7 +5,7 @@ import hashlib
 import re
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Sequence
 from zoneinfo import ZoneInfo
 
 from health_monitor.agent import AgentDeps, PydanticAINutritionAgent, PydanticAIUnavailable
@@ -491,6 +491,26 @@ class HealthMonitorService:
         )
         self.attachments[attachment.id] = linked
         return linked
+
+    def extract_label_text_from_attachment(self, *, attachment_id: str) -> dict[str, Any]:
+        attachment = self.get_attachment(attachment_id)
+        if self.label_text_extractor is None:
+            raise ValueError("label text extractor is not configured")
+        extraction = self.label_text_extractor.extract(
+            image_bytes=attachment.content,
+            mime_type=attachment.mime_type,
+            filename=attachment.filename,
+        )
+        if extraction is None or not extraction.text.strip():
+            raise ValueError("could not extract nutrition label text from attachment")
+        return {
+            "attachment_id": attachment.id,
+            "filename": attachment.filename,
+            "text": extraction.text.strip(),
+            "source": extraction.source,
+            "confidence": extraction.confidence,
+            "warnings": list(extraction.warnings),
+        }
 
     def create_food_with_version(
         self,
@@ -1590,6 +1610,7 @@ class HealthMonitorService:
                     source_config={
                         "openfoodfacts_enabled": self.food_lookup_provider is not None,
                         "research_lookup_enabled": self.research_lookup_provider is not None,
+                        "ocr_enabled": self.label_text_extractor is not None,
                     },
                 ),
                 message=message,
@@ -1684,6 +1705,7 @@ class HealthMonitorService:
                     source_config={
                         "openfoodfacts_enabled": self.food_lookup_provider is not None,
                         "research_lookup_enabled": self.research_lookup_provider is not None,
+                        "ocr_enabled": self.label_text_extractor is not None,
                     },
                 ),
                 logged_at_local=logged_at_local,
@@ -2976,6 +2998,7 @@ class HealthMonitorService:
         table_text: str | None,
         set_as_default: bool = True,
         attachment_id: str | None = None,
+        attachment_ids: Sequence[str] | None = None,
         barcode: str | None = None,
         logged_at_local: str | None = None,
         quantity_g: float | None = None,
@@ -2983,25 +3006,43 @@ class HealthMonitorService:
     ) -> CreateDiaryEntriesProposal:
         self._require_household(household_id)
         person = self._require_person(person_id)
-        attachment = None
-        if attachment_id is not None:
-            attachment = self.get_attachment(attachment_id)
-            if attachment.household_id != household_id:
+        attachment_id_list = tuple(str(item) for item in (attachment_ids or ()) if str(item).strip())
+        if attachment_id is not None and str(attachment_id) not in attachment_id_list:
+            attachment_id_list = (str(attachment_id), *attachment_id_list)
+        primary_attachment_id = attachment_id_list[0] if attachment_id_list else attachment_id
+        attachments = tuple(self.get_attachment(item) for item in attachment_id_list)
+        for attachment_item in attachments:
+            if attachment_item.household_id != household_id:
                 raise ValueError("attachment belongs to a different household")
         text_source = "user_text"
-        extraction: LabelTextExtraction | None = None
-        normalized_text = (table_text or "").strip()
-        if not normalized_text:
-            if attachment is None or self.label_text_extractor is None:
-                raise ValueError("label scan requires table text or an attachment text extractor")
-            extraction = self.label_text_extractor.extract(
-                image_bytes=attachment.content,
-                mime_type=attachment.mime_type,
-                filename=attachment.filename,
+        ocr_results: list[dict[str, Any]] = []
+        for attachment_item in attachments:
+            if self.label_text_extractor is None:
+                if not (table_text or "").strip():
+                    raise ValueError("label scan with attachments requires label text or an OCR extractor")
+                continue
+            ocr_results.append(
+                self.extract_label_text_from_attachment(attachment_id=attachment_item.id)
             )
-            if extraction is None or not extraction.text.strip():
-                raise ValueError("could not extract nutrition label text from attachment")
-            normalized_text = extraction.text.strip()
+        text_parts = []
+        if (table_text or "").strip():
+            text_parts.append(("user_text", (table_text or "").strip()))
+        text_parts.extend(
+            (
+                f"ocr:{result['attachment_id']}",
+                str(result["text"]).strip(),
+            )
+            for result in ocr_results
+            if str(result["text"]).strip()
+        )
+        if not text_parts:
+            raise ValueError("label scan requires label text or attachment OCR")
+        normalized_text = "\n\n".join(
+            f"[{source}]\n{text}" for source, text in text_parts
+        ).strip()
+        if ocr_results and table_text and table_text.strip():
+            text_source = "user_text_and_ocr"
+        elif ocr_results:
             text_source = "ocr"
         parsed = parse_nutrition_label_text(normalized_text)
         scanned_barcode = barcode.strip() if barcode is not None else None
@@ -3058,12 +3099,22 @@ class HealthMonitorService:
             "barcode_source": "separate_scan" if scanned_barcode is not None else "label_text",
             "set_as_default": set_as_default,
             "source": "label_scan",
-            "attachment_id": attachment_id,
+            "attachment_id": primary_attachment_id,
+            "attachment_ids": list(attachment_id_list),
             "text_source": text_source,
-            "ocr_text": extraction.text if extraction is not None else None,
-            "ocr_source": extraction.source if extraction is not None else None,
-            "ocr_confidence": extraction.confidence if extraction is not None else None,
-            "ocr_warnings": list(extraction.warnings) if extraction is not None else [],
+            "ocr_text": "\n\n".join(str(result["text"]) for result in ocr_results) or None,
+            "ocr_source": ",".join(str(result["source"]) for result in ocr_results) or None,
+            "ocr_confidence": (
+                min(float(result["confidence"]) for result in ocr_results)
+                if ocr_results
+                else None
+            ),
+            "ocr_warnings": [
+                warning
+                for result in ocr_results
+                for warning in list(result.get("warnings", []))
+            ],
+            "ocr_results": ocr_results,
             "logged_at_local": logged_at_local,
             "quantity_g": quantity_g,
             "meal_type": entries[0].meal_type if entries else None,
@@ -3087,11 +3138,21 @@ class HealthMonitorService:
                         "source_type": "nutrition_label_text",
                         "raw_text": normalized_text,
                         "warnings": list(parsed.warnings),
-                        "attachment_id": attachment_id,
+                        "attachment_id": primary_attachment_id,
+                        "attachment_ids": list(attachment_id_list),
                         "text_source": text_source,
-                        "ocr_source": extraction.source if extraction is not None else None,
-                        "ocr_confidence": extraction.confidence if extraction is not None else None,
-                        "ocr_warnings": list(extraction.warnings) if extraction is not None else [],
+                        "ocr_results": ocr_results,
+                        "ocr_source": ",".join(str(result["source"]) for result in ocr_results) or None,
+                        "ocr_confidence": (
+                            min(float(result["confidence"]) for result in ocr_results)
+                            if ocr_results
+                            else None
+                        ),
+                        "ocr_warnings": [
+                            warning
+                            for result in ocr_results
+                            for warning in list(result.get("warnings", []))
+                        ],
                         "logged_diary_entry": bool(entries),
                     },
                 ),
@@ -3425,6 +3486,7 @@ class HealthMonitorService:
                 table_text=payload.get("table_text"),
                 set_as_default=bool(payload.get("set_as_default", True)),
                 attachment_id=payload.get("attachment_id"),
+                attachment_ids=payload.get("attachment_ids"),
                 barcode=payload.get("barcode"),
                 logged_at_local=payload.get("logged_at_local"),
                 quantity_g=float(payload["quantity_g"]) if payload.get("quantity_g") is not None else None,
@@ -3630,14 +3692,19 @@ class HealthMonitorService:
             association = self.catalog.resolve_barcode(str(barcode))
             if association is not None:
                 applied_ids.append(association.id)
+        attachment_ids = tuple(
+            str(item) for item in (payload.get("attachment_ids") or []) if str(item).strip()
+        )
         attachment_id = payload.get("attachment_id")
-        if attachment_id is not None:
+        if attachment_id is not None and str(attachment_id) not in attachment_ids:
+            attachment_ids = (str(attachment_id), *attachment_ids)
+        for attachment_id in attachment_ids:
             self._link_attachment(
-                str(attachment_id),
+                attachment_id,
                 linked_record_type="food_version",
                 linked_record_id=version.id,
             )
-            applied_ids.append(str(attachment_id))
+            applied_ids.append(attachment_id)
         for entry in proposal.entries:
             if entry.food_version_id != version.id:
                 entry = DiaryEntry(

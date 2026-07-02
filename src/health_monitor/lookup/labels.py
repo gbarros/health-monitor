@@ -47,7 +47,7 @@ class OllamaLabelTextExtractor:
         self,
         *,
         base_url: str = "http://127.0.0.1:11434",
-        model: str = "llava",
+        model: str = "glm-ocr:latest",
         timeout_seconds: float = 60,
         max_attempts: int = 2,
     ) -> None:
@@ -118,7 +118,7 @@ def parse_ollama_label_payload(
             warning_items = tuple(str(item) for item in warnings)
         return LabelTextExtraction(
             text=text,
-            source=f"ollama_vision:{model}",
+            source=f"ollama_ocr:{model}",
             confidence=read_confidence(parsed.get("confidence", 0.45)),
             warnings=warning_items,
         )

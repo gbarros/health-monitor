@@ -38,18 +38,20 @@ test("offline text meal survives reload and replays as a background job", async 
   await page.evaluate(() => navigator.serviceWorker.ready);
 
   await context.setOffline(true);
-  await page.locator("#text-meal-form input[name='text']").fill("10am 50g Offline Replay Cheese");
+  await goToPage(page, "Log");
+  await page.getByRole("button", { name: /Meal note/ }).click();
+  await page.locator("#text-meal-form textarea[name='text']").fill("10am 50g Offline Replay Cheese");
   await page.locator("#text-meal-form button[type='submit']").click();
-  await expect(page.getByText("Text meal saved offline.")).toBeVisible();
+  await expect(page.getByText("Meal note saved offline.")).toBeVisible();
   await expect(page.locator(".offline-list").getByText("pending")).toBeVisible();
 
   await page.reload();
-  await expect(page.locator(".offline-list").getByText("Text meal")).toBeVisible();
+  await expect(page.locator(".offline-list").getByText("Meal note")).toBeVisible();
 
   await context.setOffline(false);
   await page.locator("#replay-offline-outbox").click();
   await expect(page.locator(".offline-list").getByText("sent")).toBeVisible();
-  await expect(backgroundJobRows(page).filter({ hasText: "Text meal" })).toHaveCount(1);
+  await expect(backgroundJobRows(page).filter({ hasText: "Meal note" })).toHaveCount(1);
 
   await page.locator(".job-process").first().click();
   await expect(page.getByText("Job succeeded.")).toBeVisible();
@@ -63,6 +65,8 @@ test("offline label scan persists upload and replays with attachment evidence", 
   await page.evaluate(() => navigator.serviceWorker.ready);
 
   await context.setOffline(true);
+  await goToPage(page, "Log");
+  await page.getByRole("button", { name: /Product label/ }).click();
   await fillLabelScan(page, {
     table_text:
       "Produto: Iogurte Replay\nMarca: Synthetic\nPorcao: 170 g\nValor energetico: 120 kcal\nProteinas: 15 g\nCarboidratos: 10 g\nGorduras totais: 2 g",
@@ -71,10 +75,11 @@ test("offline label scan persists upload and replays with attachment evidence", 
     imageBuffer: Buffer.from("offline label image")
   });
   await page.locator("#label-scan-form button[type='submit']").click();
-  await expect(page.getByText("Label scan saved offline.")).toBeVisible();
+  await expect(page.getByText("Product label saved offline.")).toBeVisible();
   await expect(page.locator(".offline-list").getByText("1 upload")).toBeVisible();
 
   await context.setOffline(false);
+  await goToPage(page, "Work");
   await page.locator("#replay-offline-outbox").click();
   await expect(page.locator(".offline-list").getByText("sent")).toBeVisible();
   await page.locator(".job-process").first().click();
@@ -89,6 +94,8 @@ test("failed offline replay stays retryable and idempotent", async ({ page, cont
   await setupHousehold(page);
 
   await context.setOffline(true);
+  await goToPage(page, "Log");
+  await page.getByRole("button", { name: /Chat/ }).click();
   await page.locator("#agent-chat-form textarea[name='message']").fill("Review this day later.");
   await page.locator("#agent-chat-form button[type='submit']").click();
   await expect(page.getByText("Agent chat saved offline.")).toBeVisible();
@@ -99,6 +106,7 @@ test("failed offline replay stays retryable and idempotent", async ({ page, cont
   await expect(page.locator(".offline-list").getByText("pending")).toBeVisible();
 
   await context.setOffline(false);
+  await goToPage(page, "Work");
   await page.locator("#replay-offline-outbox").click();
   await expect(page.locator(".offline-list").getByText("sent")).toBeVisible();
   await page.locator("#replay-offline-outbox").click();
@@ -115,6 +123,7 @@ test("synthetic week replay scenario completes through the app", async ({ page }
   }
 
   await expect(page.locator(".profile-select").first()).toHaveValue(/person_/);
+  await goToPage(page, "Review");
   await expect(page.locator(".weight-chart")).toBeVisible();
 });
 
@@ -130,6 +139,8 @@ async function runWeekAction(page: Page, scenario: WeekScenario, action: WeekAct
     return;
   }
   if (action.type === "label_scan") {
+    await goToPage(page, "Log");
+    await page.getByRole("button", { name: /Product label/ }).click();
     await fillLabelScan(page, {
       table_text: action.table_text ?? "",
       barcode: action.barcode ?? "",
@@ -141,7 +152,10 @@ async function runWeekAction(page: Page, scenario: WeekScenario, action: WeekAct
     return;
   }
   if (action.type === "text_meal") {
-    await page.locator("#text-meal-form input[name='text']").fill(action.text ?? "");
+    await goToPage(page, "Log");
+    await page.getByRole("button", { name: /Meal note/ }).click();
+    await page.locator("#text-meal-form textarea[name='text']").fill(action.text ?? "");
+    await page.locator("#text-meal-form summary").click();
     await page.locator("#text-meal-form input[name='external_lookup']").uncheck();
     await page.locator("#text-meal-form input[name='research_lookup']").uncheck();
     await page.locator("#text-meal-form button[type='submit']").click();
@@ -149,6 +163,9 @@ async function runWeekAction(page: Page, scenario: WeekScenario, action: WeekAct
     return;
   }
   if (action.type === "recipe") {
+    await goToPage(page, "Log");
+    await page.getByRole("button", { name: /Recipe/ }).click();
+    await page.locator("#recipe-form summary").click();
     await page.locator("#recipe-form input[name='quantity_g']").fill(String(action.quantity_g ?? 100));
     await page.locator("#recipe-form textarea[name='recipe_text']").fill(action.recipe_text ?? "");
     await page.locator("#recipe-form button[type='submit']").click();
@@ -156,10 +173,14 @@ async function runWeekAction(page: Page, scenario: WeekScenario, action: WeekAct
     return;
   }
   if (action.type === "chat_question" || action.type === "correction_request" || action.type === "review_note_request") {
+    await goToPage(page, "Log");
+    await page.getByRole("button", { name: /Chat/ }).click();
     await page.locator("#agent-chat-form textarea[name='message']").fill(action.message ?? "");
+    await page.locator("#agent-chat-form summary").click();
     await page.locator("#agent-chat-form input[name='background_job']").check();
     await page.locator("#agent-chat-form button[type='submit']").click();
     await expect(page.getByText("Agent chat queued for the worker.")).toBeVisible();
+    await goToPage(page, "Work");
     await page.locator(".job-process").first().click();
     await expect(page.getByText("Job succeeded.")).toBeVisible();
     await page.locator(".job-open-chat").first().click();
@@ -167,12 +188,14 @@ async function runWeekAction(page: Page, scenario: WeekScenario, action: WeekAct
     return;
   }
   if (action.type === "weight_entry") {
+    await goToPage(page, "Diary");
     await page.locator("#weight-form input[name='weight_kg']").fill(String(action.weight_kg ?? 91));
     await page.locator("#weight-form button[type='submit']").click();
     await expect(page.getByText("Weight added.")).toBeVisible();
     return;
   }
   if (action.type === "confirm_latest_proposal") {
+    await goToPage(page, "Log");
     const confirm = page.locator("#confirm-proposal");
     if (await confirm.isVisible()) {
       await confirm.click();
@@ -184,6 +207,7 @@ async function runWeekAction(page: Page, scenario: WeekScenario, action: WeekAct
     return;
   }
   if (action.type === "expect_day_totals") {
+    await goToPage(page, "Diary");
     await expect(page.getByText("kcal").first()).toBeVisible();
   }
 }
@@ -202,6 +226,7 @@ async function setupHousehold(
   await expect(page.getByText("Profile created.")).toBeVisible();
 
   if (profiles[1]) {
+    await goToPage(page, "Settings");
     await page.locator("#add-person-form input[name='name']").fill(profiles[1]);
     await page.locator("#add-person-form button[type='submit']").click();
     await expect(page.getByText(`${profiles[1]} added.`)).toBeVisible();
@@ -211,13 +236,20 @@ async function setupHousehold(
 }
 
 async function seedReplayFood(page: Page): Promise<void> {
+  await goToPage(page, "Library");
   await page.locator("#food-form input[name='name']").fill("Offline Replay Cheese");
   await page.locator("#food-form input[name='aliases']").fill("offline replay cheese");
   await page.locator("#food-form button[type='submit']").click();
   await expect(page.getByText(/Offline Replay Cheese .* saved\./)).toBeVisible();
 }
 
+async function goToPage(page: Page, name: string): Promise<void> {
+  await page.getByRole("link", { name }).click();
+  await expect(page.getByRole("link", { name })).toHaveAttribute("aria-current", "page");
+}
+
 async function setSelectedDay(page: Page, day: string): Promise<void> {
+  await goToPage(page, "Diary");
   if ((await page.locator("#selected-day").inputValue()) === day) {
     return;
   }
@@ -238,6 +270,7 @@ async function fillLabelScan(
 ): Promise<void> {
   await page.locator("#label-scan-form textarea[name='table_text']").fill(options.table_text);
   await page.locator("#label-scan-form input[name='barcode']").fill(options.barcode);
+  await page.locator("#label-scan-form summary").click();
   await page.locator("#label-scan-form input[name='quantity_g']").fill(String(options.quantity_g));
   if (options.imagePath) {
     const imagePath = isAbsolute(options.imagePath) ? options.imagePath : resolve(repoRoot, options.imagePath);

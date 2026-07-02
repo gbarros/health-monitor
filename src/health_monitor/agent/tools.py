@@ -233,6 +233,22 @@ class NutritionAgentTools:
             else None,
         }
 
+    def extract_label_text_from_attachment(
+        self,
+        deps: AgentDeps,
+        *,
+        attachment_id: str,
+    ) -> dict[str, Any]:
+        result = deps.service.extract_label_text_from_attachment(attachment_id=attachment_id)
+        return {
+            "attachment_id": str(result["attachment_id"]),
+            "filename": None if result.get("filename") is None else str(result["filename"]),
+            "text": str(result["text"]),
+            "source": str(result["source"]),
+            "confidence": float(result["confidence"]),
+            "warnings": [str(item) for item in result.get("warnings", [])],
+        }
+
     def draft_text_meal_proposal(
         self,
         deps: AgentDeps,

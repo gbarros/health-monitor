@@ -533,6 +533,7 @@ class HttpApi:
                 table_text=body.get("table_text"),
                 set_as_default=bool(body.get("set_as_default", True)),
                 attachment_id=body.get("attachment_id"),
+                attachment_ids=body.get("attachment_ids"),
                 barcode=body.get("barcode"),
                 logged_at_local=body.get("logged_at_local"),
                 quantity_g=float(body["quantity_g"]) if body.get("quantity_g") is not None else None,

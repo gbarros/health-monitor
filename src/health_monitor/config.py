@@ -19,7 +19,7 @@ class AppConfig:
     ollama_base_url: str = "http://127.0.0.1:11434"
     ollama_model: str = "gemma4:e4b"
     label_text_extractor: str = "ollama"
-    ollama_vision_model: str = "llava"
+    ocr_model: str = "glm-ocr:latest"
     openfoodfacts_enabled: bool = True
     usda_enabled: bool = False
     usda_api_key: str | None = None
@@ -54,10 +54,7 @@ def load_config() -> AppConfig:
             os.environ.get("DEFAULT_MODEL_PROFILE", "gemma4:e4b"),
         ),
         label_text_extractor=os.environ.get("LABEL_TEXT_EXTRACTOR", "ollama"),
-        ollama_vision_model=os.environ.get(
-            "OLLAMA_VISION_MODEL",
-            os.environ.get("OLLAMA_MODEL", "llava"),
-        ),
+        ocr_model=os.environ.get("OCR_MODEL", os.environ.get("OLLAMA_OCR_MODEL", "glm-ocr:latest")),
         openfoodfacts_enabled=os.environ.get("OPENFOODFACTS_ENABLED", "true").casefold()
         in {"1", "true", "yes", "on"},
         usda_enabled=os.environ.get("USDA_ENABLED", "false").casefold()

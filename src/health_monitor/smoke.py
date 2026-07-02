@@ -42,7 +42,7 @@ def check_ollama_readiness(config: AppConfig, *, timeout_seconds: float = 5) -> 
 
     required = {config.ollama_model, config.live_model_name}
     if config.label_text_extractor == "ollama":
-        required.add(config.ollama_vision_model)
+        required.add(config.ocr_model)
     missing = sorted(model for model in required if model and model not in models)
     if missing:
         checks.append(f"missing_models: {', '.join(missing)}")

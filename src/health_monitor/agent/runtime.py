@@ -69,6 +69,9 @@ class HealthMonitorServiceProtocol(Protocol):
     def get_proposal(self, proposal_id: str) -> Any:
         pass
 
+    def extract_label_text_from_attachment(self, *, attachment_id: str) -> dict[str, Any]:
+        pass
+
 
 @dataclass(frozen=True)
 class AgentDeps:
@@ -339,7 +342,8 @@ class PydanticAINutritionAgent:
                 "You are a private household nutrition assistant. Use tools to inspect "
                 "structured app data. Read tools can inspect diary, week summaries, "
                 "weight trend, food resolution, lookup candidates, and food version "
-                "history. Draft tools may create proposals, but they must not claim "
+                "history, and can run targeted OCR on attachment ids when image text "
+                "is needed. Draft tools may create proposals, but they must not claim "
                 "that diary entries or review notes were applied. If asked to change "
                 "data, draft a proposal and explain that the user must confirm it. "
                 "Keep answers concise and cite uncertainty. "
@@ -388,6 +392,11 @@ class PydanticAINutritionAgent:
         async def food_version_history(ctx, phrase: str) -> dict[str, Any]:
             """Inspect matching local food versions, defaults, and recent diary usage."""
             return tools.food_version_history(ctx.deps, phrase=phrase)
+
+        @agent.tool
+        async def extract_label_text_from_attachment(ctx, attachment_id: str) -> dict[str, Any]:
+            """Run the configured targeted OCR model over one uploaded label image attachment."""
+            return tools.extract_label_text_from_attachment(ctx.deps, attachment_id=attachment_id)
 
         @agent.tool
         async def draft_text_meal_proposal(

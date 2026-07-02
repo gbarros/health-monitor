@@ -11,6 +11,30 @@ from health_monitor.lookup.labels import LabelTextExtraction, StaticLabelTextExt
 
 
 class HttpApiContractTest(unittest.TestCase):
+    def ocr_api(self) -> HttpApi:
+        return HttpApi(
+            HealthMonitorService(
+                label_text_extractor=StaticLabelTextExtractor(
+                    LabelTextExtraction(
+                        text="\n".join(
+                            [
+                                "Produto: Iogurte Batavo Protein",
+                                "Marca: Batavo",
+                                "Porcao: 170 g",
+                                "Valor energetico: 120 kcal",
+                                "Proteinas: 15 g",
+                                "Carboidratos: 10 g",
+                                "Gorduras totais: 2 g",
+                                "Codigo de barras: 7891000000000",
+                            ]
+                        ),
+                        source="static_ocr",
+                        confidence=0.9,
+                    )
+                )
+            )
+        )
+
     def test_health_endpoint_reports_api_readiness(self) -> None:
         api = HttpApi(HealthMonitorService())
 
@@ -1665,7 +1689,7 @@ class HttpApiContractTest(unittest.TestCase):
         self.assertEqual(summary["totals"]["calories_kcal"], 80)
 
     def test_attachment_label_scan_round_trip_through_http_contract(self) -> None:
-        api = HttpApi(HealthMonitorService())
+        api = self.ocr_api()
         household = api.handle("POST", "/api/households", {"name": "Casa"}).body
         person = api.handle(
             "POST",
@@ -1719,8 +1743,70 @@ class HttpApiContractTest(unittest.TestCase):
         self.assertEqual(restored_attachment["linked_record_type"], "food_version")
         self.assertEqual(restored_attachment["linked_record_id"], applied["applied_record_ids"][1])
 
+    def test_label_scan_can_link_multiple_photo_attachments_through_http_contract(self) -> None:
+        api = self.ocr_api()
+        household = api.handle("POST", "/api/households", {"name": "Casa"}).body
+        person = api.handle(
+            "POST",
+            "/api/people",
+            {
+                "household_id": household["id"],
+                "name": "Gabriel",
+                "timezone": "America/Sao_Paulo",
+            },
+        ).body
+        attachments = [
+            api.handle(
+                "POST",
+                "/api/attachments",
+                {
+                    "household_id": household["id"],
+                    "person_id": person["id"],
+                    "object_type": "nutrition_label_image",
+                    "mime_type": "image/png",
+                    "filename": filename,
+                    "content_base64": "ZmFrZS1sYWJlbC1pbWFnZQ==",
+                    "retention_policy": "keep",
+                },
+            ).body
+            for filename in ("front-label.png", "macro-table.png")
+        ]
+        proposal = api.handle(
+            "POST",
+            "/api/agent/label-scan",
+            {
+                "household_id": household["id"],
+                "person_id": person["id"],
+                "table_text": "\n".join(
+                    [
+                        "Produto: Iogurte Batavo Protein",
+                        "Marca: Batavo",
+                        "Porcao: 170 g",
+                        "Valor energetico: 120 kcal",
+                        "Proteinas: 15 g",
+                        "Carboidratos: 10 g",
+                        "Gorduras totais: 2 g",
+                    ]
+                ),
+                "attachment_ids": [attachment["id"] for attachment in attachments],
+            },
+        ).body
+
+        applied = api.handle("POST", f"/api/proposals/{proposal['id']}/confirm", None).body
+        food_version_id = applied["applied_record_ids"][1]
+        restored = [
+            api.handle("GET", f"/api/attachments/{attachment['id']}", None).body
+            for attachment in attachments
+        ]
+
+        self.assertEqual(proposal["payload"]["attachment_id"], attachments[0]["id"])
+        self.assertEqual(proposal["payload"]["attachment_ids"], [item["id"] for item in attachments])
+        self.assertEqual(proposal["evidence"][0]["attachment_ids"], [item["id"] for item in attachments])
+        self.assertEqual([item["linked_record_id"] for item in restored], [food_version_id, food_version_id])
+        self.assertTrue(all(item["linked_record_type"] == "food_version" for item in restored))
+
     def test_food_version_evidence_attachments_can_be_listed_through_http_contract(self) -> None:
-        api = HttpApi(HealthMonitorService())
+        api = self.ocr_api()
         household = api.handle("POST", "/api/households", {"name": "Casa"}).body
         person = api.handle(
             "POST",

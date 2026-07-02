@@ -14,7 +14,7 @@ class OllamaSmokeTest(unittest.TestCase):
             model_provider="deterministic",
             ollama_base_url="http://ollama.local:11434",
             ollama_model="ornith:9b",
-            ollama_vision_model="qwen3.6:latest",
+            ocr_model="glm-ocr:latest",
             label_text_extractor="ollama",
             live_model_name="ornith:9b",
         )
@@ -23,15 +23,15 @@ class OllamaSmokeTest(unittest.TestCase):
             result = check_ollama_readiness(config)
 
         self.assertFalse(result.ok)
-        self.assertIn("missing_models: qwen3.6:latest", result.checks)
+        self.assertIn("missing_models: glm-ocr:latest", result.checks)
 
-    def test_skips_vision_model_when_label_extractor_is_disabled(self) -> None:
+    def test_skips_ocr_model_when_label_extractor_is_disabled(self) -> None:
         config = AppConfig(
             agent_runtime="deterministic",
             model_provider="deterministic",
             ollama_base_url="http://ollama.local:11434",
             ollama_model="ornith:9b",
-            ollama_vision_model="missing-vision",
+            ocr_model="missing-ocr",
             label_text_extractor="none",
             live_model_name="ornith:9b",
         )
@@ -48,7 +48,7 @@ class OllamaSmokeTest(unittest.TestCase):
             model_provider="ollama",
             ollama_base_url="http://ollama.local:11434",
             ollama_model="ornith:9b",
-            ollama_vision_model="ornith:9b",
+            ocr_model="ornith:9b",
             label_text_extractor="none",
             live_model_name="ornith:9b",
         )

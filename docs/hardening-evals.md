@@ -54,7 +54,7 @@ Example:
 Run private OCR evals:
 
 ```bash
-PRIVATE_OCR_EVALS=true OLLAMA_VISION_MODEL=llava make test-private-ocr-evals
+PRIVATE_OCR_EVALS=true OCR_MODEL=glm-ocr:latest make test-private-ocr-evals
 ```
 
 The test asks the configured Ollama vision model to extract label text, then feeds that text through the normal label proposal flow. It asserts proposal-grade output without applying any food-library mutation.
@@ -96,13 +96,13 @@ LIVE_MODEL_TESTS=true LIVE_MODEL_NAME=ornith:9b make test-live-model
 Alpha Ollama preflight:
 
 ```bash
-OLLAMA_MODEL=ornith:9b LIVE_MODEL_NAME=ornith:9b OLLAMA_VISION_MODEL=qwen3.6:latest make smoke-ollama
+OLLAMA_MODEL=qwen3.6:latest LIVE_MODEL_NAME=qwen3.6:latest OCR_MODEL=glm-ocr:latest make smoke-ollama
 ```
 
 Private OCR gate:
 
 ```bash
-PRIVATE_OCR_EVALS=true OLLAMA_VISION_MODEL=qwen3.6:latest make test-private-ocr-evals
+PRIVATE_OCR_EVALS=true OCR_MODEL=glm-ocr:latest make test-private-ocr-evals
 ```
 
 Cloud model comparison, opt-in only:

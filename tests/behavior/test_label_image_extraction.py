@@ -59,7 +59,8 @@ class LabelImageExtractionTest(unittest.TestCase):
         self.assertEqual(proposal.payload["ocr_text"], LABEL_TEXT)
         self.assertEqual(proposal.payload["ocr_source"], "static_ocr")
         self.assertEqual(proposal.payload["ocr_confidence"], 0.91)
-        self.assertEqual(proposal.evidence[0]["raw_text"], LABEL_TEXT)
+        self.assertIn(LABEL_TEXT, proposal.evidence[0]["raw_text"])
+        self.assertEqual(proposal.payload["ocr_results"][0]["attachment_id"], attachment.id)
         self.assertEqual(proposal.evidence[0]["ocr_warnings"], ["review sodium manually"])
 
     def test_image_only_label_scan_requires_extractor_result(self) -> None:
