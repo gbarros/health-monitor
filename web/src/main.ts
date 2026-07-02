@@ -154,6 +154,9 @@ type Proposal = {
   totals: Nutrients;
   evidence: Array<Record<string, string | number | boolean | null>>;
   applied_record_ids: string[];
+  created_at: string;
+  confirmed_at: string | null;
+  rejected_at: string | null;
   agent_run: {
     id: string;
     settings: Record<string, string | number | boolean>;
@@ -561,6 +564,7 @@ function renderProposal(): string {
         .join(" · ")
     : "no run settings";
   const canConfirm = state.proposal.status === "draft";
+  const canReject = state.proposal.status === "draft" || state.proposal.status === "needs_clarification";
   return `
     <section class="proposal">
       <div class="section-heading">
@@ -570,10 +574,11 @@ function renderProposal(): string {
           <p>${escapeHtml(state.proposal.summary)}</p>
         </div>
         <div class="button-row">
-          <button id="reject-proposal" type="button">Reject</button>
+          ${canReject ? `<button id="reject-proposal" type="button">Reject</button>` : ""}
           ${canConfirm ? `<button id="confirm-proposal" class="primary-action" type="button">Confirm</button>` : ""}
         </div>
       </div>
+      ${renderProposalAudit(state.proposal)}
       <div class="metrics compact">
         ${metric("Calories", `${state.proposal.totals.calories_kcal}`, "kcal")}
         ${metric("Protein", `${state.proposal.totals.protein_g}`, "g")}
@@ -585,6 +590,38 @@ function renderProposal(): string {
       <p class="hint">${escapeHtml(settings)}</p>
       ${evidence ? `<ul class="evidence-list">${evidence}</ul>` : ""}
     </section>
+  `;
+}
+
+function renderProposalAudit(proposal: Proposal): string {
+  const supersededBy =
+    typeof proposal.payload.superseded_by_proposal_id === "string"
+      ? proposal.payload.superseded_by_proposal_id
+      : null;
+  return `
+    <dl class="audit-list">
+      <div><dt>Created</dt><dd>${escapeHtml(formatDateTime(proposal.created_at))}</dd></div>
+      ${
+        proposal.confirmed_at
+          ? `<div><dt>Confirmed</dt><dd>${escapeHtml(formatDateTime(proposal.confirmed_at))}</dd></div>`
+          : ""
+      }
+      ${
+        proposal.rejected_at
+          ? `<div><dt>Rejected</dt><dd>${escapeHtml(formatDateTime(proposal.rejected_at))}</dd></div>`
+          : ""
+      }
+      ${
+        supersededBy
+          ? `<div><dt>Superseded by</dt><dd><button class="proposal-load-related" type="button" data-proposal-id="${escapeHtml(supersededBy)}">${escapeHtml(supersededBy)}</button></dd></div>`
+          : ""
+      }
+      ${
+        proposal.applied_record_ids.length
+          ? `<div><dt>Applied records</dt><dd>${proposal.applied_record_ids.length}</dd></div>`
+          : ""
+      }
+    </dl>
   `;
 }
 
@@ -1280,6 +1317,9 @@ function bindEvents(): void {
   document
     .querySelectorAll<HTMLButtonElement>(".job-load-proposal")
     .forEach((button) => button.addEventListener("click", safeAsync(onJobLoadProposal)));
+  document
+    .querySelectorAll<HTMLButtonElement>(".proposal-load-related")
+    .forEach((button) => button.addEventListener("click", safeAsync(onRelatedProposalLoad)));
 }
 
 function safeAsync<T extends Event>(handler: (event: T) => Promise<void>): (event: T) => void {
@@ -1563,8 +1603,18 @@ async function onJobProcess(event: Event): Promise<void> {
 async function onJobLoadProposal(event: Event): Promise<void> {
   const proposalId = (event.currentTarget as HTMLButtonElement).dataset.proposalId;
   if (!proposalId) return;
+  await loadProposal(proposalId, "Loaded job proposal. Review before applying.");
+}
+
+async function onRelatedProposalLoad(event: Event): Promise<void> {
+  const proposalId = (event.currentTarget as HTMLButtonElement).dataset.proposalId;
+  if (!proposalId) return;
+  await loadProposal(proposalId, "Loaded related proposal.");
+}
+
+async function loadProposal(proposalId: string, notice: string): Promise<void> {
   state.proposal = await apiGet<Proposal>(`/api/proposals/${proposalId}`);
-  state.notice = "Loaded job proposal. Review before applying.";
+  state.notice = notice;
   render();
 }
 
@@ -2228,6 +2278,10 @@ function localDateInputValue(date: Date): string {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function formatDateTime(value: string): string {
+  return value.slice(0, 19).replace("T", " ");
 }
 
 function titleCase(value: string): string {

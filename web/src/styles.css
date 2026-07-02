@@ -536,6 +536,39 @@ textarea {
   margin: 3px 0 0;
 }
 
+.audit-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: -4px 0 14px;
+}
+
+.audit-list div {
+  border: 1px solid #d9ded5;
+  border-radius: 6px;
+  background: #f8faf7;
+  padding: 7px 10px;
+}
+
+.audit-list dt {
+  color: #657064;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.audit-list dd {
+  margin: 2px 0 0;
+  color: #394139;
+  font-size: 13px;
+}
+
+.audit-list button {
+  min-height: 32px;
+  padding: 0 8px;
+}
+
 .chat-answer {
   border: 1px solid #d9ded5;
   border-radius: 6px;
