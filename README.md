@@ -58,10 +58,16 @@ Set `FOOD_ESTIMATOR=none` to disable model estimates. Estimated foods still go t
 Nutrition label images can use an Ollama vision model to extract table text when no text is pasted:
 
 ```bash
-LABEL_TEXT_EXTRACTOR=ollama OLLAMA_VISION_MODEL=llava make dev-api
+LABEL_TEXT_EXTRACTOR=ollama OLLAMA_VISION_MODEL=qwen3.6:latest make dev-api
 ```
 
 Set `LABEL_TEXT_EXTRACTOR=none` to require pasted table/OCR text. Extracted label text, source, confidence, warnings, and image attachment metadata are preserved on the proposal before any food version is saved.
+
+Before alpha use, run the Ollama preflight against the models you intend to use:
+
+```bash
+OLLAMA_BASE_URL=http://127.0.0.1:11434 OLLAMA_MODEL=ornith:9b LIVE_MODEL_NAME=ornith:9b OLLAMA_VISION_MODEL=qwen3.6:latest make smoke-ollama PYTHON=.venv/bin/python
+```
 
 Food source lookup can query the local library first and Open Food Facts for packaged foods:
 

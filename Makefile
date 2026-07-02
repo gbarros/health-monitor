@@ -1,4 +1,4 @@
-.PHONY: test test-unit test-behavior test-live-model test-cloud-evals test-private-ocr-evals dev-api dev-web web-install web-build e2e e2e-private-week
+.PHONY: test test-unit test-behavior test-live-model test-cloud-evals test-private-ocr-evals smoke-ollama dev-api dev-web web-install web-build e2e e2e-private-week
 
 PYTHON ?= python3
 
@@ -19,6 +19,9 @@ test-cloud-evals:
 
 test-private-ocr-evals:
 	PRIVATE_OCR_EVALS=true PYTHONPATH=src $(PYTHON) -m unittest discover -s tests/live -p 'test_private_label_ocr_evals.py'
+
+smoke-ollama:
+	PYTHONPATH=src $(PYTHON) -m health_monitor smoke-ollama --timeout-seconds 10
 
 dev-api:
 	PYTHONPATH=src $(PYTHON) -m health_monitor api --host 127.0.0.1 --port 8765

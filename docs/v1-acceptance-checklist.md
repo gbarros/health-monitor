@@ -232,7 +232,8 @@ Evidence:
 - `make test` passed locally.
 - `make web-build` passed locally.
 - `make e2e` passed locally.
-- `LIVE_MODEL_TESTS=true LIVE_MODEL_NAME=ornith:9b make test-live-model` is wired; host Python skipped because `pydantic_ai` is not installed locally.
+- `LIVE_MODEL_TESTS=true LIVE_MODEL_NAME=ornith:9b OLLAMA_BASE_URL=http://127.0.0.1:11434 make test-live-model PYTHON=.venv/bin/python` passed locally against real Ollama with 5 tests run and 2 optional tests skipped.
+- `OLLAMA_MODEL=ornith:9b LIVE_MODEL_NAME=ornith:9b OLLAMA_VISION_MODEL=qwen3.6:latest make smoke-ollama PYTHON=.venv/bin/python` passed locally, proving Ollama reachability, configured model presence, and live PydanticAI service smoke.
 - Docker API image import check for PydanticAI passed.
 - Container-side live PydanticAI/Ollama smoke with `ornith:9b` passed for seeded chat and text-meal proposal drafting.
 - `docker compose up --build -d` passed locally with healthy API/DB, running web/worker, and web-proxied `/api/health`.
