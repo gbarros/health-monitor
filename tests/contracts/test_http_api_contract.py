@@ -333,7 +333,10 @@ class HttpApiContractTest(unittest.TestCase):
 
         self.assertEqual(all_foods[0]["food"]["name"], "Iogurte Batavo")
         self.assertEqual(all_foods[0]["version"]["id"], yogurt["food"]["default_version_id"])
+        self.assertEqual(all_foods[0]["is_default"], True)
+        self.assertEqual(all_foods[0]["last_used_at"], "2026-07-02T10:00:00-03:00")
         self.assertEqual(all_foods[1]["version"]["id"], cheese["food"]["default_version_id"])
+        self.assertEqual(all_foods[1]["last_used_at"], "2026-07-01T10:00:00-03:00")
         self.assertEqual(len(filtered), 1)
         self.assertEqual(filtered[0]["food"]["name"], "Iogurte Batavo")
         self.assertEqual(filtered[0]["version"]["nutrients_per_100g"]["protein_g"], 10)

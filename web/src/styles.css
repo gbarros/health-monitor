@@ -382,6 +382,11 @@ td:first-child {
   font-size: 13px;
 }
 
+.lookup-list .food-context {
+  color: #3d493f;
+  font-weight: 700;
+}
+
 .lookup-list .food-evidence {
   color: #225465;
   font-weight: 700;

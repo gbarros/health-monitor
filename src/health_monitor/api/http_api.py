@@ -321,7 +321,15 @@ class HttpApi:
             )
             return HttpResponse(
                 200,
-                [food_response_to_dict(self.service, food, version) for food, version in foods],
+                [
+                    food_response_to_dict(
+                        self.service,
+                        food,
+                        version,
+                        person_id=query.get("person_id"),
+                    )
+                    for food, version in foods
+                ],
             )
 
         if method == "POST" and path == "/api/foods":
@@ -694,12 +702,16 @@ def food_response_to_dict(
     service: HealthMonitorService,
     food: Food,
     version: FoodVersion,
+    *,
+    person_id: str | None = None,
 ) -> dict[str, Any]:
     return {
         "food": food_to_dict(food),
         "version": food_version_to_dict(version),
         "aliases": food_aliases_for_response(service, food),
         "barcodes": food_barcodes_for_response(service, food, version),
+        "is_default": food.default_version_id == version.id,
+        "last_used_at": food_last_used_at_for_response(service, food, person_id),
         "attachments": [
             attachment_to_dict(attachment, include_content=False)
             for attachment in service.attachments_for_record(
@@ -716,6 +728,25 @@ def food_aliases_for_response(service: HealthMonitorService, food: Food) -> list
         for alias in service.catalog.aliases.values()
         if alias.household_id == food.household_id and alias.food_id == food.id
     )
+
+
+def food_last_used_at_for_response(
+    service: HealthMonitorService,
+    food: Food,
+    person_id: str | None,
+) -> str | None:
+    if person_id is None:
+        return None
+    latest = None
+    for entry in service.diary.entries.values():
+        if entry.person_id != person_id or entry.deleted_at is not None:
+            continue
+        version = service.catalog.versions.get(entry.food_version_id)
+        if version is None or version.food_id != food.id:
+            continue
+        if latest is None or entry.logged_at > latest:
+            latest = entry.logged_at
+    return latest.isoformat() if latest is not None else None
 
 
 def food_barcodes_for_response(

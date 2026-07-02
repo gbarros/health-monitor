@@ -43,6 +43,8 @@ type FoodResponse = {
   version: FoodVersion;
   aliases: string[];
   barcodes: string[];
+  is_default: boolean;
+  last_used_at: string | null;
   attachments: AttachmentObject[];
 };
 type QuickCustomFoodResponse = FoodResponse & { entry: DiaryEntryRecord };
@@ -950,6 +952,7 @@ function renderFoodForm(): string {
       (item) => `
         <li>
           <strong>${escapeHtml(foodLabel(item))}</strong>
+          ${foodContextLabel(item)}
           <span>${item.version.nutrients_per_100g.calories_kcal} kcal · ${item.version.nutrients_per_100g.protein_g} g protein / 100g</span>
           <span>${item.version.nutrients_per_100g.fiber_g} g fiber · ${item.version.nutrients_per_100g.sodium_mg} mg sodium / 100g</span>
           ${foodEvidenceLabel(item.attachments)}
@@ -1024,7 +1027,7 @@ function renderManualLog(): string {
   const disabled = state.person && filtered.length ? "" : "disabled";
   const quickDisabled = state.household && state.person ? "" : "disabled";
   const options = filtered
-    .map((item) => `<option value="${item.version.id}">${escapeHtml(foodLabel(item))}</option>`)
+    .map((item) => `<option value="${item.version.id}">${escapeHtml(foodOptionLabel(item))}</option>`)
     .join("");
   return `
     <form id="manual-log-form" class="panel">
@@ -2098,6 +2101,7 @@ function matchesFoodFilter(item: FoodResponse): boolean {
     ...item.aliases,
     ...item.barcodes,
     ...item.attachments.map((attachment) => attachment.filename ?? attachment.object_type),
+    foodContextText(item),
     item.food.default_version_id,
     item.version.id
   ]
@@ -2157,7 +2161,18 @@ function addAppliedFoodProposalToLocalLibrary(proposal: Proposal): void {
   };
   const barcode = typeof proposal.payload.barcode === "string" ? proposal.payload.barcode : null;
   const aliases = typeof proposal.payload.food_name === "string" ? [proposal.payload.food_name] : [];
-  state.foods = [...state.foods, { food, version, aliases, barcodes: barcode ? [barcode] : [], attachments: [] }];
+  state.foods = [
+    ...state.foods,
+    {
+      food,
+      version,
+      aliases,
+      barcodes: barcode ? [barcode] : [],
+      is_default: true,
+      last_used_at: null,
+      attachments: []
+    }
+  ];
 }
 
 function zeroNutrients(): Nutrients {
@@ -2219,6 +2234,27 @@ function foodEvidenceLabel(attachments: AttachmentObject[]): string {
     .join(", ");
   const suffix = attachments.length > 2 ? ` +${attachments.length - 2}` : "";
   return `<span class="food-evidence">label evidence · ${escapeHtml(filenames)}${suffix}</span>`;
+}
+
+function foodOptionLabel(item: FoodResponse): string {
+  const context = foodContextText(item);
+  return context ? `${foodLabel(item)} · ${context}` : foodLabel(item);
+}
+
+function foodContextLabel(item: FoodResponse): string {
+  const context = foodContextText(item);
+  return context ? `<span class="food-context">${escapeHtml(context)}</span>` : "";
+}
+
+function foodContextText(item: FoodResponse): string {
+  const parts = [];
+  if (item.is_default) {
+    parts.push("current default");
+  }
+  if (item.last_used_at) {
+    parts.push(`last used ${item.last_used_at.slice(0, 10)}`);
+  }
+  return parts.join(" · ");
 }
 
 function syncJobPolling(): void {
