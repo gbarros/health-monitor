@@ -160,6 +160,51 @@ class ExportImportTest(unittest.TestCase):
         )
         self.assertEqual(restored_calls[-1].agent_run_id, proposal.source_agent_run_id)
 
+    def test_export_import_preserves_agent_chat_turns(self) -> None:
+        source = HealthMonitorService()
+        household = source.create_household(name="Casa")
+        person = source.create_person(
+            household_id=household.id,
+            name="Gabriel",
+            timezone="America/Sao_Paulo",
+        )
+        _, version = source.create_food_with_version(
+            household_id=household.id,
+            name="Queijo Minas",
+            brand=None,
+            version_label="current",
+            nutrients_per_100g=Nutrients(315, 23, 2.6, 23.5),
+            source="label_scan",
+            aliases=["queijo"],
+        )
+        entry = source.log_diary_entry(
+            person_id=person.id,
+            logged_at_local="2026-07-01T10:00:00",
+            food_version_id=version.id,
+            quantity_g=100,
+            source="manual",
+        )
+        response = source.chat(
+            person_id=person.id,
+            message="Why was 2026-07-01 high in calories?",
+            today=date(2026, 7, 2),
+        )
+
+        exported = source.export_data()
+        target = HealthMonitorService()
+        imported = target.import_data(exported)
+        restored_turns = target.chat_turns_for_person(person.id)
+
+        self.assertIn("agent_chat_turns", exported["data"])
+        self.assertEqual(imported["agent_chat_turns"], 1)
+        self.assertEqual(len(restored_turns), 1)
+        self.assertEqual(restored_turns[0].agent_run_id, response.run_id)
+        self.assertEqual(restored_turns[0].assistant_message, response.message)
+        self.assertIn(
+            {"record_type": "diary_entry", "record_id": entry.id},
+            restored_turns[0].citations,
+        )
+
     def test_export_import_preserves_recipe_version_metadata(self) -> None:
         source, _, recipe_food_version_id = self.build_service_with_recipe()
 

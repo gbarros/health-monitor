@@ -123,6 +123,50 @@ class BackgroundJobsTest(unittest.TestCase):
         self.assertEqual(processed.status, "succeeded")
         self.assertIsNone(process_available_job(service))
 
+    def test_agent_chat_job_processes_into_saved_chat_turn(self) -> None:
+        service = HealthMonitorService()
+        household = service.create_household(name="Casa")
+        person = service.create_person(
+            household_id=household.id,
+            name="Gabriel",
+            timezone="America/Sao_Paulo",
+        )
+        _, version = service.create_food_with_version(
+            household_id=household.id,
+            name="Queijo Minas",
+            brand=None,
+            version_label="current",
+            nutrients_per_100g=Nutrients(calories_kcal=315, protein_g=23, carbs_g=2.6, fat_g=23.5),
+            source="label_scan",
+            aliases=["queijo"],
+        )
+        service.log_diary_entry(
+            person_id=person.id,
+            logged_at_local="2026-07-01T10:00:00",
+            food_version_id=version.id,
+            quantity_g=100,
+            source="manual",
+        )
+        service.enqueue_job(
+            job_type="agent_chat",
+            payload={
+                "person_id": person.id,
+                "message": "Why was 2026-07-01 high in calories?",
+                "today": "2026-07-01",
+            },
+        )
+
+        processed = service.process_next_job()
+        turns = service.chat_turns_for_person(person.id)
+
+        self.assertIsNotNone(processed)
+        assert processed is not None
+        self.assertEqual(processed.status, "succeeded")
+        self.assertEqual(processed.result["behavior_label"], "explain_day")
+        self.assertEqual(processed.result["chat_turn_id"], turns[0].id)
+        self.assertEqual(processed.result["run_id"], turns[0].agent_run_id)
+        self.assertIn("315", turns[0].assistant_message)
+
 
 if __name__ == "__main__":
     unittest.main()

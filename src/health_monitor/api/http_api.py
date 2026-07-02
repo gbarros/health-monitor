@@ -8,6 +8,7 @@ from urllib.parse import parse_qs, urlparse
 
 from health_monitor.application.service import (
     AgentChatResponse,
+    AgentChatTurn,
     AttachmentObject,
     BackgroundJob,
     DaySummary,
@@ -558,6 +559,10 @@ class HttpApi:
             )
             return HttpResponse(201, agent_chat_response_to_dict(response, self.service))
 
+        if method == "GET" and path == "/api/agent/chat-history":
+            turns = self.service.chat_turns_for_person(query["person_id"])
+            return HttpResponse(200, [agent_chat_turn_to_dict(turn) for turn in turns])
+
         if method == "GET" and path == "/api/proposals":
             proposals = self.service.list_proposals(
                 person_id=query.get("person_id"),
@@ -998,6 +1003,20 @@ def agent_chat_response_to_dict(
         "citations": list(response.citations),
         "proposal_id": response.proposal_id,
         "proposal": proposal_to_dict(proposal, service) if proposal is not None else None,
+    }
+
+
+def agent_chat_turn_to_dict(turn: AgentChatTurn) -> dict[str, Any]:
+    return {
+        "id": turn.id,
+        "person_id": turn.person_id,
+        "agent_run_id": turn.agent_run_id,
+        "user_message": turn.user_message,
+        "assistant_message": turn.assistant_message,
+        "behavior_label": turn.behavior_label,
+        "citations": [dict(item) for item in turn.citations],
+        "proposal_id": turn.proposal_id,
+        "created_at": turn.created_at.isoformat(),
     }
 
 

@@ -187,6 +187,17 @@ type AgentChatResponse = {
   proposal_id: string | null;
   proposal: Proposal | null;
 };
+type AgentChatTurn = {
+  id: string;
+  person_id: string;
+  agent_run_id: string;
+  user_message: string;
+  assistant_message: string;
+  behavior_label: string;
+  citations: Array<Record<string, string>>;
+  proposal_id: string | null;
+  created_at: string;
+};
 type BackgroundJob = {
   id: string;
   job_type: string;
@@ -217,6 +228,7 @@ type AppState = {
   proposal: Proposal | null;
   proposalQueue: Proposal[];
   chatResponse: AgentChatResponse | null;
+  chatHistory: AgentChatTurn[];
   jobs: BackgroundJob[];
   lastDeletedEntry: DiaryEntryRecord | null;
   exportText: string;
@@ -241,6 +253,7 @@ const state: AppState = {
   proposal: null,
   proposalQueue: [],
   chatResponse: null,
+  chatHistory: [],
   jobs: [],
   lastDeletedEntry: null,
   exportText: "",
@@ -837,6 +850,7 @@ function renderJobs(): string {
   const rows = state.jobs
     .map((job) => {
       const proposalId = typeof job.result.proposal_id === "string" ? job.result.proposal_id : null;
+      const chatTurnId = typeof job.result.chat_turn_id === "string" ? job.result.chat_turn_id : null;
       const active = isActiveJobStatus(job.status);
       return `
         <li>
@@ -848,6 +862,8 @@ function renderJobs(): string {
                 ? `<span class="job-error">${escapeHtml(job.last_error)}</span>`
                 : proposalId
                   ? `<span>Proposal ${escapeHtml(proposalId)}</span>`
+                  : chatTurnId
+                    ? `<span>Chat turn ${escapeHtml(chatTurnId)}</span>`
                   : ""
             }
           </div>
@@ -860,6 +876,11 @@ function renderJobs(): string {
             ${
               proposalId
                 ? `<button class="job-load-proposal" type="button" data-proposal-id="${escapeHtml(proposalId)}">Open proposal</button>`
+                : ""
+            }
+            ${
+              chatTurnId
+                ? `<button class="job-open-chat" type="button" data-chat-turn-id="${escapeHtml(chatTurnId)}">Open chat</button>`
                 : ""
             }
           </div>
@@ -1290,8 +1311,28 @@ function renderAgentChat(): string {
             </section>`
           : ""
       }
+      ${renderChatHistory()}
     </form>
   `;
+}
+
+function renderChatHistory(): string {
+  const rows = state.chatHistory
+    .slice(-5)
+    .reverse()
+    .map(
+      (turn) => `
+        <li>
+          <strong>${escapeHtml(turn.user_message)}</strong>
+          <p>${escapeHtml(turn.assistant_message)}</p>
+          <span>${escapeHtml(turn.behavior_label)} · ${turn.citations.length} citation${turn.citations.length === 1 ? "" : "s"} · ${escapeHtml(formatDateTime(turn.created_at))}</span>
+        </li>
+      `
+    )
+    .join("");
+  return rows
+    ? `<section class="chat-history" aria-label="Agent chat history"><h3>Recent chat</h3><ol>${rows}</ol></section>`
+    : "";
 }
 
 function renderLabelScan(): string {
@@ -1419,6 +1460,9 @@ function bindEvents(): void {
   document
     .querySelectorAll<HTMLButtonElement>(".job-load-proposal")
     .forEach((button) => button.addEventListener("click", safeAsync(onJobLoadProposal)));
+  document
+    .querySelectorAll<HTMLButtonElement>(".job-open-chat")
+    .forEach((button) => button.addEventListener("click", safeAsync(onJobOpenChat)));
   document
     .querySelectorAll<HTMLButtonElement>(".proposal-load-related")
     .forEach((button) => button.addEventListener("click", safeAsync(onRelatedProposalLoad)));
@@ -1701,6 +1745,7 @@ async function onJobProcess(event: Event): Promise<void> {
   const job = await apiPost<BackgroundJob>(`/api/jobs/${jobId}/process`, {});
   replaceJob(job);
   await adoptJobProposal(job);
+  await adoptJobChat(job);
   state.notice = `Job ${job.status}.`;
   await refreshProposals();
   render();
@@ -1710,6 +1755,13 @@ async function onJobLoadProposal(event: Event): Promise<void> {
   const proposalId = (event.currentTarget as HTMLButtonElement).dataset.proposalId;
   if (!proposalId) return;
   await loadProposal(proposalId, "Loaded job proposal. Review before applying.");
+}
+
+async function onJobOpenChat(event: Event): Promise<void> {
+  const chatTurnId = (event.currentTarget as HTMLButtonElement).dataset.chatTurnId;
+  if (!chatTurnId) return;
+  await openChatTurn(chatTurnId, "Loaded job chat answer.");
+  render();
 }
 
 async function onRelatedProposalLoad(event: Event): Promise<void> {
@@ -1855,6 +1907,7 @@ async function onAgentChat(event: SubmitEvent): Promise<void> {
     return;
   }
   state.chatResponse = await apiPost<AgentChatResponse>("/api/agent/chat", payload);
+  await refreshChatHistory();
   if (state.chatResponse.proposal) {
     state.proposal = state.chatResponse.proposal;
     state.notice = "Chat drafted a proposal. Review before applying.";
@@ -1982,6 +2035,31 @@ async function adoptJobProposal(job: BackgroundJob): Promise<void> {
   state.proposal = await apiGet<Proposal>(`/api/proposals/${proposalId}`);
 }
 
+async function adoptJobChat(job: BackgroundJob): Promise<void> {
+  const chatTurnId = typeof job.result.chat_turn_id === "string" ? job.result.chat_turn_id : null;
+  if (!chatTurnId || job.status !== "succeeded") return;
+  await openChatTurn(chatTurnId, "Loaded job chat answer.");
+}
+
+async function openChatTurn(chatTurnId: string, notice: string): Promise<void> {
+  await refreshChatHistory();
+  const turn = state.chatHistory.find((turn) => turn.id === chatTurnId);
+  if (!turn) {
+    state.notice = "Chat answer was not found in recent history.";
+    return;
+  }
+  state.chatResponse = {
+    run_id: turn.agent_run_id,
+    person_id: turn.person_id,
+    message: turn.assistant_message,
+    behavior_label: turn.behavior_label,
+    citations: turn.citations,
+    proposal_id: turn.proposal_id,
+    proposal: null
+  };
+  state.notice = notice;
+}
+
 function replaceJob(job: BackgroundJob): void {
   const existing = state.jobs.filter((item) => item.id !== job.id);
   state.jobs = [job, ...existing].sort((left, right) => right.created_at.localeCompare(left.created_at));
@@ -2056,8 +2134,19 @@ async function refreshAllReadSurfaces(): Promise<void> {
   state.reviewNotes = await apiGet<ReviewNote[]>(`/api/review-notes?person_id=${state.person.id}`);
   state.proposalQueue = await apiGet<Proposal[]>(`/api/proposals?person_id=${state.person.id}`);
   state.jobs = await apiGet<BackgroundJob[]>(`/api/jobs?person_id=${state.person.id}`);
+  await refreshChatHistory();
   syncJobPolling();
   render();
+}
+
+async function refreshChatHistory(): Promise<void> {
+  if (!state.person) {
+    state.chatHistory = [];
+    return;
+  }
+  state.chatHistory = await apiGet<AgentChatTurn[]>(
+    `/api/agent/chat-history?person_id=${state.person.id}`
+  );
 }
 
 async function refreshFoodLibrary(): Promise<void> {
@@ -2118,6 +2207,7 @@ function clearPersonScopedState(): void {
   state.proposal = null;
   state.proposalQueue = [];
   state.chatResponse = null;
+  state.chatHistory = [];
   state.jobs = [];
   syncJobPolling();
   state.lastDeletedEntry = null;

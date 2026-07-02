@@ -23,6 +23,14 @@ class BackgroundJobUiTest(unittest.TestCase):
         self.assertIn("job-status-active", source)
         self.assertIn(".job-status-active", styles)
 
+    def test_completed_chat_jobs_can_open_saved_chat_turn(self) -> None:
+        source = MAIN_TS.read_text(encoding="utf-8")
+
+        self.assertIn('typeof job.result.chat_turn_id === "string"', source)
+        self.assertIn("job-open-chat", source)
+        self.assertIn("onJobOpenChat", source)
+        self.assertIn("state.chatHistory.find((turn) => turn.id === chatTurnId)", source)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -703,6 +703,49 @@ textarea {
   font-size: 13px;
 }
 
+.chat-history {
+  border-top: 1px solid #e2e6df;
+  margin-top: 12px;
+  padding-top: 12px;
+}
+
+.chat-history h3 {
+  color: #1e2420;
+  font-size: 15px;
+  margin-bottom: 8px;
+}
+
+.chat-history ol {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.chat-history li {
+  display: grid;
+  gap: 4px;
+  border-left: 3px solid #83a8c8;
+  padding-left: 9px;
+}
+
+.chat-history strong {
+  color: #1e2420;
+  font-size: 13px;
+}
+
+.chat-history p {
+  color: #394139;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.chat-history span {
+  color: #657064;
+  font-size: 12px;
+}
+
 .target-strip {
   display: flex;
   flex-wrap: wrap;

@@ -140,6 +140,19 @@ class AgentToolCall:
 
 
 @dataclass(frozen=True)
+class AgentChatTurn:
+    id: str
+    person_id: str
+    agent_run_id: str
+    user_message: str
+    assistant_message: str
+    behavior_label: str
+    citations: tuple[dict[str, str], ...] = ()
+    proposal_id: str | None = None
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+@dataclass(frozen=True)
 class BackgroundJob:
     id: str
     job_type: str
@@ -276,6 +289,7 @@ class HealthMonitorService:
         self.proposals = ProposalService(self.diary)
         self.agent_runs: dict[str, AgentRun] = {}
         self.agent_tool_calls: dict[str, AgentToolCall] = {}
+        self.chat_turns: dict[str, AgentChatTurn] = {}
         self.review_notes: dict[str, ReviewNote] = {}
         self.lookup_candidates: dict[str, FoodLookupCandidate] = {}
         self.attachments: dict[str, AttachmentObject] = {}
@@ -1350,6 +1364,7 @@ class HealthMonitorService:
             "proposals": len(self.proposals.proposals),
             "agent_runs": len(self.agent_runs),
             "agent_tool_calls": len(self.agent_tool_calls),
+            "agent_chat_turns": len(self.chat_turns),
             "jobs": len(self.jobs),
             "review_notes": len(self.review_notes),
             "attachment_objects": len(self.attachments),
@@ -1531,6 +1546,15 @@ class HealthMonitorService:
         )
         self.agent_runs[run.id] = run
 
+        def finish(response: AgentChatResponse) -> AgentChatResponse:
+            self._record_agent_chat_turn(
+                run=run,
+                user_message=message,
+                response=response,
+            )
+            self._persist()
+            return response
+
         correction = parse_chat_quantity_correction(message)
         if correction is not None:
             response = self._chat_draft_diary_correction(
@@ -1540,8 +1564,7 @@ class HealthMonitorService:
                 run=run,
                 correction=correction,
             )
-            self._persist()
-            return response
+            return finish(response)
 
         review_note = parse_chat_review_note(message)
         if review_note is not None:
@@ -1551,8 +1574,7 @@ class HealthMonitorService:
                 run=run,
                 review_note=review_note,
             )
-            self._persist()
-            return response
+            return finish(response)
 
         version_use_phrase = parse_chat_food_version_use_question(message)
         if version_use_phrase is not None:
@@ -1561,8 +1583,7 @@ class HealthMonitorService:
                 run=run,
                 phrase=version_use_phrase,
             )
-            self._persist()
-            return response
+            return finish(response)
 
         if parse_chat_micronutrient_question(message):
             response = self._chat_analyze_micronutrients(
@@ -1571,8 +1592,7 @@ class HealthMonitorService:
                 today=today,
                 run=run,
             )
-            self._persist()
-            return response
+            return finish(response)
 
         requested_week = parse_chat_week_reference(message, today=today)
         if requested_week is not None:
@@ -1584,8 +1604,7 @@ class HealthMonitorService:
                 start=start,
                 end=end,
             )
-            self._persist()
-            return response
+            return finish(response)
 
         requested_day = parse_chat_day_reference(message, today=today)
         if requested_day is not None:
@@ -1595,8 +1614,7 @@ class HealthMonitorService:
                 run=run,
                 day=requested_day,
             )
-            self._persist()
-            return response
+            return finish(response)
 
         response = AgentChatResponse(
             run_id=run.id,
@@ -1616,8 +1634,7 @@ class HealthMonitorService:
             status="answered",
             created_at=run.created_at,
         )
-        self._persist()
-        return response
+        return finish(response)
 
     def propose_text_meal(
         self,
@@ -2988,6 +3005,22 @@ class HealthMonitorService:
         calls.sort(key=lambda call: (call.started_at, call.id))
         return tuple(calls)
 
+    def chat_turns_for_person(self, person_id: str) -> tuple[AgentChatTurn, ...]:
+        self._require_person(person_id)
+        turns = [
+            turn
+            for turn in self.chat_turns.values()
+            if turn.person_id == person_id
+        ]
+        turns.sort(key=lambda turn: (turn.created_at, turn.id))
+        return tuple(turns)
+
+    def chat_turn_for_agent_run(self, agent_run_id: str) -> AgentChatTurn:
+        for turn in self.chat_turns.values():
+            if turn.agent_run_id == agent_run_id:
+                return turn
+        raise KeyError(agent_run_id)
+
     def enqueue_job(self, *, job_type: str, payload: dict[str, Any]) -> BackgroundJob:
         if job_type not in {"agent_text_meal", "agent_label_scan", "agent_recipe", "agent_chat"}:
             raise ValueError(f"unsupported job type: {job_type}")
@@ -3134,8 +3167,10 @@ class HealthMonitorService:
                 today=date.fromisoformat(str(payload["today"])) if payload.get("today") else date.today(),
                 agent_settings=payload.get("agent_settings"),
             )
+            turn = self.chat_turn_for_agent_run(response.run_id)
             return {
                 "run_id": response.run_id,
+                "chat_turn_id": turn.id,
                 "behavior_label": response.behavior_label,
                 "proposal_id": response.proposal_id,
             }
@@ -3222,6 +3257,27 @@ class HealthMonitorService:
         )
         self.agent_tool_calls[call.id] = call
         return call
+
+    def _record_agent_chat_turn(
+        self,
+        *,
+        run: AgentRun,
+        user_message: str,
+        response: AgentChatResponse,
+    ) -> AgentChatTurn:
+        turn = AgentChatTurn(
+            id=self._next_id("agent_chat_turn"),
+            person_id=run.person_id,
+            agent_run_id=run.id,
+            user_message=user_message,
+            assistant_message=response.message,
+            behavior_label=response.behavior_label,
+            citations=response.citations,
+            proposal_id=response.proposal_id,
+            created_at=datetime.now(timezone.utc),
+        )
+        self.chat_turns[turn.id] = turn
+        return turn
 
     def _require_household(self, household_id: str) -> Household:
         try:
@@ -3572,6 +3628,7 @@ class HealthMonitorService:
                 self.proposals.proposals,
                 self.agent_runs,
                 self.agent_tool_calls,
+                self.chat_turns,
                 self.jobs,
                 self.review_notes,
                 self.attachments,
@@ -3608,6 +3665,9 @@ class HealthMonitorService:
             "agent_runs": [agent_run_to_snapshot(item) for item in self.agent_runs.values()],
             "agent_tool_calls": [
                 agent_tool_call_to_snapshot(item) for item in self.agent_tool_calls.values()
+            ],
+            "agent_chat_turns": [
+                agent_chat_turn_to_snapshot(item) for item in self.chat_turns.values()
             ],
             "jobs": [background_job_to_snapshot(item) for item in self.jobs.values()],
             "review_notes": [
@@ -3663,6 +3723,10 @@ class HealthMonitorService:
         self.agent_tool_calls = {
             item["id"]: agent_tool_call_from_snapshot(item)
             for item in snapshot.get("agent_tool_calls", [])
+        }
+        self.chat_turns = {
+            item["id"]: agent_chat_turn_from_snapshot(item)
+            for item in snapshot.get("agent_chat_turns", [])
         }
         self.jobs = {
             item["id"]: background_job_from_snapshot(item)
@@ -4517,6 +4581,34 @@ def agent_tool_call_from_snapshot(value: dict[str, Any]) -> AgentToolCall:
         completed_at=datetime.fromisoformat(value["completed_at"])
         if value.get("completed_at")
         else None,
+    )
+
+
+def agent_chat_turn_to_snapshot(turn: AgentChatTurn) -> dict[str, Any]:
+    return {
+        "id": turn.id,
+        "person_id": turn.person_id,
+        "agent_run_id": turn.agent_run_id,
+        "user_message": turn.user_message,
+        "assistant_message": turn.assistant_message,
+        "behavior_label": turn.behavior_label,
+        "citations": [dict(item) for item in turn.citations],
+        "proposal_id": turn.proposal_id,
+        "created_at": turn.created_at.isoformat(),
+    }
+
+
+def agent_chat_turn_from_snapshot(value: dict[str, Any]) -> AgentChatTurn:
+    return AgentChatTurn(
+        id=value["id"],
+        person_id=value["person_id"],
+        agent_run_id=value["agent_run_id"],
+        user_message=value["user_message"],
+        assistant_message=value["assistant_message"],
+        behavior_label=value["behavior_label"],
+        citations=tuple(dict(item) for item in value.get("citations", [])),
+        proposal_id=value.get("proposal_id"),
+        created_at=datetime.fromisoformat(value["created_at"]),
     )
 
 

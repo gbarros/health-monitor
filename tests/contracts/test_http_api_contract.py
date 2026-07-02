@@ -739,6 +739,73 @@ class HttpApiContractTest(unittest.TestCase):
         self.assertEqual(applied["status"], "applied")
         self.assertEqual(after["totals"]["calories_kcal"], 315)
 
+    def test_chat_job_points_to_saved_chat_turn_through_http_contract(self) -> None:
+        api = HttpApi(HealthMonitorService())
+        household = api.handle("POST", "/api/households", {"name": "Casa"}).body
+        person = api.handle(
+            "POST",
+            "/api/people",
+            {
+                "household_id": household["id"],
+                "name": "Gabriel",
+                "timezone": "America/Sao_Paulo",
+            },
+        ).body
+        food = api.handle(
+            "POST",
+            "/api/foods",
+            {
+                "household_id": household["id"],
+                "name": "Queijo Minas",
+                "brand": None,
+                "version_label": "current",
+                "source": "label_scan",
+                "nutrients_per_100g": {
+                    "calories_kcal": 315,
+                    "protein_g": 23,
+                    "carbs_g": 2.6,
+                    "fat_g": 23.5,
+                },
+                "aliases": ["queijo"],
+            },
+        ).body
+        api.handle(
+            "POST",
+            "/api/diary",
+            {
+                "person_id": person["id"],
+                "logged_at_local": "2026-07-01T10:00:00",
+                "food_version_id": food["version"]["id"],
+                "quantity_g": 100,
+                "source": "manual",
+            },
+        )
+
+        queued = api.handle(
+            "POST",
+            "/api/jobs",
+            {
+                "job_type": "agent_chat",
+                "payload": {
+                    "person_id": person["id"],
+                    "message": "Why was 2026-07-01 high in calories?",
+                    "today": "2026-07-01",
+                },
+            },
+        ).body
+        processed = api.handle("POST", f"/api/jobs/{queued['id']}/process", None).body
+        history = api.handle(
+            "GET",
+            f"/api/agent/chat-history?person_id={person['id']}",
+            None,
+        ).body
+
+        self.assertEqual(processed["status"], "succeeded")
+        self.assertEqual(processed["result"]["behavior_label"], "explain_day")
+        self.assertEqual(processed["result"]["chat_turn_id"], history[0]["id"])
+        self.assertEqual(processed["result"]["run_id"], history[0]["agent_run_id"])
+        self.assertIn("315", history[0]["assistant_message"])
+
     def test_text_meal_can_copy_same_breakfast_as_yesterday_through_http_contract(self) -> None:
         api = HttpApi(HealthMonitorService())
         household = api.handle("POST", "/api/households", {"name": "Casa"}).body
@@ -2373,6 +2440,73 @@ class HttpApiContractTest(unittest.TestCase):
         )
         self.assertEqual(applied["status"], "applied")
         self.assertEqual(summary["totals"]["calories_kcal"], 157.5)
+
+    def test_agent_chat_history_can_be_read_through_http_contract(self) -> None:
+        api = HttpApi(HealthMonitorService())
+        household = api.handle("POST", "/api/households", {"name": "Casa"}).body
+        person = api.handle(
+            "POST",
+            "/api/people",
+            {
+                "household_id": household["id"],
+                "name": "Gabriel",
+                "timezone": "America/Sao_Paulo",
+            },
+        ).body
+        food = api.handle(
+            "POST",
+            "/api/foods",
+            {
+                "household_id": household["id"],
+                "name": "Queijo Minas",
+                "brand": None,
+                "version_label": "current",
+                "source": "label_scan",
+                "nutrients_per_100g": {
+                    "calories_kcal": 315,
+                    "protein_g": 23,
+                    "carbs_g": 2.6,
+                    "fat_g": 23.5,
+                },
+                "aliases": ["queijo"],
+            },
+        ).body
+        entry = api.handle(
+            "POST",
+            "/api/diary",
+            {
+                "person_id": person["id"],
+                "logged_at_local": "2026-07-01T10:00:00",
+                "food_version_id": food["version"]["id"],
+                "quantity_g": 100,
+                "source": "manual",
+            },
+        ).body
+        response = api.handle(
+            "POST",
+            "/api/agent/chat",
+            {
+                "person_id": person["id"],
+                "message": "Why was 2026-07-01 high in calories?",
+                "today": "2026-07-02",
+            },
+        ).body
+
+        history = api.handle(
+            "GET",
+            f"/api/agent/chat-history?person_id={person['id']}",
+            None,
+        ).body
+
+        self.assertEqual(len(history), 1)
+        self.assertEqual(history[0]["agent_run_id"], response["run_id"])
+        self.assertEqual(history[0]["user_message"], "Why was 2026-07-01 high in calories?")
+        self.assertEqual(history[0]["assistant_message"], response["message"])
+        self.assertEqual(history[0]["behavior_label"], "explain_day")
+        self.assertIn(
+            {"record_type": "diary_entry", "record_id": entry["id"]},
+            history[0]["citations"],
+        )
 
     def test_agent_chat_review_note_proposal_and_read_model_through_http_contract(self) -> None:
         api = HttpApi(HealthMonitorService())

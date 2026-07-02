@@ -68,6 +68,28 @@ class AgentChatHarnessTest(unittest.TestCase):
         self.assertIn("315", tool_calls[0].output_summary)
         self.assertEqual(tool_calls[0].source_record_ids, (entry_id,))
 
+    def test_chat_turn_is_stored_separately_from_durable_nutrition_records(self) -> None:
+        service, person_id, entry_id = self.make_service_with_entry()
+
+        response = service.chat(
+            person_id=person_id,
+            message="Why was 2026-07-01 high in calories?",
+            today=date(2026, 7, 2),
+        )
+        turns = service.chat_turns_for_person(person_id)
+
+        self.assertEqual(len(turns), 1)
+        self.assertEqual(turns[0].agent_run_id, response.run_id)
+        self.assertEqual(turns[0].user_message, "Why was 2026-07-01 high in calories?")
+        self.assertEqual(turns[0].assistant_message, response.message)
+        self.assertEqual(turns[0].behavior_label, "explain_day")
+        self.assertEqual(turns[0].proposal_id, None)
+        self.assertIn(
+            {"record_type": "diary_entry", "record_id": entry_id},
+            turns[0].citations,
+        )
+        self.assertEqual(service.day_summary(person_id, date(2026, 7, 1)).totals.rounded(), Nutrients(315, 23, 2.6, 23.5))
+
     def test_chat_says_when_requested_day_has_insufficient_data(self) -> None:
         service = HealthMonitorService()
         household = service.create_household(name="Casa")
