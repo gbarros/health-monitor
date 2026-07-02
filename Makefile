@@ -1,4 +1,4 @@
-.PHONY: test test-unit test-behavior test-live-model test-cloud-evals dev-api dev-web web-install web-build e2e
+.PHONY: test test-unit test-behavior test-live-model test-cloud-evals test-private-ocr-evals dev-api dev-web web-install web-build e2e
 
 PYTHON ?= python3
 
@@ -16,6 +16,9 @@ test-live-model:
 
 test-cloud-evals:
 	CLOUD_MODEL_CALLS_ENABLED=true PYTHONPATH=src $(PYTHON) -m unittest discover -s tests/live -p 'test_cloud_*.py'
+
+test-private-ocr-evals:
+	PRIVATE_OCR_EVALS=true PYTHONPATH=src $(PYTHON) -m unittest discover -s tests/live -p 'test_private_label_ocr_evals.py'
 
 dev-api:
 	PYTHONPATH=src $(PYTHON) -m health_monitor api --host 127.0.0.1 --port 8765

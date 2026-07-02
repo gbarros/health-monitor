@@ -32,6 +32,9 @@ CLOUD_MODEL_CALLS_ENABLED=true CLOUD_MODEL_NAME=glm-5.2:cloud make test-cloud-ev
 
 The API Docker image installs `pydantic-ai`; the dependency-light host Python environment may skip live tests if that package is not installed locally.
 
+Private OCR and ChatGPT-export-derived hardening workflows are documented in
+`docs/hardening-evals.md`.
+
 ## Local API
 
 The current bootstrap API is dependency-light and uses a local SQLite snapshot store by default:
