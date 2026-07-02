@@ -1252,6 +1252,7 @@ function renderTextMeal(): string {
       </label>
       <label>Max loops <input name="max_tool_loops" type="number" value="4" min="1" max="12" ${disabled} /></label>
       <label class="check-row"><input name="external_lookup" type="checkbox" checked ${disabled} /> External lookup</label>
+      <label class="check-row"><input name="research_lookup" type="checkbox" checked ${disabled} /> Research lookup</label>
       <label class="check-row"><input name="background_job" type="checkbox" ${disabled} /> Run in background</label>
       <button type="submit" ${disabled}>Draft proposal</button>
     </form>
@@ -1277,6 +1278,7 @@ function renderAgentChat(): string {
         </label>
         <label>Max loops <input name="max_tool_loops" type="number" value="4" min="1" max="12" ${disabled} /></label>
       </div>
+      <label class="check-row"><input name="research_lookup" type="checkbox" checked ${disabled} /> Research lookup</label>
       <label class="check-row"><input name="background_job" type="checkbox" ${disabled} /> Run in background</label>
       <button type="submit" ${disabled}>Send</button>
       ${
@@ -1820,7 +1822,8 @@ async function onTextMeal(event: SubmitEvent): Promise<void> {
       model_profile: requiredText(form, "model_profile"),
       effort: requiredText(form, "effort"),
       max_tool_loops: numberField(form, "max_tool_loops"),
-      external_lookup: form.get("external_lookup") === "on"
+      external_lookup: form.get("external_lookup") === "on",
+      research_lookup: form.get("research_lookup") === "on"
     }
   };
   if (form.get("background_job") === "on") {
@@ -1843,7 +1846,8 @@ async function onAgentChat(event: SubmitEvent): Promise<void> {
     agent_settings: {
       model_profile: requiredText(form, "model_profile"),
       effort: requiredText(form, "effort"),
-      max_tool_loops: numberField(form, "max_tool_loops")
+      max_tool_loops: numberField(form, "max_tool_loops"),
+      research_lookup: form.get("research_lookup") === "on"
     }
   };
   if (form.get("background_job") === "on") {
