@@ -816,6 +816,8 @@ def food_lookup_candidate_to_dict(candidate: FoodLookupCandidate) -> dict[str, A
         "nutrients_per_100g": nutrients_to_dict(candidate.nutrients_per_100g.rounded()),
         "confidence": candidate.confidence,
         "warnings": list(candidate.warnings),
+        "research_prompt": candidate.research_prompt,
+        "source_claims": [dict(claim) for claim in candidate.source_claims],
     }
 
 

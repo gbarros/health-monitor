@@ -258,11 +258,13 @@ class HealthMonitorService:
         repository: StateRepository | None = None,
         estimator: FoodEstimator | None = None,
         food_lookup_provider: FoodLookupProvider | None = None,
+        research_lookup_provider: FoodLookupProvider | None = None,
         label_text_extractor: LabelTextExtractor | None = None,
     ) -> None:
         self.repository = repository
         self.estimator = estimator
         self.food_lookup_provider = food_lookup_provider
+        self.research_lookup_provider = research_lookup_provider
         self.label_text_extractor = label_text_extractor
         self.households: dict[str, Household] = {}
         self.people: dict[str, Person] = {}
@@ -865,6 +867,8 @@ class HealthMonitorService:
                         nutrients_per_100g=candidate.nutrients_per_100g,
                         confidence=candidate.confidence,
                         warnings=candidate.warnings,
+                        research_prompt=candidate.research_prompt,
+                        source_claims=candidate.source_claims,
                     )
                 )
         for candidate in candidates:
@@ -897,6 +901,8 @@ class HealthMonitorService:
             "source_id": candidate.source_id,
             "source_url": candidate.source_url,
             "confidence": candidate.confidence,
+            "research_prompt": candidate.research_prompt,
+            "source_claims": [dict(claim) for claim in candidate.source_claims],
         }
         proposal = self.proposals.create(
             CreateDiaryEntriesProposal(
@@ -914,6 +920,8 @@ class HealthMonitorService:
                         "source_url": candidate.source_url,
                         "warnings": list(candidate.warnings),
                         "confidence": candidate.confidence,
+                        "research_prompt": candidate.research_prompt,
+                        "source_claims": [dict(claim) for claim in candidate.source_claims],
                     },
                 ),
             )
@@ -929,6 +937,70 @@ class HealthMonitorService:
                 continue
             return candidate
         return None
+
+    def _lookup_first_research_food_candidate(self, phrase: str) -> FoodLookupCandidate | None:
+        if self.research_lookup_provider is None:
+            return None
+        for candidate in self.research_lookup_provider.lookup(phrase=phrase, barcode=None):
+            if candidate.food_id is not None or candidate.food_version_id is not None:
+                continue
+            return candidate
+        return None
+
+    def _prepare_lookup_candidate_food_version(
+        self,
+        *,
+        household_id: str,
+        phrase: str,
+        candidate: FoodLookupCandidate,
+        source: str,
+        resolution_reason: str,
+    ) -> tuple[str, str, FoodVersion, dict[str, object], dict[str, object]]:
+        food_id = self._next_id("food")
+        food_version_id = self._next_id("food_version")
+        version_label = f"{candidate.source_name} lookup"
+        version = FoodVersion(
+            id=food_version_id,
+            food_id=food_id,
+            label=version_label,
+            nutrients_per_100g=candidate.nutrients_per_100g,
+            source=source,
+            serving_size_g=candidate.serving_size_g,
+            confidence=candidate.confidence,
+        )
+        pending_lookup_version: dict[str, object] = {
+            "food_id": food_id,
+            "food_version_id": food_version_id,
+            "household_id": household_id,
+            "food_name": candidate.product_name,
+            "brand": candidate.brand,
+            "phrase": phrase,
+            "version_label": version_label,
+            "nutrients_per_100g": nutrients_to_snapshot(
+                candidate.nutrients_per_100g.rounded()
+            ),
+            "source": source,
+            "source_type": candidate.source_type,
+            "source_name": candidate.source_name,
+            "source_id": candidate.source_id,
+            "source_url": candidate.source_url,
+            "barcode": candidate.barcode,
+            "serving_size_g": candidate.serving_size_g,
+            "confidence": candidate.confidence,
+            "warnings": list(candidate.warnings),
+            "research_prompt": candidate.research_prompt,
+            "source_claims": [dict(claim) for claim in candidate.source_claims],
+        }
+        evidence_source_details: dict[str, object] = {
+            "source_name": candidate.source_name,
+            "source_id": candidate.source_id,
+            "source_url": candidate.source_url,
+            "warnings": list(candidate.warnings),
+            "research_prompt": candidate.research_prompt,
+            "source_claims": [dict(claim) for claim in candidate.source_claims],
+            "resolution_reason": resolution_reason,
+        }
+        return food_id, food_version_id, version, pending_lookup_version, evidence_source_details
 
     def log_diary_entry(
         self,
@@ -1667,51 +1739,24 @@ class HealthMonitorService:
                         ),
                         source_record_ids=(lookup_candidate.source_id,),
                     )
-                    food_id = self._next_id("food")
-                    food_version_id = self._next_id("food_version")
-                    version_label = f"{lookup_candidate.source_name} lookup"
-                    version = FoodVersion(
-                        id=food_version_id,
-                        food_id=food_id,
-                        label=version_label,
-                        nutrients_per_100g=lookup_candidate.nutrients_per_100g,
+                    (
+                        food_id,
+                        food_version_id,
+                        version,
+                        pending_lookup_version,
+                        evidence_source_details,
+                    ) = self._prepare_lookup_candidate_food_version(
+                        household_id=person.household_id,
+                        phrase=item.phrase,
+                        candidate=lookup_candidate,
                         source="external_lookup",
-                        serving_size_g=lookup_candidate.serving_size_g,
-                        confidence=lookup_candidate.confidence,
+                        resolution_reason="external_lookup",
                     )
-                    estimated_food_versions.append(
-                        {
-                            "food_id": food_id,
-                            "food_version_id": food_version_id,
-                            "household_id": person.household_id,
-                            "food_name": lookup_candidate.product_name,
-                            "brand": lookup_candidate.brand,
-                            "phrase": item.phrase,
-                            "version_label": version_label,
-                            "nutrients_per_100g": nutrients_to_snapshot(
-                                lookup_candidate.nutrients_per_100g.rounded()
-                            ),
-                            "source": "external_lookup",
-                            "source_type": lookup_candidate.source_type,
-                            "source_name": lookup_candidate.source_name,
-                            "source_id": lookup_candidate.source_id,
-                            "source_url": lookup_candidate.source_url,
-                            "barcode": lookup_candidate.barcode,
-                            "serving_size_g": lookup_candidate.serving_size_g,
-                            "confidence": lookup_candidate.confidence,
-                            "warnings": list(lookup_candidate.warnings),
-                        }
-                    )
+                    estimated_food_versions.append(pending_lookup_version)
                     source = "agent_lookup_proposal"
                     resolution_reason = "external_lookup"
                     confidence = lookup_candidate.confidence
                     evidence_source_type = lookup_candidate.source_type
-                    evidence_source_details = {
-                        "source_name": lookup_candidate.source_name,
-                        "source_id": lookup_candidate.source_id,
-                        "source_url": lookup_candidate.source_url,
-                        "warnings": list(lookup_candidate.warnings),
-                    }
                 else:
                     self._record_agent_tool_call(
                         run=run,
@@ -1719,59 +1764,101 @@ class HealthMonitorService:
                         input_summary=f"phrase={item.phrase}",
                         output_summary="no external candidates",
                     )
-                    if self.estimator is None:
-                        raise ValueError(f"food reference could not be resolved or estimated: {item.phrase}")
-                    estimate = self.estimator.estimate(item.phrase)
-                    if estimate is None:
+                    research_candidate = (
+                        self._lookup_first_research_food_candidate(item.phrase)
+                        if settings.get("research_lookup", True)
+                        else None
+                    )
+                    if research_candidate is not None:
+                        self._record_agent_tool_call(
+                            run=run,
+                            tool_name="lookup_research_food",
+                            input_summary=f"phrase={item.phrase}",
+                            output_summary=(
+                                f"{research_candidate.product_name}; source={research_candidate.source_name}; "
+                                f"confidence={research_candidate.confidence}"
+                            ),
+                            source_record_ids=(research_candidate.source_id,),
+                        )
+                        (
+                            food_id,
+                            food_version_id,
+                            version,
+                            pending_lookup_version,
+                            evidence_source_details,
+                        ) = self._prepare_lookup_candidate_food_version(
+                            household_id=person.household_id,
+                            phrase=item.phrase,
+                            candidate=research_candidate,
+                            source="research_lookup",
+                            resolution_reason="research_lookup",
+                        )
+                        estimated_food_versions.append(pending_lookup_version)
+                        source = "agent_research_lookup_proposal"
+                        resolution_reason = "research_lookup"
+                        confidence = research_candidate.confidence
+                        evidence_source_type = research_candidate.source_type
+                    else:
+                        if self.research_lookup_provider is not None and settings.get("research_lookup", True):
+                            self._record_agent_tool_call(
+                                run=run,
+                                tool_name="lookup_research_food",
+                                input_summary=f"phrase={item.phrase}",
+                                output_summary="no research candidates",
+                            )
+                        if self.estimator is None:
+                            raise ValueError(f"food reference could not be resolved or estimated: {item.phrase}")
+                        estimate = self.estimator.estimate(item.phrase)
+                        if estimate is None:
+                            self._record_agent_tool_call(
+                                run=run,
+                                tool_name="estimate_food",
+                                input_summary=f"phrase={item.phrase}",
+                                output_summary="no model estimate",
+                                status="failed",
+                                error="estimator returned no result",
+                            )
+                            raise ValueError(f"food reference could not be resolved or estimated: {item.phrase}")
                         self._record_agent_tool_call(
                             run=run,
                             tool_name="estimate_food",
                             input_summary=f"phrase={item.phrase}",
-                            output_summary="no model estimate",
-                            status="failed",
-                            error="estimator returned no result",
-                        )
-                        raise ValueError(f"food reference could not be resolved or estimated: {item.phrase}")
-                    self._record_agent_tool_call(
-                        run=run,
-                        tool_name="estimate_food",
-                        input_summary=f"phrase={item.phrase}",
-                        output_summary=(
-                            f"{estimate.food_name}; source={estimate.source}; "
-                            f"confidence={estimate.confidence}"
-                        ),
-                    )
-                    food_id = self._next_id("food")
-                    food_version_id = self._next_id("food_version")
-                    version = FoodVersion(
-                        id=food_version_id,
-                        food_id=food_id,
-                        label="model estimate",
-                        nutrients_per_100g=estimate.nutrients_per_100g,
-                        source=estimate.source,
-                        confidence=estimate.confidence,
-                    )
-                    estimated_food_versions.append(
-                        {
-                            "food_id": food_id,
-                            "food_version_id": food_version_id,
-                            "household_id": person.household_id,
-                            "food_name": estimate.food_name,
-                            "brand": None,
-                            "phrase": item.phrase,
-                            "version_label": "model estimate",
-                            "nutrients_per_100g": nutrients_to_snapshot(
-                                estimate.nutrients_per_100g.rounded()
+                            output_summary=(
+                                f"{estimate.food_name}; source={estimate.source}; "
+                                f"confidence={estimate.confidence}"
                             ),
-                            "source": estimate.source,
-                            "confidence": estimate.confidence,
-                            "notes": estimate.notes,
-                        }
-                    )
-                    source = "agent_estimate_proposal"
-                    resolution_reason = "model_estimate"
-                    confidence = estimate.confidence
-                    evidence_source_type = "model_estimate"
+                        )
+                        food_id = self._next_id("food")
+                        food_version_id = self._next_id("food_version")
+                        version = FoodVersion(
+                            id=food_version_id,
+                            food_id=food_id,
+                            label="model estimate",
+                            nutrients_per_100g=estimate.nutrients_per_100g,
+                            source=estimate.source,
+                            confidence=estimate.confidence,
+                        )
+                        estimated_food_versions.append(
+                            {
+                                "food_id": food_id,
+                                "food_version_id": food_version_id,
+                                "household_id": person.household_id,
+                                "food_name": estimate.food_name,
+                                "brand": None,
+                                "phrase": item.phrase,
+                                "version_label": "model estimate",
+                                "nutrients_per_100g": nutrients_to_snapshot(
+                                    estimate.nutrients_per_100g.rounded()
+                                ),
+                                "source": estimate.source,
+                                "confidence": estimate.confidence,
+                                "notes": estimate.notes,
+                            }
+                        )
+                        source = "agent_estimate_proposal"
+                        resolution_reason = "model_estimate"
+                        confidence = estimate.confidence
+                        evidence_source_type = "model_estimate"
             quantity_g = item.quantity_g
             if item.evidence.get("quantity_basis") == "serving_count":
                 if version.serving_size_g is None:

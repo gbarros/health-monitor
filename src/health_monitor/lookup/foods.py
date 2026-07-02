@@ -25,6 +25,8 @@ class FoodLookupCandidate:
     source_url: str | None = None
     food_id: str | None = None
     food_version_id: str | None = None
+    research_prompt: str | None = None
+    source_claims: tuple[dict[str, object], ...] = ()
     id: str = ""
 
 

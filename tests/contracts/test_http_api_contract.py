@@ -2197,6 +2197,94 @@ class HttpApiContractTest(unittest.TestCase):
         )
         self.assertEqual(applied["status"], "applied")
 
+    def test_text_meal_uses_controlled_research_lookup_before_model_estimate_through_http_contract(self) -> None:
+        api = HttpApi(
+            HealthMonitorService(
+                food_lookup_provider=StaticFoodLookupProvider([]),
+                research_lookup_provider=StaticFoodLookupProvider(
+                    [
+                        FoodLookupCandidate(
+                            source_type="research_agent",
+                            source_name="Controlled research agent",
+                            source_id="research-kfc-double-crunch-br",
+                            product_name="KFC Double Crunch combo Brazil",
+                            brand="KFC Brasil",
+                            barcode=None,
+                            nutrients_per_100g=Nutrients(245, 12, 26, 10),
+                            serving_size_g=None,
+                            confidence=0.64,
+                            warnings=("restaurant nutrition reference is approximate",),
+                            source_url="https://example.test/kfc-double-crunch",
+                            research_prompt="Research nutritional references for KFC Double Crunch combo in Brazil.",
+                            source_claims=(
+                                {
+                                    "source": "third-party menu reference",
+                                    "claim": "combo is treated as sandwich plus side and drink",
+                                },
+                            ),
+                        )
+                    ]
+                ),
+                estimator=StaticFoodEstimator(
+                    {
+                        "kfc double crunch combo": NutritionEstimate(
+                            phrase="kfc double crunch combo",
+                            food_name="Model KFC estimate",
+                            nutrients_per_100g=Nutrients(300, 9, 30, 16),
+                            source="fixture_model_estimate",
+                            confidence=0.42,
+                            notes="Model fallback should not be used when research returns a candidate.",
+                        )
+                    }
+                ),
+            )
+        )
+        household = api.handle("POST", "/api/households", {"name": "Casa"}).body
+        person = api.handle(
+            "POST",
+            "/api/people",
+            {
+                "household_id": household["id"],
+                "name": "Gabriel",
+                "timezone": "America/Sao_Paulo",
+            },
+        ).body
+
+        proposal = api.handle(
+            "POST",
+            "/api/agent/text-meal",
+            {
+                "person_id": person["id"],
+                "logged_at_local": "2026-07-01T20:00:00",
+                "text": "300g KFC Double Crunch combo",
+                "agent_settings": {"external_lookup": True, "research_lookup": True},
+            },
+        ).body
+
+        self.assertEqual(proposal["totals"]["calories_kcal"], 735)
+        self.assertEqual(proposal["payload"]["estimated_food_versions"][0]["source"], "research_lookup")
+        self.assertEqual(proposal["payload"]["estimated_food_versions"][0]["source_type"], "research_agent")
+        self.assertEqual(
+            proposal["payload"]["estimated_food_versions"][0]["research_prompt"],
+            "Research nutritional references for KFC Double Crunch combo in Brazil.",
+        )
+        self.assertEqual(
+            proposal["payload"]["estimated_food_versions"][0]["source_claims"][0]["claim"],
+            "combo is treated as sandwich plus side and drink",
+        )
+        self.assertEqual(proposal["evidence"][0]["resolution_reason"], "research_lookup")
+        self.assertEqual(
+            [
+                (call["tool_name"], call["status"])
+                for call in proposal["agent_run"]["tool_calls"]
+            ],
+            [
+                ("resolve_food_reference", "failed"),
+                ("lookup_external_food", "completed"),
+                ("lookup_research_food", "completed"),
+            ],
+        )
+
     def test_agent_chat_answer_and_correction_proposal_through_http_contract(self) -> None:
         api = HttpApi(HealthMonitorService())
         household = api.handle("POST", "/api/households", {"name": "Casa"}).body

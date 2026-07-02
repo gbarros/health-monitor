@@ -85,6 +85,136 @@ class UnknownFoodEstimateFlowTest(unittest.TestCase):
         self.assertIn("kfc double crunch combo", tool_calls[0].input_summary)
         self.assertIn("KFC Double Crunch combo", tool_calls[1].output_summary)
 
+    def test_controlled_research_lookup_is_used_before_model_estimate(self) -> None:
+        service = HealthMonitorService(
+            food_lookup_provider=StaticFoodLookupProvider([]),
+            research_lookup_provider=StaticFoodLookupProvider(
+                [
+                    FoodLookupCandidate(
+                        source_type="research_agent",
+                        source_name="Controlled research agent",
+                        source_id="research-kfc-double-crunch-br",
+                        product_name="KFC Double Crunch combo Brazil",
+                        brand="KFC Brasil",
+                        barcode=None,
+                        nutrients_per_100g=Nutrients(245, 12, 26, 10),
+                        serving_size_g=None,
+                        confidence=0.64,
+                        warnings=("restaurant nutrition reference is approximate",),
+                        source_url="https://example.test/kfc-double-crunch",
+                        research_prompt="Research nutritional references for KFC Double Crunch combo in Brazil.",
+                        source_claims=(
+                            {
+                                "source": "third-party menu reference",
+                                "claim": "combo is treated as sandwich plus side and drink",
+                            },
+                        ),
+                    )
+                ]
+            ),
+            estimator=StaticFoodEstimator(
+                {
+                    "kfc double crunch combo": NutritionEstimate(
+                        phrase="kfc double crunch combo",
+                        food_name="Model KFC estimate",
+                        nutrients_per_100g=Nutrients(300, 9, 30, 16),
+                        source="fixture_model_estimate",
+                        confidence=0.42,
+                        notes="Model fallback should not be used when research returns a candidate.",
+                    )
+                }
+            ),
+        )
+        household = service.create_household(name="Casa")
+        person = service.create_person(
+            household_id=household.id,
+            name="Gabriel",
+            timezone="America/Sao_Paulo",
+        )
+
+        proposal = service.propose_text_meal(
+            person_id=person.id,
+            logged_at_local="2026-07-01T20:00:00",
+            text="300g KFC Double Crunch combo",
+            agent_settings={"external_lookup": True, "research_lookup": True},
+        )
+        pending = proposal.payload["estimated_food_versions"][0]
+        tool_calls = service.agent_tool_calls_for_run(proposal.source_agent_run_id or "")
+
+        self.assertEqual(proposal.proposal_type, "diary_entries_with_estimates")
+        self.assertEqual(proposal.totals.rounded(), Nutrients(735, 36, 78, 30))
+        self.assertEqual(pending["source"], "research_lookup")
+        self.assertEqual(pending["source_type"], "research_agent")
+        self.assertEqual(pending["research_prompt"], "Research nutritional references for KFC Double Crunch combo in Brazil.")
+        self.assertEqual(pending["source_claims"][0]["source"], "third-party menu reference")
+        self.assertEqual(proposal.evidence[0]["source_type"], "research_agent")
+        self.assertEqual(proposal.evidence[0]["resolution_reason"], "research_lookup")
+        self.assertEqual(proposal.evidence[0]["source_claims"][0]["claim"], "combo is treated as sandwich plus side and drink")
+        self.assertEqual(
+            [(call.tool_name, call.status) for call in tool_calls],
+            [
+                ("resolve_food_reference", "failed"),
+                ("lookup_external_food", "completed"),
+                ("lookup_research_food", "completed"),
+            ],
+        )
+
+    def test_research_lookup_can_be_disabled_independently_from_model_estimate(self) -> None:
+        service = HealthMonitorService(
+            food_lookup_provider=StaticFoodLookupProvider([]),
+            research_lookup_provider=StaticFoodLookupProvider(
+                [
+                    FoodLookupCandidate(
+                        source_type="research_agent",
+                        source_name="Controlled research agent",
+                        source_id="research-kfc-double-crunch-br",
+                        product_name="KFC Double Crunch combo",
+                        brand="KFC Brasil",
+                        barcode=None,
+                        nutrients_per_100g=Nutrients(245, 12, 26, 10),
+                        serving_size_g=None,
+                        confidence=0.64,
+                    )
+                ]
+            ),
+            estimator=StaticFoodEstimator(
+                {
+                    "kfc double crunch combo": NutritionEstimate(
+                        phrase="kfc double crunch combo",
+                        food_name="KFC Double Crunch combo",
+                        nutrients_per_100g=Nutrients(260, 11, 24, 13),
+                        source="fixture_model_estimate",
+                        confidence=0.42,
+                        notes="Research lookup disabled for this run.",
+                    )
+                }
+            ),
+        )
+        household = service.create_household(name="Casa")
+        person = service.create_person(
+            household_id=household.id,
+            name="Gabriel",
+            timezone="America/Sao_Paulo",
+        )
+
+        proposal = service.propose_text_meal(
+            person_id=person.id,
+            logged_at_local="2026-07-01T20:00:00",
+            text="300g KFC Double Crunch combo",
+            agent_settings={"external_lookup": True, "research_lookup": False},
+        )
+        tool_calls = service.agent_tool_calls_for_run(proposal.source_agent_run_id or "")
+
+        self.assertEqual(proposal.evidence[0]["source_type"], "model_estimate")
+        self.assertEqual(
+            [(call.tool_name, call.status) for call in tool_calls],
+            [
+                ("resolve_food_reference", "failed"),
+                ("lookup_external_food", "completed"),
+                ("estimate_food", "completed"),
+            ],
+        )
+
     def test_unknown_food_estimate_is_proposed_before_any_mutation(self) -> None:
         service = HealthMonitorService(
             estimator=StaticFoodEstimator(
