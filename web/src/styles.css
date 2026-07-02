@@ -602,6 +602,87 @@ textarea {
   padding: 0 8px;
 }
 
+.tool-trace {
+  border-top: 1px solid #e2e6df;
+  border-bottom: 1px solid #e2e6df;
+  margin: 0 0 14px;
+  padding: 12px 0;
+}
+
+.tool-trace-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.tool-trace-heading h3 {
+  color: #1e2420;
+  font-size: 15px;
+}
+
+.tool-trace-heading span {
+  color: #657064;
+  font-size: 12px;
+}
+
+.tool-call-list {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.tool-call-list li {
+  display: grid;
+  gap: 4px;
+  border: 1px solid #d9ded5;
+  border-radius: 6px;
+  background: #f8faf7;
+  padding: 8px 10px;
+}
+
+.tool-call-list li div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.tool-call-list strong {
+  font-size: 13px;
+}
+
+.tool-call-list span {
+  color: #525c52;
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.tool-status {
+  border-radius: 999px;
+  padding: 2px 7px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.tool-status-completed {
+  background: #e8f3eb;
+  color: #276240;
+}
+
+.tool-status-failed {
+  background: #fff0ea;
+  color: #9c3d10;
+}
+
+.tool-call-list .tool-error {
+  color: #9c3d10;
+}
+
 .chat-answer {
   border: 1px solid #d9ded5;
   border-radius: 6px;

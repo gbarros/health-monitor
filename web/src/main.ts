@@ -144,6 +144,19 @@ type ReviewNote = {
   created_at: string;
 };
 type ProposalEntry = SummaryEntry & { food_version_id: string };
+type AgentToolCall = {
+  id: string;
+  agent_run_id: string;
+  person_id: string;
+  tool_name: string;
+  input_summary: string;
+  output_summary: string;
+  status: string;
+  source_record_ids: string[];
+  error: string | null;
+  started_at: string;
+  completed_at: string | null;
+};
 type Proposal = {
   id: string;
   person_id: string;
@@ -161,6 +174,7 @@ type Proposal = {
     id: string;
     settings: Record<string, string | number | boolean>;
     status: string;
+    tool_calls: AgentToolCall[];
   } | null;
   entries: ProposalEntry[];
 };
@@ -582,6 +596,7 @@ function renderProposal(): string {
         </div>
       </div>
       ${renderProposalAudit(state.proposal)}
+      ${renderAgentToolTrace(state.proposal)}
       <div class="metrics compact">
         ${metric("Calories", `${state.proposal.totals.calories_kcal}`, "kcal")}
         ${metric("Protein", `${state.proposal.totals.protein_g}`, "g")}
@@ -592,6 +607,39 @@ function renderProposal(): string {
       ${payloadDetails}
       <p class="hint">${escapeHtml(settings)}</p>
       ${evidence ? `<ul class="evidence-list">${evidence}</ul>` : ""}
+    </section>
+  `;
+}
+
+function renderAgentToolTrace(proposal: Proposal): string {
+  const calls = proposal.agent_run?.tool_calls ?? [];
+  if (!calls.length) return "";
+  const rows = calls
+    .map(
+      (call) => `
+        <li>
+          <div>
+            <strong>${escapeHtml(toolCallLabel(call.tool_name))}</strong>
+            <span class="tool-status ${toolStatusClass(call.status)}">${escapeHtml(call.status)}</span>
+          </div>
+          <span>${escapeHtml(call.input_summary)}</span>
+          <span>${escapeHtml(call.output_summary)}</span>
+          ${
+            call.error
+              ? `<span class="tool-error">${escapeHtml(call.error)}</span>`
+              : ""
+          }
+        </li>
+      `
+    )
+    .join("");
+  return `
+    <section class="tool-trace" aria-label="Agent tool trace">
+      <div class="tool-trace-heading">
+        <h3>Agent trace</h3>
+        <span>${calls.length} call${calls.length === 1 ? "" : "s"}</span>
+      </div>
+      <ol class="tool-call-list">${rows}</ol>
     </section>
   `;
 }
@@ -626,6 +674,18 @@ function renderProposalAudit(proposal: Proposal): string {
       }
     </dl>
   `;
+}
+
+function toolCallLabel(toolName: string): string {
+  return toolName
+    .split("_")
+    .filter(Boolean)
+    .map((word) => word.slice(0, 1).toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
+function toolStatusClass(status: string): string {
+  return status === "failed" ? "tool-status-failed" : "tool-status-completed";
 }
 
 function renderProposalInbox(): string {

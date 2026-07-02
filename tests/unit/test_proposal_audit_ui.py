@@ -18,9 +18,15 @@ class ProposalAuditUiTest(unittest.TestCase):
         self.assertIn("confirmed_at: string | null;", source)
         self.assertIn("rejected_at: string | null;", source)
         self.assertIn("renderProposalAudit(state.proposal)", source)
+        self.assertIn("type AgentToolCall", source)
+        self.assertIn("tool_calls: AgentToolCall[];", source)
+        self.assertIn("renderAgentToolTrace(state.proposal)", source)
+        self.assertIn("function renderAgentToolTrace", source)
         self.assertIn("superseded_by_proposal_id", source)
         self.assertIn("proposal-load-related", source)
         self.assertIn(".audit-list", styles)
+        self.assertIn(".tool-call-list", styles)
+        self.assertIn(".tool-status-failed", styles)
 
     def test_terminal_proposals_do_not_offer_reject_action(self) -> None:
         source = MAIN_TS.read_text(encoding="utf-8")
