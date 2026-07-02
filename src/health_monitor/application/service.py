@@ -2051,6 +2051,15 @@ class HealthMonitorService:
                 {"record_type": "diary_entry", "record_id": entry.id}
                 for entry in entries
             )
+        self._record_agent_tool_call(
+            run=run,
+            tool_name="summarize_day",
+            input_summary=f"person_id={person_id}; day={day.isoformat()}",
+            output_summary=(
+                f"{len(entries)} entries; calories={summary.totals.rounded().calories_kcal}"
+            ),
+            source_record_ids=tuple(item["record_id"] for item in citations),
+        )
         self.agent_runs[run.id] = AgentRun(
             id=run.id,
             person_id=run.person_id,
@@ -2147,6 +2156,18 @@ class HealthMonitorService:
                     for entry in trend.entries
                 ]
             )
+        self._record_agent_tool_call(
+            run=run,
+            tool_name="summarize_week",
+            input_summary=(
+                f"person_id={person_id}; range={start.isoformat()} to {end.isoformat()}"
+            ),
+            output_summary=(
+                f"{len(entries)} diary entries; {len(trend.entries)} weight entries; "
+                f"calories={summary.totals.rounded().calories_kcal}"
+            ),
+            source_record_ids=tuple(item["record_id"] for item in citations),
+        )
         self.agent_runs[run.id] = AgentRun(
             id=run.id,
             person_id=run.person_id,
@@ -2222,6 +2243,18 @@ class HealthMonitorService:
             citations = tuple(
                 {"record_type": "diary_entry", "record_id": entry.id} for entry in entries
             )
+        self._record_agent_tool_call(
+            run=run,
+            tool_name="analyze_micronutrients",
+            input_summary=(
+                f"person_id={person_id}; range={start.isoformat()} to {end.isoformat()}"
+            ),
+            output_summary=(
+                f"{logged_days} logged days; {len(entries)} entries; "
+                f"fiber={totals.rounded().fiber_g}; sodium={totals.rounded().sodium_mg}"
+            ),
+            source_record_ids=tuple(item["record_id"] for item in citations),
+        )
         self.agent_runs[run.id] = AgentRun(
             id=run.id,
             person_id=run.person_id,
@@ -2280,6 +2313,16 @@ class HealthMonitorService:
                 source_agent_run_id=run.id,
             )
         )
+        self._record_agent_tool_call(
+            run=run,
+            tool_name="draft_review_note",
+            input_summary=(
+                f"range={starts_on_text or 'undated'}"
+                f"{f' to {ends_on_text}' if ends_on_text else ''}; chars={len(body)}"
+            ),
+            output_summary=f"proposal_id={proposal.id}; title={title}",
+            source_record_ids=(proposal.id,),
+        )
         self.agent_runs[run.id] = AgentRun(
             id=run.id,
             person_id=run.person_id,
@@ -2317,6 +2360,17 @@ class HealthMonitorService:
             if phrase in entry.food_name.casefold()
             or phrase in (entry.brand or "").casefold()
         ]
+        self._record_agent_tool_call(
+            run=run,
+            tool_name="find_diary_entries",
+            input_summary=(
+                f"person_id={person_id}; day={day.isoformat()}; phrase={phrase}"
+            ),
+            output_summary=f"{len(matches)} matches",
+            status="completed" if matches else "failed",
+            source_record_ids=tuple(entry.id for entry in matches),
+            error=None if matches else "no matching diary entries",
+        )
         if not matches:
             self.agent_runs[run.id] = AgentRun(
                 id=run.id,
@@ -2361,6 +2415,16 @@ class HealthMonitorService:
                 ),
                 source_agent_run_id=run.id,
             )
+        )
+        self._record_agent_tool_call(
+            run=run,
+            tool_name="draft_diary_correction",
+            input_summary=(
+                f"entry_id={selected.id}; previous={selected.quantity_g:g}g; "
+                f"new={quantity_g:g}g"
+            ),
+            output_summary=f"proposal_id={proposal.id}; food={selected.food_name}",
+            source_record_ids=(selected.id, proposal.id),
         )
         self.agent_runs[run.id] = AgentRun(
             id=run.id,

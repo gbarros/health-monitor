@@ -38,6 +38,13 @@ class ReviewNotesTest(unittest.TestCase):
         self.assertEqual(proposal.payload["starts_on"], "2026-07-01")
         self.assertEqual(proposal.payload["ends_on"], "2026-07-07")
         self.assertIn("Social dinners", proposal.payload["body"])
+        tool_calls = service.agent_tool_calls_for_run(response.run_id)
+        self.assertEqual(
+            [(call.tool_name, call.status) for call in tool_calls],
+            [("draft_review_note", "completed")],
+        )
+        self.assertEqual(tool_calls[0].source_record_ids, (proposal.id,))
+        self.assertIn("2026-07-01 to 2026-07-07", tool_calls[0].input_summary)
 
         applied = service.confirm_proposal(proposal.id)
         notes = service.review_notes_for_person(person_id)

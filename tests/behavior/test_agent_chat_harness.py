@@ -59,6 +59,14 @@ class AgentChatHarnessTest(unittest.TestCase):
             {"record_type": "diary_entry", "record_id": entry_id},
             response.citations,
         )
+        tool_calls = service.agent_tool_calls_for_run(response.run_id)
+        self.assertEqual(
+            [(call.tool_name, call.status) for call in tool_calls],
+            [("summarize_day", "completed")],
+        )
+        self.assertIn("2026-07-01", tool_calls[0].input_summary)
+        self.assertIn("315", tool_calls[0].output_summary)
+        self.assertEqual(tool_calls[0].source_record_ids, (entry_id,))
 
     def test_chat_says_when_requested_day_has_insufficient_data(self) -> None:
         service = HealthMonitorService()
@@ -78,6 +86,12 @@ class AgentChatHarnessTest(unittest.TestCase):
         self.assertEqual(response.behavior_label, "answer_question")
         self.assertIn("not enough diary data", response.message.casefold())
         self.assertEqual(response.citations, ())
+        tool_calls = service.agent_tool_calls_for_run(response.run_id)
+        self.assertEqual(
+            [(call.tool_name, call.status) for call in tool_calls],
+            [("summarize_day", "completed")],
+        )
+        self.assertIn("0 entries", tool_calls[0].output_summary)
 
     def test_chat_correction_drafts_proposal_without_mutating_until_confirmation(self) -> None:
         service, person_id, entry_id = self.make_service_with_entry()
@@ -95,6 +109,16 @@ class AgentChatHarnessTest(unittest.TestCase):
         self.assertEqual(proposal.payload["entry_id"], entry_id)
         self.assertEqual(proposal.payload["quantity_g"], 50)
         self.assertEqual(before.totals.rounded(), Nutrients(315, 23, 2.6, 23.5))
+        tool_calls = service.agent_tool_calls_for_run(response.run_id)
+        self.assertEqual(
+            [(call.tool_name, call.status) for call in tool_calls],
+            [
+                ("find_diary_entries", "completed"),
+                ("draft_diary_correction", "completed"),
+            ],
+        )
+        self.assertEqual(tool_calls[0].source_record_ids, (entry_id,))
+        self.assertEqual(tool_calls[1].source_record_ids, (entry_id, proposal.id))
 
         applied = service.confirm_proposal(proposal.id)
         after = service.day_summary(person_id, date(2026, 7, 1))
@@ -117,14 +141,14 @@ class AgentChatHarnessTest(unittest.TestCase):
             starts_on=date(2026, 7, 1),
             targets=Nutrients(2000, 150, 180, 70),
         )
-        service.log_weight(
+        first_weight = service.log_weight(
             person_id=person_id,
             measured_at_local="2026-07-01T08:00:00",
             weight_kg=91.2,
             note="start",
             source="manual",
         )
-        service.log_weight(
+        second_weight = service.log_weight(
             person_id=person_id,
             measured_at_local="2026-07-07T08:00:00",
             weight_kg=90.4,
@@ -151,6 +175,16 @@ class AgentChatHarnessTest(unittest.TestCase):
             {"record_type": "diary_entry", "record_id": second.id},
             response.citations,
         )
+        tool_calls = service.agent_tool_calls_for_run(response.run_id)
+        self.assertEqual(
+            [(call.tool_name, call.status) for call in tool_calls],
+            [("summarize_week", "completed")],
+        )
+        self.assertIn("2026-07-01 to 2026-07-07", tool_calls[0].input_summary)
+        self.assertEqual(
+            set(tool_calls[0].source_record_ids),
+            {first_entry_id, second.id, first_weight.id, second_weight.id},
+        )
 
     def test_micronutrient_question_states_uncertainty_and_data_needed(self) -> None:
         service, person_id, entry_id = self.make_service_with_entry()
@@ -172,6 +206,12 @@ class AgentChatHarnessTest(unittest.TestCase):
             {"record_type": "diary_entry", "record_id": entry_id},
             response.citations,
         )
+        tool_calls = service.agent_tool_calls_for_run(response.run_id)
+        self.assertEqual(
+            [(call.tool_name, call.status) for call in tool_calls],
+            [("analyze_micronutrients", "completed")],
+        )
+        self.assertEqual(tool_calls[0].source_record_ids, (entry_id,))
 
 
 if __name__ == "__main__":

@@ -2273,6 +2273,16 @@ class HttpApiContractTest(unittest.TestCase):
         self.assertIn("Queijo Minas", answer["message"])
         self.assertEqual(correction["behavior_label"], "draft_diary_correction")
         self.assertEqual(correction["proposal"]["proposal_type"], "diary_entry_update")
+        self.assertEqual(
+            [
+                (call["tool_name"], call["status"])
+                for call in correction["proposal"]["agent_run"]["tool_calls"]
+            ],
+            [
+                ("find_diary_entries", "completed"),
+                ("draft_diary_correction", "completed"),
+            ],
+        )
         self.assertEqual(applied["status"], "applied")
         self.assertEqual(summary["totals"]["calories_kcal"], 157.5)
 
@@ -2319,6 +2329,13 @@ class HttpApiContractTest(unittest.TestCase):
 
         self.assertEqual(response["behavior_label"], "draft_review_note")
         self.assertEqual(response["proposal"]["proposal_type"], "review_note")
+        self.assertEqual(
+            [
+                (call["tool_name"], call["status"])
+                for call in response["proposal"]["agent_run"]["tool_calls"]
+            ],
+            [("draft_review_note", "completed")],
+        )
         self.assertEqual(empty_notes, [])
         self.assertEqual(applied["status"], "applied")
         self.assertEqual(len(notes), 1)
