@@ -32,6 +32,15 @@ class FoodFilterUiTest(unittest.TestCase):
         self.assertIn("filtered.length", source)
         self.assertIn('No saved foods match this filter.', source)
 
+    def test_filter_matches_aliases_and_barcodes_returned_by_api(self) -> None:
+        source = MAIN_TS.read_text(encoding="utf-8")
+
+        self.assertIn("aliases: string[];", source)
+        self.assertIn("barcodes: string[];", source)
+        self.assertIn("...item.aliases", source)
+        self.assertIn("...item.barcodes", source)
+        self.assertIn('placeholder="name, brand, alias, barcode"', source)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -133,13 +133,7 @@ class HttpApi:
             )
             return HttpResponse(
                 200,
-                [
-                    {
-                        "food": food_to_dict(food),
-                        "version": food_version_to_dict(version),
-                    }
-                    for food, version in foods
-                ],
+                [food_response_to_dict(self.service, food, version) for food, version in foods],
             )
 
         if method == "POST" and path == "/api/foods":
@@ -156,7 +150,7 @@ class HttpApi:
             )
             return HttpResponse(
                 201,
-                {"food": food_to_dict(food), "version": food_version_to_dict(version)},
+                food_response_to_dict(self.service, food, version),
             )
 
         if method == "POST" and path.startswith("/api/foods/") and path.endswith("/archive"):
@@ -220,8 +214,7 @@ class HttpApi:
             return HttpResponse(
                 201,
                 {
-                    "food": food_to_dict(food),
-                    "version": food_version_to_dict(version),
+                    **food_response_to_dict(self.service, food, version),
                     "entry": diary_entry_to_dict(entry),
                 },
             )
@@ -472,6 +465,45 @@ def food_to_dict(food: Food) -> dict[str, Any]:
         "default_version_id": food.default_version_id,
         "archived": food.archived,
     }
+
+
+def food_response_to_dict(
+    service: HealthMonitorService,
+    food: Food,
+    version: FoodVersion,
+) -> dict[str, Any]:
+    return {
+        "food": food_to_dict(food),
+        "version": food_version_to_dict(version),
+        "aliases": food_aliases_for_response(service, food),
+        "barcodes": food_barcodes_for_response(service, food, version),
+    }
+
+
+def food_aliases_for_response(service: HealthMonitorService, food: Food) -> list[str]:
+    return sorted(
+        alias.phrase
+        for alias in service.catalog.aliases.values()
+        if alias.household_id == food.household_id and alias.food_id == food.id
+    )
+
+
+def food_barcodes_for_response(
+    service: HealthMonitorService,
+    food: Food,
+    version: FoodVersion,
+) -> list[str]:
+    return sorted(
+        association.barcode
+        for association in service.catalog.barcode_associations.values()
+        if association.household_id == food.household_id
+        and association.food_id == food.id
+        and not association.archived
+        and (
+            association.food_version_id is None
+            or association.food_version_id == version.id
+        )
+    )
 
 
 def food_version_to_dict(version: FoodVersion) -> dict[str, Any]:

@@ -336,6 +336,48 @@ class HttpApiContractTest(unittest.TestCase):
         self.assertEqual(filtered[0]["food"]["name"], "Iogurte Batavo")
         self.assertEqual(filtered[0]["version"]["nutrients_per_100g"]["protein_g"], 10)
 
+    def test_food_listing_exposes_aliases_and_active_barcodes_for_client_search(self) -> None:
+        api = HttpApi(HealthMonitorService())
+        household = api.handle("POST", "/api/households", {"name": "Casa"}).body
+        person = api.handle(
+            "POST",
+            "/api/people",
+            {
+                "household_id": household["id"],
+                "name": "Gabriel",
+                "timezone": "America/Sao_Paulo",
+            },
+        ).body
+        food = api.handle(
+            "POST",
+            "/api/foods",
+            {
+                "household_id": household["id"],
+                "name": "Leite Protein",
+                "brand": "Piracanjuba",
+                "version_label": "zero lactose",
+                "source": "label_scan",
+                "nutrients_per_100g": {
+                    "calories_kcal": 51,
+                    "protein_g": 10,
+                    "carbs_g": 4.8,
+                    "fat_g": 0,
+                },
+                "aliases": ["o leite mais proteico"],
+                "barcode": "7891000011111",
+            },
+        ).body
+
+        listed = api.handle(
+            "GET",
+            f"/api/foods?household_id={household['id']}&person_id={person['id']}",
+            None,
+        ).body
+
+        self.assertEqual(listed[0]["food"]["id"], food["food"]["id"])
+        self.assertEqual(listed[0]["aliases"], ["o leite mais proteico"])
+        self.assertEqual(listed[0]["barcodes"], ["7891000011111"])
+
     def test_food_archive_hides_library_entry_but_keeps_diary_history_through_http_contract(self) -> None:
         api = HttpApi(HealthMonitorService())
         household = api.handle("POST", "/api/households", {"name": "Casa"}).body

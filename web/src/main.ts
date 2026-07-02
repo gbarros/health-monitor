@@ -36,7 +36,12 @@ type FoodVersion = {
   serving_size_g: number | null;
 };
 type Food = { id: string; name: string; brand: string | null; default_version_id: string; archived?: boolean };
-type FoodResponse = { food: Food; version: FoodVersion };
+type FoodResponse = {
+  food: Food;
+  version: FoodVersion;
+  aliases: string[];
+  barcodes: string[];
+};
 type QuickCustomFoodResponse = FoodResponse & { entry: DiaryEntryRecord };
 type FoodLookupCandidate = {
   id: string;
@@ -964,7 +969,7 @@ function renderFoodForm(): string {
       <label>Aliases <input name="aliases" value="queijo, queijo minas" ${disabled} /></label>
       <label>Barcode <input name="barcode" placeholder="optional" ${disabled} /></label>
       <button type="submit" ${disabled}>Save food</button>
-      <label>Find saved food <input class="food-filter" data-filter-id="library" type="search" value="${escapeHtml(state.foodFilter)}" placeholder="name, brand, label" ${state.foods.length ? "" : "disabled"} /></label>
+      <label>Find saved food <input class="food-filter" data-filter-id="library" type="search" value="${escapeHtml(state.foodFilter)}" placeholder="name, brand, alias, barcode" ${state.foods.length ? "" : "disabled"} /></label>
       ${
         foods
           ? `<ul class="lookup-list">${foods}</ul>`
@@ -1017,7 +1022,7 @@ function renderManualLog(): string {
     <form id="manual-log-form" class="panel">
       <p class="eyebrow">Manual log</p>
       <h2>Diary entry</h2>
-      <label>Find food <input class="food-filter" data-filter-id="manual" type="search" value="${escapeHtml(state.foodFilter)}" placeholder="queijo, iogurte, protein" ${state.person && state.foods.length ? "" : "disabled"} /></label>
+      <label>Find food <input class="food-filter" data-filter-id="manual" type="search" value="${escapeHtml(state.foodFilter)}" placeholder="name, brand, alias, barcode" ${state.person && state.foods.length ? "" : "disabled"} /></label>
       <label>Food <select name="food_version_id" ${disabled}>${options}</select></label>
       ${!filtered.length && state.foods.length ? `<p class="hint">No saved foods match this filter.</p>` : ""}
       <label>Time <input name="logged_at_local" type="datetime-local" value="${defaultDateTime("10:00")}" ${disabled} /></label>
@@ -1589,7 +1594,7 @@ async function onQuickCustomLog(event: SubmitEvent): Promise<void> {
     barcode: optionalText(form, "barcode"),
     meal_type: requiredText(form, "meal_type")
   });
-  state.foods = [...state.foods, { food: created.food, version: created.version }];
+  state.foods = [...state.foods, created];
   state.notice = `${foodLabel(created)} created and logged.`;
   await refreshAllReadSurfaces();
 }
@@ -2076,6 +2081,8 @@ function matchesFoodFilter(item: FoodResponse): boolean {
     item.food.brand,
     item.version.label,
     foodLabel(item),
+    ...item.aliases,
+    ...item.barcodes,
     item.food.default_version_id,
     item.version.id
   ]
@@ -2115,7 +2122,9 @@ function addAppliedFoodProposalToLocalLibrary(proposal: Proposal): void {
     serving_size_g:
       typeof proposal.payload.serving_size_g === "number" ? proposal.payload.serving_size_g : null
   };
-  state.foods = [...state.foods, { food, version }];
+  const barcode = typeof proposal.payload.barcode === "string" ? proposal.payload.barcode : null;
+  const aliases = typeof proposal.payload.food_name === "string" ? [proposal.payload.food_name] : [];
+  state.foods = [...state.foods, { food, version, aliases, barcodes: barcode ? [barcode] : [] }];
 }
 
 function zeroNutrients(): Nutrients {
