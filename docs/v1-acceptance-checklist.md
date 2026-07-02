@@ -13,9 +13,10 @@ Evidence:
 - Service support for households, people, goal profiles, historical targets, and profile-scoped summaries.
 - UI profile switching coverage in `tests/unit/test_profile_switch_ui.py`.
 - Behavior coverage in `tests/behavior/test_profile_targets.py`.
+- Browser e2e setup creates a household, adds two profiles, and verifies person-scoped state after switching.
 
 Remaining:
-- Browser e2e must prove setup and two-profile switching in the real Vite app.
+- None for v1 setup/profile switching.
 
 ### F-002: Food Library
 
@@ -54,9 +55,10 @@ Remaining:
 Evidence:
 - Manual quick custom food and known-food meal logging are available through service and HTTP API paths.
 - Behavior coverage in `tests/behavior/test_daily_driver_application_slice.py`.
+- Browser e2e creates a reusable food and logs a manual diary entry through the Vite app.
 
 Remaining:
-- Browser e2e should create a food and log a manual meal end to end.
+- None for v1 manual known-food logging.
 
 ### F-006: Agent Meal Logging From Text
 
@@ -64,6 +66,7 @@ Evidence:
 - Deterministic text meal parser drafts proposals, preserves source text, gates writes, and confirms into diary entries.
 - Unknown foods can use Ollama estimate fallback through the estimator path.
 - Behavior coverage in `tests/behavior/test_agent_text_meal_flow.py`, `tests/behavior/test_unknown_food_estimate_flow.py`, and `tests/behavior/test_proposal_gated_writes.py`.
+- Browser e2e drafts and confirms a text meal proposal through the Vite app.
 
 Remaining:
 - Route structured meal drafting through PydanticAI/Ollama when `AGENT_RUNTIME=pydantic-ai`.
@@ -76,9 +79,10 @@ Evidence:
 - Barcode evidence can create local barcode associations when confirmed.
 - Ollama Brazilian label OCR parser preserves raw extracted text, warnings, confidence, barcode text, and attachment evidence through the label proposal flow.
 - Behavior/unit coverage in `tests/behavior/test_label_scan_proposal_flow.py`, `tests/behavior/test_label_image_extraction.py`, `tests/behavior/test_barcode_association.py`, and `tests/unit/test_ollama_lookup_parsers.py`.
+- Browser e2e drafts and confirms a pasted label/table proposal with barcode evidence.
 
 Remaining:
-- Browser e2e should scan/paste label plus barcode and confirm a food version.
+- Browser e2e still needs an image-upload variant; pasted table plus barcode is covered.
 
 ### F-008: Recipe And Batch Food Registration
 
@@ -146,9 +150,10 @@ Remaining:
 Evidence:
 - Structured export/import covers app state and validates into an empty service.
 - Behavior coverage in `tests/behavior/test_export_import.py`.
+- Browser e2e generates an export from the Vite app.
 
 Remaining:
-- Browser e2e should export and import into an empty state.
+- Browser e2e should import into a separate empty runtime; service-level empty-import coverage exists.
 
 ### F-015: Background Jobs And Worker
 
@@ -156,9 +161,10 @@ Evidence:
 - Durable background jobs include status, payload, result, errors, attempts, and timestamps.
 - Worker processes queued text meal, recipe, label, and chat jobs into proposals or answers.
 - Behavior/UI coverage in `tests/behavior/test_background_jobs.py` and `tests/unit/test_background_job_ui.py`.
+- Browser e2e queues a background chat job, processes it, and opens the saved answer.
 
 Remaining:
-- Browser e2e should queue a background chat job and open the saved answer.
+- None for v1 background chat job workflow.
 
 ### F-016: Privacy And Deployment
 
@@ -167,11 +173,12 @@ Evidence:
 - Per-run agent settings are recorded on agent runs.
 - Compose has API, worker, web, and Postgres services with NexusLog-compatible structured logging.
 - Runtime config includes `AGENT_RUNTIME`, `MODEL_PROVIDER`, `OPENFOODFACTS_ENABLED`, `USDA_ENABLED`, and `USDA_API_KEY`.
+- API Docker image installs the PydanticAI runtime dependency used by the Compose default runtime.
+- Docker stack rebuild/start was verified locally with healthy API and DB, running worker/web services, and `/api/health` reachable through the web entrypoint.
 - Tests include `tests/unit/test_agent_settings_ui.py`, `tests/unit/test_compose_runtime.py`, and `tests/contracts/test_nexuslog_event_contract.py`.
 
 Remaining:
-- Final Docker health gate must pass after rebuild.
-- PydanticAI dependency wiring must be available in the Docker image when runtime is enabled.
+- None for private-LAN v1 deployment shape.
 
 ### F-017: Food Reference Resolution
 
@@ -206,11 +213,10 @@ Remaining:
 ## Required V1 Gate
 
 Evidence:
-- `make test`
-- `make web-build`
-- `make e2e`
-- `docker compose up --build -d` with healthy `api`, `worker`, `web`, and `db`
+- `make test` passed locally.
+- `make web-build` passed locally.
+- `make e2e` passed locally.
+- `docker compose up --build -d` passed locally with healthy API/DB, running web/worker, and web-proxied `/api/health`.
 
 Remaining:
-- Add `make e2e` and Playwright workflow coverage.
 - Close every required item above or explicitly defer it out of v1.

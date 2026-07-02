@@ -6,6 +6,7 @@
 # Private user data imports and generated local fixtures
 /imports/
 /data/imports/
+/data/e2e/
 /data/local/
 /private/
 /Health - *.html
@@ -21,3 +22,4 @@ venv/
 # Frontend local state
 web/dist/
 web/node_modules/
+web/test-results/

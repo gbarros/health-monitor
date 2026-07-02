@@ -1,4 +1,4 @@
-.PHONY: test test-unit test-behavior dev-api dev-web web-install web-build
+.PHONY: test test-unit test-behavior dev-api dev-web web-install web-build e2e
 
 PYTHON ?= python3
 
@@ -22,3 +22,6 @@ web-install:
 
 web-build:
 	cd web && bun run build
+
+e2e:
+	cd web && bun run e2e

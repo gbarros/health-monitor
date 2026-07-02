@@ -65,6 +65,16 @@ make dev-web
 
 Run `make dev-api` in another terminal so Vite can proxy `/api/*`.
 
+## Browser E2E
+
+The v1 browser workflow uses Playwright against the real Vite app and Python API:
+
+```bash
+make e2e
+```
+
+The target starts isolated localhost test servers on dedicated ports and stores temporary SQLite state under `data/e2e/`.
+
 ## Docker Shape
 
 The Compose topology uses Postgres as the default deployable data store:
