@@ -35,6 +35,28 @@ class ModelUnavailableError(RuntimeError):
         self.replay_message = replay_message
 
 
+AGENT_INTENT_TEMPLATES: dict[str, str] = {
+    "log_food": (
+        "The user opened the registrar alimento helper. Treat the message as food logging context; "
+        "fields may be missing, so ask concise follow-up questions when needed before drafting."
+    ),
+    "recipe": (
+        "The user opened the receita/lote helper. Extract a recipe name, aliases, structured "
+        "ingredients with grams, and total cooked weight if present; ask for missing essentials."
+    ),
+    "label_scan": (
+        "The user opened the rotulo helper. Use attachment OCR tools when attachment ids are present, "
+        "then ask for missing product/portion details or draft a food-version proposal."
+    ),
+    "weight": "The user opened the peso helper. If a numeric weight is present, call log_weight.",
+    "repeat_meal": (
+        "The user opened the repetir refeicao helper. Extract source day and meal type, then call "
+        "repeat_meal or ask for the missing source meal."
+    ),
+    "review": "The user opened the review helper. Draft review notes only via structured tools.",
+}
+
+
 @dataclass(frozen=True)
 class Household:
     id: str
@@ -2053,6 +2075,7 @@ class HealthMonitorService:
         today: date,
         agent_settings: dict[str, Any] | None = None,
         attachment_ids: Sequence[str] | None = None,
+        intent: str | None = None,
     ) -> AgentChatResponse:
         settings = self._agent_settings(agent_settings)
         self._ensure_model_available(settings, replay_message=message)
@@ -2076,12 +2099,15 @@ class HealthMonitorService:
             self._persist()
             return response
 
-        agent_message = message
+        intent_block = AGENT_INTENT_TEMPLATES.get(str(intent)) if intent is not None else None
+        agent_message = f"Intent context: {intent_block}\n\nUser message: {message}" if intent_block else message
         if attachment_ids:
             agent_message = (
                 f"{message}\n\nAttachment ids available to inspect: "
                 f"{', '.join(str(item) for item in attachment_ids)}"
             ).strip()
+            if intent_block:
+                agent_message = f"Intent context: {intent_block}\n\n{agent_message}"
 
         pydantic_response = self._try_pydantic_ai_chat(
             person_id=person_id,
@@ -4782,6 +4808,8 @@ class HealthMonitorService:
                 message=str(payload["message"]),
                 today=date.fromisoformat(str(payload["today"])) if payload.get("today") else date.today(),
                 agent_settings=payload.get("agent_settings"),
+                attachment_ids=payload.get("attachment_ids"),
+                intent=str(payload["intent"]) if payload.get("intent") is not None else None,
             )
             turn = self.chat_turn_for_agent_run(response.run_id)
             return {

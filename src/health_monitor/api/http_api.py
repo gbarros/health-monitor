@@ -590,6 +590,7 @@ class HttpApi:
                 today=date.fromisoformat(body["today"]) if body.get("today") else date.today(),
                 agent_settings=body.get("agent_settings"),
                 attachment_ids=body.get("attachment_ids"),
+                intent=body.get("intent"),
             )
             return HttpResponse(201, agent_chat_response_to_dict(response, self.service))
 
