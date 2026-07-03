@@ -6,38 +6,10 @@ from datetime import datetime
 from health_monitor.application.service import (
     parse_text_meal_amendment,
     parse_text_meal_items,
-    text_looks_like_meal_amendment,
 )
 
 NOON = datetime(2026, 7, 3, 12, 0)
 
-
-class MealAmendmentClassifierTest(unittest.TestCase):
-    def test_meal_heading_always_means_new_meal(self) -> None:
-        cases = (
-            "Almoço:\n74g arroz\n139g feijão\n113g sobrecoxa\n-33g ossos e pele",
-            "Janta:\n100g de frango cozido\n-20g de ossos",
-            "Café da manhã: 100g de ovos mexidos",
-            "Lanche: 120g de iogurte caseiro",
-        )
-        for text in cases:
-            with self.subTest(text=text):
-                self.assertFalse(text_looks_like_meal_amendment(text))
-
-    def test_amendment_shapes_from_real_usage(self) -> None:
-        cases = (
-            "Ah, esqueci de incluir 100g de manga",
-            "esqueci as duas fatias de pão",
-            "tinha esquecido de anexar 30g de farofa",
-            "adicione 113g de manga",
-            "subtrai 68g de peixe",
-            "-33g de ossos",
-            "inclua 60ml? não, 60g de concentrado",
-            "faltou 1 ovo frito",
-        )
-        for text in cases:
-            with self.subTest(text=text):
-                self.assertTrue(text_looks_like_meal_amendment(text))
 
 class ParseTextMealItemsTest(unittest.TestCase):
     def test_slash_separated_items(self) -> None:

@@ -332,7 +332,7 @@ class AgentTextMealFlowTest(unittest.TestCase):
         self.assertEqual(summary.meals["breakfast"][0].food_name, "Leite mais proteico")
         self.assertEqual(summary.totals.rounded(), Nutrients(50, 10, 4, 0.5))
 
-    def test_follow_up_text_meal_amends_open_draft_and_supersedes_original(self) -> None:
+    def test_explicit_text_meal_amendment_supersedes_original(self) -> None:
         service = HealthMonitorService()
         household = service.create_household(name="Casa")
         person = service.create_person(
@@ -378,6 +378,7 @@ class AgentTextMealFlowTest(unittest.TestCase):
             person_id=person.id,
             logged_at_local="2026-07-01T12:15:00",
             text="esqueci 113g de frango",
+            amend_proposal_id=original.id,
             agent_settings={"external_lookup": False},
         )
         superseded = service.get_proposal(original.id)

@@ -2768,11 +2768,7 @@ class HealthMonitorService:
         )
         self.agent_runs[run.id] = run
 
-        amendment_target_id = amend_proposal_id or self._find_open_meal_amendment_target(
-            person_id=person_id,
-            logged_at=logged_at,
-            text=text,
-        )
+        amendment_target_id = amend_proposal_id
         if amendment_target_id is not None:
             proposal = self._create_amended_text_meal_proposal(
                 proposal_id=amendment_target_id,
@@ -3150,32 +3146,6 @@ class HealthMonitorService:
                 "notes": estimate.notes,
             },
         )
-
-    def _find_open_meal_amendment_target(
-        self,
-        *,
-        person_id: str,
-        logged_at: datetime,
-        text: str,
-    ) -> str | None:
-        if not text_looks_like_meal_amendment(text):
-            return None
-        candidates: list[CreateDiaryEntriesProposal] = []
-        for proposal in self.proposals.proposals.values():
-            if proposal.person_id != person_id or proposal.status != "draft" or not proposal.entries:
-                continue
-            if proposal.proposal_type not in {"diary_entries", "diary_entries_with_estimates"}:
-                continue
-            latest_entry_time = max(entry.logged_at for entry in proposal.entries)
-            if latest_entry_time.date() != logged_at.date():
-                continue
-            if abs((logged_at - latest_entry_time).total_seconds()) > 4 * 60 * 60:
-                continue
-            candidates.append(proposal)
-        if not candidates:
-            return None
-        candidates.sort(key=lambda proposal: (proposal.created_at, proposal.id), reverse=True)
-        return candidates[0].id
 
     def _create_amended_text_meal_proposal(
         self,
@@ -5261,25 +5231,6 @@ def parse_text_meal_items(text: str, *, default_logged_at: datetime) -> tuple[da
 _MEAL_HEADING = (
     r"\s*(?:café da manhã|cafe da manha|café|cafe|breakfast|almoço|almoco|lunch|jantar|janta|dinner|lanche|snack)\s*:"
 )
-
-
-def text_looks_like_meal_amendment(text: str) -> bool:
-    normalized = text.casefold().strip()
-    if not normalized:
-        return False
-    # An explicit meal heading always starts a new meal, never an amendment —
-    # even when the body contains removal ("-33g ossos") or addition lines.
-    if re.match(_MEAL_HEADING, normalized):
-        return False
-    if re.search(r"(^|\n)\s*-+\s*\d", normalized):
-        return True
-    if re.search(
-        r"\b(?:adicione|adiciona|acrescenta|acrescente|add|esqueci|esquecido|esqueceu|faltou"
-        r"|inclui|incluir|inclua|coloca|colocar|bota|botar|remove|remova|retira|subtrai)\b",
-        normalized,
-    ):
-        return True
-    return re.search(r"\d+(?:[,.]\d+)?\s*g(?:ramas?)?\s+", normalized) is not None
 
 
 def default_range_logged_at(text: str, *, today: date) -> datetime:
