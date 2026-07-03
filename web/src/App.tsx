@@ -493,38 +493,40 @@ function App() {
           <h1>Diário</h1>
         </div>
         <PersonChips people={people} activePersonId={selectedPersonId} onChange={changePerson} />
-        <button
-          type="button"
-          className="icon-button"
-          aria-label="Abrir propostas"
-          onClick={() => setProposalInboxOpen(true)}
-        >
-          Propostas
-        </button>
-        <button
-          type="button"
-          className="icon-button"
-          aria-label="Abrir alimentos"
-          onClick={() => setFoodLibraryOpen(true)}
-        >
-          Alimentos
-        </button>
-        <button
-          type="button"
-          className="icon-button"
-          aria-label="Abrir tarefas"
-          onClick={() => setJobsSheetOpen(true)}
-        >
-          Tarefas{activeJobCount > 0 ? <span className="badge-count">{activeJobCount}</span> : null}
-        </button>
-        <button
-          type="button"
-          className="icon-button"
-          aria-label="Abrir ajustes do agente"
-          onClick={() => setSettingsOpen(true)}
-        >
-          Ajustes
-        </button>
+        <div className="header-actions">
+          <button
+            type="button"
+            className="icon-button"
+            aria-label="Abrir propostas"
+            onClick={() => setProposalInboxOpen(true)}
+          >
+            Propostas
+          </button>
+          <button
+            type="button"
+            className="icon-button"
+            aria-label="Abrir alimentos"
+            onClick={() => setFoodLibraryOpen(true)}
+          >
+            Alimentos
+          </button>
+          <button
+            type="button"
+            className="icon-button"
+            aria-label="Abrir tarefas"
+            onClick={() => setJobsSheetOpen(true)}
+          >
+            Tarefas{activeJobCount > 0 ? <span className="badge-count">{activeJobCount}</span> : null}
+          </button>
+          <button
+            type="button"
+            className="icon-button"
+            aria-label="Abrir ajustes do agente"
+            onClick={() => setSettingsOpen(true)}
+          >
+            Ajustes
+          </button>
+        </div>
       </header>
 
       <main className="daily-layout">

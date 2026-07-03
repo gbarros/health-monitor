@@ -1,6 +1,6 @@
 .PHONY: test test-unit test-behavior test-live-model test-cloud-evals test-private-ocr-evals smoke-ollama dev-api dev-web web-install web-build agent-chat-ui-typecheck e2e-agent-chat-ui e2e e2e-private-week
 
-PYTHON ?= python3
+PYTHON ?= $(shell [ -x .venv/bin/python ] && echo .venv/bin/python || echo python3)
 
 test:
 	PYTHONPATH=src $(PYTHON) -m unittest discover -s tests -p 'test_*.py'
@@ -24,7 +24,12 @@ smoke-ollama:
 	PYTHONPATH=src $(PYTHON) -m health_monitor smoke-ollama --timeout-seconds 10
 
 dev-api:
-	PYTHONPATH=src $(PYTHON) -m health_monitor api --host 127.0.0.1 --port 8765
+	PYTHONPATH=src $(PYTHON) -m health_monitor api --host 127.0.0.1 --port 8765 & \
+	API_PID=$$!; \
+	PYTHONPATH=src $(PYTHON) -m health_monitor worker --interval-seconds 5 & \
+	WORKER_PID=$$!; \
+	trap 'kill $$API_PID $$WORKER_PID 2>/dev/null' EXIT INT TERM; \
+	wait
 
 dev-web:
 	cd web && bun run dev

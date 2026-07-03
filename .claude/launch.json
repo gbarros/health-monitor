@@ -3,11 +3,8 @@
   "configurations": [
     {
       "name": "api",
-      "runtimeExecutable": "sh",
-      "runtimeArgs": [
-        "-c",
-        "PYTHONPATH=src python3 -m health_monitor api --host 127.0.0.1 --port 8765"
-      ],
+      "runtimeExecutable": "make",
+      "runtimeArgs": ["dev-api"],
       "port": 8765
     },
     {
