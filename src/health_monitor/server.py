@@ -4,7 +4,7 @@ import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
-from health_monitor.api.http_api import HttpApi
+from health_monitor.api.http_api import HttpApi, HttpStreamResponse
 from health_monitor.application.service import HealthMonitorService
 from health_monitor.config import load_config
 from health_monitor.lookup.estimates import OllamaFoodEstimator
@@ -101,6 +101,20 @@ class HealthMonitorRequestHandler(BaseHTTPRequestHandler):
 
     def _handle_request(self, body: dict[str, Any] | None) -> None:
         response = self.api.handle(self.command, self.path, body)
+        if isinstance(response, HttpStreamResponse):
+            self.send_response(response.status_code)
+            self.send_header("content-type", "text/event-stream; charset=utf-8")
+            self.send_header("cache-control", "no-cache")
+            self.send_header("access-control-allow-origin", "*")
+            self.end_headers()
+            for event in response.events:
+                payload = json.dumps(event["data"], ensure_ascii=False).encode("utf-8")
+                self.wfile.write(f"event: {event['event']}\n".encode("utf-8"))
+                self.wfile.write(b"data: ")
+                self.wfile.write(payload)
+                self.wfile.write(b"\n\n")
+                self.wfile.flush()
+            return
         payload = json.dumps(response.body, ensure_ascii=False).encode("utf-8")
         self.send_response(response.status_code)
         self.send_header("content-type", "application/json; charset=utf-8")

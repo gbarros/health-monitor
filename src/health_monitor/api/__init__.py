@@ -1,3 +1,3 @@
-from health_monitor.api.http_api import HttpApi, HttpResponse
+from health_monitor.api.http_api import HttpApi, HttpResponse, HttpStreamResponse
 
-__all__ = ["HttpApi", "HttpResponse"]
+__all__ = ["HttpApi", "HttpResponse", "HttpStreamResponse"]

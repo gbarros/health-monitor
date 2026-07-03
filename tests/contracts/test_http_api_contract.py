@@ -2595,6 +2595,36 @@ class HttpApiContractTest(unittest.TestCase):
         self.assertEqual(history[0]["behavior_label"], "answer_question")
         self.assertEqual(history[0]["citations"], [])
 
+    def test_agent_chat_stream_returns_sse_events_through_http_contract(self) -> None:
+        api = HttpApi(HealthMonitorService())
+        household = api.handle("POST", "/api/households", {"name": "Casa"}).body
+        person = api.handle(
+            "POST",
+            "/api/people",
+            {
+                "household_id": household["id"],
+                "name": "Gabriel",
+                "timezone": "America/Sao_Paulo",
+            },
+        ).body
+
+        response = api.handle(
+            "POST",
+            "/api/agent/chat/stream",
+            {
+                "person_id": person["id"],
+                "message": "Pode resumir meu dia?",
+                "today": "2026-07-02",
+                "agent_settings": {"model_profile": "deterministic-test"},
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([event["event"] for event in response.events], ["text_delta", "final"])
+        self.assertEqual(response.events[0]["data"]["text"], response.body["message"])
+        self.assertEqual(response.events[-1]["data"]["run_id"], response.body["run_id"])
+        self.assertEqual(len(api.service.chat_turns_for_person(person["id"])), 1)
+
     def test_agent_chat_review_note_text_does_not_create_proposal_without_model_tool_call(self) -> None:
         api = HttpApi(HealthMonitorService())
         household = api.handle("POST", "/api/households", {"name": "Casa"}).body

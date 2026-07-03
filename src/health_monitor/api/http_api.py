@@ -40,6 +40,11 @@ class HttpResponse:
     body: dict[str, Any]
 
 
+@dataclass(frozen=True)
+class HttpStreamResponse(HttpResponse):
+    events: tuple[dict[str, Any], ...]
+
+
 class HttpApi:
     def __init__(self, service: HealthMonitorService, event_sink: NexusLogSink | None = None) -> None:
         self.service = service
@@ -565,6 +570,38 @@ class HttpApi:
                 intent=body.get("intent"),
             )
             return HttpResponse(201, agent_chat_response_to_dict(response, self.service))
+
+        if method == "POST" and path == "/api/agent/chat/stream":
+            response = self.service.chat(
+                person_id=body["person_id"],
+                message=body["message"],
+                today=date.fromisoformat(body["today"]) if body.get("today") else date.today(),
+                agent_settings=body.get("agent_settings"),
+                attachment_ids=body.get("attachment_ids"),
+                intent=body.get("intent"),
+            )
+            final = agent_chat_response_to_dict(response, self.service)
+            tool_events = tuple(
+                {
+                    "event": "tool_call",
+                    "data": {
+                        "name": call.tool_name,
+                        "status": call.status,
+                        "input_summary": call.input_summary,
+                        "output_summary": call.output_summary,
+                    },
+                }
+                for call in self.service.agent_tool_calls_for_run(response.run_id)
+            )
+            return HttpStreamResponse(
+                status_code=200,
+                body=final,
+                events=(
+                    *tool_events,
+                    {"event": "text_delta", "data": {"text": response.message}},
+                    {"event": "final", "data": final},
+                ),
+            )
 
         if method == "GET" and path == "/api/agent/chat-history":
             turns = self.service.chat_turns_for_person(query["person_id"])
