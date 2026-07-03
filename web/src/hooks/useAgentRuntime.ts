@@ -29,7 +29,7 @@ type RuntimeContext = {
   onAgentResponse: (response: AgentChatResponse) => void;
   onProposal: (proposal: Proposal) => void;
   onRuntimeError: (message: string) => void;
-  onModelUnavailable: (replayMessage: string) => void;
+  onSendFailed: (text: string, reason: "model_unavailable" | "network") => void;
 };
 
 export function useAgentRuntime(context: RuntimeContext) {
@@ -42,7 +42,7 @@ export function useAgentRuntime(context: RuntimeContext) {
     onAgentResponse,
     onProposal,
     onRuntimeError,
-    onModelUnavailable,
+    onSendFailed,
   } = context;
 
   const adapter = useMemo<ChatModelAdapter>(() => {
@@ -88,10 +88,16 @@ export function useAgentRuntime(context: RuntimeContext) {
           return assistantText(chatReply(response));
         } catch (error) {
           if (error instanceof ApiError && error.type === "model_unavailable") {
-            onModelUnavailable(error.replayMessage ?? text);
+            onSendFailed(error.replayMessage ?? text, "model_unavailable");
             return assistantText(
               "⚠️ Modelo local indisponível — sua mensagem não foi processada nem registrada. " +
                 "Quando o modelo voltar, toque em Reenviar.",
+            );
+          }
+          if (error instanceof TypeError) {
+            onSendFailed(text, "network");
+            return assistantText(
+              "⚠️ Sem conexão — sua mensagem não foi enviada. Quando a conexão voltar, toque em Reenviar.",
             );
           }
           const message = error instanceof Error ? error.message : "Unknown agent error";
@@ -100,7 +106,7 @@ export function useAgentRuntime(context: RuntimeContext) {
         }
       },
     };
-  }, [householdId, onAgentResponse, onModelUnavailable, onProposal, onRuntimeError, personId, settings, today]);
+  }, [householdId, onAgentResponse, onProposal, onRuntimeError, onSendFailed, personId, settings, today]);
 
   const attachments = useMemo(
     () => new CompositeAttachmentAdapter([new SimpleImageAttachmentAdapter(), new SimpleTextAttachmentAdapter()]),

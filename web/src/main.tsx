@@ -17,3 +17,11 @@ createRoot(document.getElementById("app")!).render(
     <App />
   </QueryClientProvider>,
 );
+
+if (import.meta.env.PROD && "serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/service-worker.js").catch(() => {
+      // Offline shell is a progressive enhancement; ignore registration failures.
+    });
+  });
+}

@@ -19,6 +19,7 @@ import type {
 export const STORAGE_KEYS = {
   householdId: "health-monitor.household-id",
   personId: "health-monitor.person-id",
+  selectedDay: "health-monitor.selected-day",
 } as const;
 
 export async function apiGet<T>(path: string): Promise<T> {

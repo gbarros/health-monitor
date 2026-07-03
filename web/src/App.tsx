@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { FormEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  ApiError,
   confirmProposal,
   createInitialProfile,
   defaultAgentSettings,
@@ -17,6 +18,7 @@ import {
   repeatMeal,
   resolveProposalClarification,
   restoreDiaryEntry,
+  sendAgentChat,
   STORAGE_KEYS,
   todayIsoForTimezone,
   updateProposalEntry,
@@ -31,6 +33,8 @@ import { ProposalCard } from "./components/ProposalCard";
 import { ProposalInbox } from "./components/ProposalInbox";
 import { WeekCard } from "./components/WeekCard";
 import { useAgentRuntime } from "./hooks/useAgentRuntime";
+import { enqueue, forPerson, readOutbox, removeById, writeOutbox, clearForPerson } from "./outbox";
+import type { OutboxItem } from "./outbox";
 import { queryKeys } from "./queryKeys";
 import type {
   AgentChatResponse,
@@ -61,9 +65,24 @@ function App() {
   const [toast, setToast] = useState<{ message: string; action?: { label: string; onClick: () => void } } | null>(
     null,
   );
-  const [pendingReplay, setPendingReplay] = useState<string | null>(null);
   const [inlineProposalIds, setInlineProposalIds] = useState<Set<string>>(() => new Set());
-  const [selectedDay, setSelectedDay] = useState<string>(() => todayIsoForTimezone(undefined));
+  const [selectedDay, setSelectedDayState] = useState<string>(
+    () => localStorage.getItem(STORAGE_KEYS.selectedDay) ?? todayIsoForTimezone(undefined),
+  );
+  const setSelectedDay = useCallback((day: string) => {
+    localStorage.setItem(STORAGE_KEYS.selectedDay, day);
+    setSelectedDayState(day);
+  }, []);
+  const [outbox, setOutbox] = useState<OutboxItem[]>(() => readOutbox());
+  const [outboxBannerDismissed, setOutboxBannerDismissed] = useState(false);
+  const [outboxReplaying, setOutboxReplaying] = useState(false);
+  const [chatReloadKey, setChatReloadKey] = useState(0);
+
+  useEffect(() => {
+    const onOnline = () => setOutboxBannerDismissed(false);
+    window.addEventListener("online", onOnline);
+    return () => window.removeEventListener("online", onOnline);
+  }, []);
 
   const peopleQuery = useQuery({
     queryKey: queryKeys.people(householdId),
@@ -75,13 +94,17 @@ function App() {
   const activePerson = people.find((person) => person.id === personId) ?? people[0] ?? null;
   const selectedPersonId = activePerson?.id ?? personId;
 
-  const lastResetPersonRef = useRef<string | null>(null);
+  const lastResetPersonRef = useRef<string | null | undefined>(undefined);
   useEffect(() => {
-    if (selectedPersonId && lastResetPersonRef.current !== selectedPersonId) {
-      lastResetPersonRef.current = selectedPersonId;
+    if (!selectedPersonId) {
+      return;
+    }
+    const previous = lastResetPersonRef.current;
+    lastResetPersonRef.current = selectedPersonId;
+    if (previous !== undefined && previous !== selectedPersonId) {
       setSelectedDay(todayIsoForTimezone(activePerson?.timezone));
     }
-  }, [activePerson?.timezone, selectedPersonId]);
+  }, [activePerson?.timezone, selectedPersonId, setSelectedDay]);
 
   useEffect(() => {
     setToast(null);
@@ -173,6 +196,81 @@ function App() {
   const onRuntimeError = useCallback((message: string) => {
     showToast(message);
   }, [showToast]);
+
+  const onSendFailed = useCallback(
+    (text: string, reason: "model_unavailable" | "network") => {
+      if (!selectedPersonId) {
+        return;
+      }
+      const item: OutboxItem = {
+        id: `outbox-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        person_id: selectedPersonId,
+        text,
+        created_at: new Date().toISOString(),
+        reason,
+      };
+      setOutbox((current) => {
+        const next = enqueue(current, item);
+        writeOutbox(next);
+        return next;
+      });
+      setOutboxBannerDismissed(false);
+    },
+    [selectedPersonId],
+  );
+
+  const outboxForCurrentPerson = selectedPersonId ? forPerson(outbox, selectedPersonId) : [];
+
+  const replayOutbox = useCallback(async () => {
+    if (!selectedPersonId || outboxReplaying) {
+      return;
+    }
+    setOutboxReplaying(true);
+    try {
+      for (const item of forPerson(outbox, selectedPersonId)) {
+        try {
+          const response = await sendAgentChat({
+            personId: item.person_id,
+            message: item.text,
+            settings,
+            today: selectedDay,
+          });
+          onAgentResponse(response);
+          setOutbox((current) => {
+            const next = removeById(current, item.id);
+            writeOutbox(next);
+            return next;
+          });
+          await queryClient.invalidateQueries({ queryKey: queryKeys.chatHistory(selectedPersonId) });
+          setChatReloadKey((key) => key + 1);
+        } catch (error) {
+          const message =
+            error instanceof ApiError
+              ? error.message
+              : error instanceof TypeError
+                ? "Ainda sem conexão."
+                : error instanceof Error
+                  ? error.message
+                  : "Falha desconhecida.";
+          showToast(`Reenvio interrompido: ${message}`);
+          break;
+        }
+      }
+    } finally {
+      setOutboxReplaying(false);
+    }
+  }, [onAgentResponse, outbox, outboxReplaying, queryClient, selectedDay, selectedPersonId, settings, showToast]);
+
+  const discardOutbox = useCallback(() => {
+    if (!selectedPersonId) {
+      return;
+    }
+    setOutbox((current) => {
+      const next = clearForPerson(current, selectedPersonId);
+      writeOutbox(next);
+      return next;
+    });
+  }, [selectedPersonId]);
 
   const proposalDecision = useMutation({
     mutationFn: ({ proposal, decision }: { proposal: Proposal; decision: "confirm" | "reject" }) =>
@@ -371,7 +469,7 @@ function App() {
       <main className="daily-layout">
         {chatHistoryQuery.isSuccess ? (
           <ChatWorkspace
-            key={selectedPersonId}
+            key={`${selectedPersonId}-${chatReloadKey}`}
             householdId={householdId}
             personId={selectedPersonId}
             today={selectedDay}
@@ -387,9 +485,15 @@ function App() {
             onAgentResponse={onAgentResponse}
             onProposal={onProposal}
             onRuntimeError={onRuntimeError}
-            pendingReplay={pendingReplay}
-            onModelUnavailable={setPendingReplay}
-            onReplayDismiss={() => setPendingReplay(null)}
+            onSendFailed={onSendFailed}
+            outboxCount={outboxForCurrentPerson.length}
+            outboxBannerVisible={outboxForCurrentPerson.length > 0 && !outboxBannerDismissed}
+            outboxReplaying={outboxReplaying}
+            onOutboxReplay={replayOutbox}
+            onOutboxDiscard={() => {
+              discardOutbox();
+              setOutboxBannerDismissed(true);
+            }}
             onConfirmProposal={(proposal) => proposalDecision.mutate({ proposal, decision: "confirm" })}
             onRejectProposal={(proposal) => proposalDecision.mutate({ proposal, decision: "reject" })}
             onUpdateProposalEntry={(proposal, entry, quantityG) =>
@@ -559,9 +663,12 @@ function ChatWorkspace({
   onAgentResponse,
   onProposal,
   onRuntimeError,
-  pendingReplay,
-  onModelUnavailable,
-  onReplayDismiss,
+  onSendFailed,
+  outboxCount,
+  outboxBannerVisible,
+  outboxReplaying,
+  onOutboxReplay,
+  onOutboxDiscard,
   onConfirmProposal,
   onRejectProposal,
   onUpdateProposalEntry,
@@ -585,9 +692,12 @@ function ChatWorkspace({
   onAgentResponse: (response: AgentChatResponse) => void;
   onProposal: (proposal: Proposal) => void;
   onRuntimeError: (message: string) => void;
-  pendingReplay: string | null;
-  onModelUnavailable: (replayMessage: string) => void;
-  onReplayDismiss: () => void;
+  onSendFailed: (text: string, reason: "model_unavailable" | "network") => void;
+  outboxCount: number;
+  outboxBannerVisible: boolean;
+  outboxReplaying: boolean;
+  onOutboxReplay: () => void;
+  onOutboxDiscard: () => void;
   onConfirmProposal: (proposal: Proposal) => void;
   onRejectProposal: (proposal: Proposal) => void;
   onUpdateProposalEntry: (proposal: Proposal, entry: ProposalEntry, quantityG: number) => void;
@@ -605,7 +715,7 @@ function ChatWorkspace({
     onAgentResponse,
     onProposal,
     onRuntimeError,
-    onModelUnavailable,
+    onSendFailed,
   });
 
   return (
@@ -633,8 +743,13 @@ function ChatWorkspace({
           onLabelClick={onLabelClick}
         />
         <ChatInterface />
-        {pendingReplay ? (
-          <ReplayBanner message={pendingReplay} onDismiss={onReplayDismiss} />
+        {outboxBannerVisible ? (
+          <ReplayBanner
+            count={outboxCount}
+            busy={outboxReplaying}
+            onReplay={onOutboxReplay}
+            onDiscardAll={onOutboxDiscard}
+          />
         ) : null}
         <DraftProposalDock
           proposal={proposal}

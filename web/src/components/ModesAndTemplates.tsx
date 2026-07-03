@@ -1,4 +1,5 @@
 import { useAui } from "@assistant-ui/react";
+import { useState } from "react";
 
 type Props = {
   onRepeatClick?: () => void;
@@ -7,21 +8,33 @@ type Props = {
   onLabelClick?: () => void;
 };
 
-export function ReplayBanner({ message, onDismiss }: { message: string; onDismiss: () => void }) {
-  const aui = useAui();
-  const replay = () => {
-    aui.thread().append({ content: [{ type: "text", text: message }] });
-    onDismiss();
-  };
+export function ReplayBanner({
+  count,
+  busy,
+  onReplay,
+  onDiscardAll,
+}: {
+  count: number;
+  busy: boolean;
+  onReplay: () => void;
+  onDiscardAll: () => void;
+}) {
+  const [confirmingDiscard, setConfirmingDiscard] = useState(false);
   return (
     <div className="replay-banner" role="alert">
-      <span>Modelo indisponível — 1 mensagem aguardando reenvio.</span>
+      <span>
+        {count} {count === 1 ? "mensagem aguardando" : "mensagens aguardando"} reenvio.
+      </span>
       <div className="replay-banner__actions">
-        <button type="button" onClick={onDismiss}>
-          Descartar
+        <button
+          type="button"
+          onClick={() => (confirmingDiscard ? onDiscardAll() : setConfirmingDiscard(true))}
+          disabled={busy}
+        >
+          {confirmingDiscard ? "Confirmar descartar" : "Descartar"}
         </button>
-        <button type="button" className="primary-action" onClick={replay}>
-          Reenviar
+        <button type="button" className="primary-action" onClick={onReplay} disabled={busy}>
+          {busy ? "Reenviando..." : "Reenviar"}
         </button>
       </div>
     </div>
