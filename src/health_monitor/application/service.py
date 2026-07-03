@@ -2076,237 +2076,16 @@ class HealthMonitorService:
             self._persist()
             return response
 
+        agent_message = message
         if attachment_ids:
-            proposal = self.propose_label_scan(
-                household_id=person.household_id,
-                person_id=person_id,
-                table_text=message or None,
-                attachment_ids=tuple(attachment_ids),
-                set_as_default=True,
-            )
-            self._record_agent_tool_call(
-                run=run,
-                tool_name="route_label_scan",
-                input_summary=f"{len(tuple(attachment_ids))} attachment(s)",
-                output_summary=f"proposal_id={proposal.id}",
-                source_record_ids=(proposal.id,),
-            )
-            self.agent_runs[run.id] = replace(
-                run,
-                status="proposal_created",
-                proposal_id=proposal.id,
-                tool_loop_count=len(self.agent_tool_calls_for_run(run.id)),
-                fallback_reason=self._current_fallback_reason(run),
-            )
-            return finish(
-                AgentChatResponse(
-                    run_id=run.id,
-                    person_id=person_id,
-                    message="Rascunhei uma proposta a partir do rótulo anexado. Revise antes de confirmar.",
-                    behavior_label="draft_label_scan",
-                    proposal_id=proposal.id,
-                )
-            )
-
-        parsed_weight = parse_chat_weight_entry(message)
-        weight_note: str | None = None
-        routed_message = message
-        if parsed_weight is not None:
-            measured_at = datetime.combine(today, datetime.min.time()).replace(hour=8)
-            entry = self.log_weight(
-                person_id=person_id,
-                measured_at_local=measured_at.isoformat(),
-                weight_kg=parsed_weight,
-                note="Criado pelo chat.",
-                source="agent_chat",
-            )
-            self._record_agent_tool_call(
-                run=run,
-                tool_name="log_weight",
-                input_summary=f"weight_kg={parsed_weight}",
-                output_summary=f"weight_entry_id={entry.id}",
-                source_record_ids=(entry.id,),
-            )
-            weight_note = f"Registrei o peso de {entry.weight_kg:g} kg para hoje."
-            # One message can carry a weigh-in AND a meal ("Bom dia! 96.4kg / Café: ...").
-            remainder = remove_chat_weight_lines(message)
-            if remainder and (
-                text_looks_like_chat_meal_log(remainder)
-                or parse_chat_kcal_range_estimate(remainder) is not None
-            ):
-                routed_message = remainder
-            else:
-                self.agent_runs[run.id] = replace(
-                    run,
-                    status="answered",
-                    tool_loop_count=len(self.agent_tool_calls_for_run(run.id)),
-                    fallback_reason=self._current_fallback_reason(run),
-                )
-                return finish(
-                    AgentChatResponse(
-                        run_id=run.id,
-                        person_id=person_id,
-                        message=weight_note,
-                        behavior_label="log_weight",
-                        citations=({"record_type": "weight_entry", "record_id": entry.id},),
-                    )
-                )
-
-        range_estimate = parse_chat_kcal_range_estimate(routed_message)
-        if range_estimate is not None:
-            proposal = self._create_range_estimate_proposal(
-                person_id=person_id,
-                message=routed_message,
-                today=today,
-                run=run,
-                range_estimate=range_estimate,
-            )
-            self._record_agent_tool_call(
-                run=run,
-                tool_name="draft_range_estimate",
-                input_summary=(
-                    f"{range_estimate.label}: "
-                    f"{range_estimate.low_kcal:g}-{range_estimate.high_kcal:g} kcal"
-                ),
-                output_summary=f"proposal_id={proposal.id}",
-                source_record_ids=(proposal.id,),
-            )
-            self.agent_runs[run.id] = replace(
-                run,
-                status="proposal_created",
-                proposal_id=proposal.id,
-                tool_loop_count=len(self.agent_tool_calls_for_run(run.id)),
-                fallback_reason=self._current_fallback_reason(run),
-            )
-            return finish(
-                AgentChatResponse(
-                    run_id=run.id,
-                    person_id=person_id,
-                    message=_with_weight_note(
-                        weight_note,
-                        "Rascunhei essa refeição como faixa de calorias. "
-                        "Vou usar o ponto médio até você refinar.",
-                    ),
-                    behavior_label="draft_range_estimate",
-                    proposal_id=proposal.id,
-                )
-            )
-
-        if text_looks_like_chat_meal_log(routed_message):
-            proposal = self.propose_text_meal(
-                person_id=person_id,
-                logged_at_local=chat_default_logged_at(routed_message, today=today).isoformat(),
-                text=routed_message,
-                agent_settings=settings,
-            )
-            self._record_agent_tool_call(
-                run=run,
-                tool_name="route_text_meal",
-                input_summary="deterministic meal-log route",
-                output_summary=f"proposal_id={proposal.id}",
-                source_record_ids=(proposal.id,),
-            )
-            self.agent_runs[run.id] = replace(
-                run,
-                status="proposal_created",
-                proposal_id=proposal.id,
-                tool_loop_count=len(self.agent_tool_calls_for_run(run.id)),
-                fallback_reason=self._current_fallback_reason(run),
-            )
-            return finish(
-                AgentChatResponse(
-                    run_id=run.id,
-                    person_id=person_id,
-                    message=_with_weight_note(
-                        weight_note,
-                        "Rascunhei a refeição. Revise os itens e confirme para gravar no diário.",
-                    ),
-                    behavior_label="draft_text_meal",
-                    proposal_id=proposal.id,
-                )
-            )
-
-        correction = parse_chat_quantity_correction(message)
-        if correction is not None:
-            response = self._chat_draft_diary_correction(
-                person_id=person_id,
-                message=message,
-                today=today,
-                run=run,
-                correction=correction,
-            )
-            return finish(response)
-
-        review_note = parse_chat_review_note(message)
-        if review_note is not None:
-            response = self._chat_draft_review_note(
-                person_id=person_id,
-                message=message,
-                run=run,
-                review_note=review_note,
-            )
-            return finish(response)
-
-        profile_goal_update = parse_chat_profile_goal_update(message, today=today)
-        if profile_goal_update is not None:
-            response = self._chat_draft_profile_goal_update(
-                person_id=person_id,
-                message=message,
-                run=run,
-                parsed=profile_goal_update,
-            )
-            return finish(response)
-
-        if parse_chat_profile_goal_capability_question(message):
-            response = self._chat_explain_profile_goal_capabilities(
-                person_id=person_id,
-                run=run,
-            )
-            return finish(response)
-
-        version_use_phrase = parse_chat_food_version_use_question(message)
-        if version_use_phrase is not None:
-            response = self._chat_explain_food_version_use(
-                person_id=person_id,
-                run=run,
-                phrase=version_use_phrase,
-            )
-            return finish(response)
-
-        if parse_chat_micronutrient_question(message):
-            response = self._chat_analyze_micronutrients(
-                person_id=person_id,
-                message=message,
-                today=today,
-                run=run,
-            )
-            return finish(response)
-
-        requested_week = parse_chat_week_reference(message, today=today)
-        if requested_week is not None:
-            start, end = requested_week
-            response = self._chat_explain_week(
-                person_id=person_id,
-                message=message,
-                run=run,
-                start=start,
-                end=end,
-            )
-            return finish(response)
-
-        requested_day = parse_chat_day_reference(message, today=today)
-        if requested_day is not None:
-            response = self._chat_explain_day(
-                person_id=person_id,
-                message=message,
-                run=run,
-                day=requested_day,
-            )
-            return finish(response)
+            agent_message = (
+                f"{message}\n\nAttachment ids available to inspect: "
+                f"{', '.join(str(item) for item in attachment_ids)}"
+            ).strip()
 
         pydantic_response = self._try_pydantic_ai_chat(
             person_id=person_id,
-            message=message,
+            message=agent_message,
             today=today,
             run=run,
             settings=settings,
@@ -2318,9 +2097,8 @@ class HealthMonitorService:
             run_id=run.id,
             person_id=person_id,
             message=(
-                "I can answer diary day/week summary questions and draft diary quantity "
-                "corrections from structured app data. I do not have enough context for "
-                "that request yet."
+                "O agente configurado não retornou uma resposta. Tente novamente quando "
+                "o runtime de modelo estiver disponível."
             ),
             behavior_label="answer_question",
         )
@@ -2451,6 +2229,355 @@ class HealthMonitorService:
             return None
         candidates.sort(key=lambda proposal: (proposal.created_at, proposal.id), reverse=True)
         return candidates[0].id
+
+    def draft_range_estimate_proposal(
+        self,
+        *,
+        person_id: str,
+        label: str,
+        low_kcal: float,
+        high_kcal: float,
+        day: date,
+        meal_type: str | None = None,
+        agent_settings: dict[str, Any] | None = None,
+    ) -> CreateDiaryEntriesProposal:
+        settings = self._agent_settings(agent_settings)
+        run = AgentRun(
+            id=self._next_id("agent_run"),
+            person_id=person_id,
+            input_text=f"{label}: {low_kcal:g}-{high_kcal:g} kcal",
+            settings=settings,
+            status="started",
+            **self._run_metadata(settings),
+        )
+        self.agent_runs[run.id] = run
+        estimate = ParsedRangeEstimate(
+            label=label,
+            low_kcal=float(low_kcal),
+            high_kcal=float(high_kcal),
+            source_text=run.input_text,
+        )
+        proposal = self._create_range_estimate_proposal(
+            person_id=person_id,
+            message=f"{meal_type or ''} {run.input_text}".strip(),
+            today=day,
+            run=run,
+            range_estimate=estimate,
+        )
+        self.agent_runs[run.id] = replace(
+            run,
+            status="proposal_created",
+            proposal_id=proposal.id,
+            tool_loop_count=len(self.agent_tool_calls_for_run(run.id)),
+            fallback_reason=self._current_fallback_reason(run),
+        )
+        self._persist()
+        return proposal
+
+    def draft_structured_meal_proposal(
+        self,
+        *,
+        person_id: str,
+        items: Sequence[dict[str, Any]],
+        day: date,
+        time_text: str | None = None,
+        meal_type: str | None = None,
+        agent_settings: dict[str, Any] | None = None,
+        source_text: str = "structured meal draft",
+    ) -> CreateDiaryEntriesProposal:
+        settings = self._agent_settings(agent_settings)
+        person = self._require_person(person_id)
+        logged_at = self._structured_logged_at(person, day=day, time_text=time_text)
+        default_meal_type = normalize_meal_type(meal_type) if meal_type else infer_meal_type(logged_at)
+        run = AgentRun(
+            id=self._next_id("agent_run"),
+            person_id=person_id,
+            input_text=source_text,
+            settings=settings,
+            status="started",
+            **self._run_metadata(settings),
+        )
+        self.agent_runs[run.id] = run
+        entries, evidence, totals, estimated_food_versions = self._draft_structured_meal_entries(
+            person=person,
+            run=run,
+            items=items,
+            logged_at=logged_at,
+            default_meal_type=default_meal_type,
+            settings=settings,
+        )
+        proposal_type = "diary_entries_with_estimates" if estimated_food_versions else "diary_entries"
+        proposal = self.proposals.create(
+            CreateDiaryEntriesProposal(
+                id=self._next_id("proposal"),
+                person_id=person_id,
+                entries=tuple(entries),
+                proposal_type=proposal_type,
+                summary=f"{len(entries)} diary entries drafted from structured meal items",
+                payload={
+                    "estimated_food_versions": estimated_food_versions,
+                    "raw_text": source_text,
+                    "structured_items": [dict(item) for item in items],
+                },
+                totals=totals,
+                evidence=tuple(evidence),
+                source_agent_run_id=run.id,
+            )
+        )
+        self.agent_runs[run.id] = replace(
+            run,
+            status="proposal_created",
+            proposal_id=proposal.id,
+            tool_loop_count=len(self.agent_tool_calls_for_run(run.id)),
+            fallback_reason=self._current_fallback_reason(run),
+        )
+        self._persist()
+        return proposal
+
+    def amend_structured_meal_proposal(
+        self,
+        *,
+        proposal_id: str,
+        person_id: str,
+        add: Sequence[dict[str, Any]] = (),
+        remove: Sequence[dict[str, Any]] = (),
+        set_quantity: Sequence[dict[str, Any]] = (),
+        agent_settings: dict[str, Any] | None = None,
+        source_text: str = "structured meal amendment",
+    ) -> CreateDiaryEntriesProposal:
+        settings = self._agent_settings(agent_settings)
+        original = self.proposals.proposals[proposal_id]
+        if original.person_id != person_id:
+            raise ValueError("proposal belongs to a different person")
+        if original.status != "draft":
+            raise ValueError("only draft proposals can be amended")
+        if original.proposal_type not in {"diary_entries", "diary_entries_with_estimates"}:
+            raise ValueError(f"proposal type cannot be amended as a meal: {original.proposal_type}")
+        logged_at = max((entry.logged_at for entry in original.entries), default=self._structured_logged_at(self._require_person(person_id), day=date.today()))
+        run = AgentRun(
+            id=self._next_id("agent_run"),
+            person_id=person_id,
+            input_text=source_text,
+            settings=settings,
+            status="started",
+            **self._run_metadata(settings),
+        )
+        self.agent_runs[run.id] = run
+        pending_versions = {
+            str(item["food_version_id"]): dict(item)
+            for item in original.payload.get("estimated_food_versions", [])
+        }
+        updated_entries = [
+            DiaryEntry(
+                id=self._next_id("diary_entry"),
+                person_id=entry.person_id,
+                logged_at=entry.logged_at,
+                meal_type=entry.meal_type,
+                food_version_id=entry.food_version_id,
+                quantity_g=entry.quantity_g,
+                source=entry.source,
+                deleted_at=entry.deleted_at,
+            )
+            for entry in original.entries
+        ]
+        evidence = [dict(item) for item in original.evidence]
+        warnings: list[str] = []
+
+        for removal in remove:
+            phrase = str(removal.get("phrase") or "").strip()
+            quantity_g = float(removal.get("quantity_g") or 0)
+            match_index = self._structured_entry_index(
+                updated_entries,
+                phrase=phrase,
+                entry_id=str(removal.get("entry_id") or ""),
+                pending_versions=pending_versions,
+            )
+            if match_index is None:
+                warnings.append(f"Could not find an open proposal item matching '{phrase}'.")
+                continue
+            entry = updated_entries[match_index]
+            if quantity_g <= 0 or quantity_g >= entry.quantity_g:
+                removed = updated_entries.pop(match_index)
+                removed_quantity = removed.quantity_g
+                action = "remove_entry"
+            else:
+                removed_quantity = quantity_g
+                updated_entries[match_index] = replace(entry, quantity_g=entry.quantity_g - quantity_g)
+                action = "subtract_quantity"
+            evidence.append(
+                {
+                    "source_type": "structured_meal_amendment",
+                    "source_text": source_text,
+                    "action": action,
+                    "phrase": phrase,
+                    "food_version_id": entry.food_version_id,
+                    "quantity_g": removed_quantity,
+                    "confidence": 0.9,
+                }
+            )
+
+        for quantity_update in set_quantity:
+            match_index = self._structured_entry_index(
+                updated_entries,
+                phrase=str(quantity_update.get("phrase") or "").strip(),
+                entry_id=str(quantity_update.get("entry_id") or ""),
+                pending_versions=pending_versions,
+            )
+            quantity_g = float(quantity_update.get("quantity_g") or 0)
+            if match_index is None or quantity_g <= 0:
+                warnings.append("Could not apply one quantity update.")
+                continue
+            entry = updated_entries[match_index]
+            updated_entries[match_index] = replace(entry, quantity_g=quantity_g)
+            evidence.append(
+                {
+                    "source_type": "structured_meal_amendment",
+                    "source_text": source_text,
+                    "action": "set_quantity",
+                    "food_version_id": entry.food_version_id,
+                    "previous_quantity_g": entry.quantity_g,
+                    "quantity_g": quantity_g,
+                    "confidence": 0.95,
+                }
+            )
+
+        person = self._require_person(person_id)
+        added_entries, added_evidence, _added_totals, new_pending_versions = self._draft_structured_meal_entries(
+            person=person,
+            run=run,
+            items=add,
+            logged_at=logged_at,
+            default_meal_type=original.entries[0].meal_type if original.entries else infer_meal_type(logged_at),
+            settings=settings,
+            source_type="structured_meal_amendment",
+        )
+        updated_entries.extend(added_entries)
+        evidence.extend(added_evidence)
+        if not updated_entries:
+            raise ValueError("amendment would leave the proposal empty")
+        referenced_version_ids = {entry.food_version_id for entry in updated_entries}
+        payload = {
+            **original.payload,
+            "estimated_food_versions": [
+                pending
+                for pending in (
+                    *original.payload.get("estimated_food_versions", []),
+                    *new_pending_versions,
+                )
+                if str(pending["food_version_id"]) in referenced_version_ids
+            ],
+            "amended_from_proposal_id": original.id,
+            "raw_amendment_text": source_text,
+            "structured_amendment": {
+                "add": [dict(item) for item in add],
+                "remove": [dict(item) for item in remove],
+                "set_quantity": [dict(item) for item in set_quantity],
+            },
+            "amendment_warnings": warnings,
+        }
+        proposal_type = "diary_entries_with_estimates" if payload.get("estimated_food_versions") else "diary_entries"
+        amended = self.proposals.create(
+            CreateDiaryEntriesProposal(
+                id=self._next_id("proposal"),
+                person_id=person_id,
+                entries=tuple(updated_entries),
+                proposal_type=proposal_type,
+                summary=f"{len(updated_entries)} diary entries drafted after structured meal amendment",
+                payload=payload,
+                totals=self._proposal_entries_total(tuple(updated_entries), payload=payload),
+                evidence=tuple(evidence),
+                source_agent_run_id=run.id,
+            )
+        )
+        self.proposals.supersede(original.id, superseded_by_proposal_id=amended.id)
+        self.agent_runs[run.id] = replace(
+            run,
+            status="proposal_created",
+            proposal_id=amended.id,
+            tool_loop_count=len(self.agent_tool_calls_for_run(run.id)),
+            fallback_reason=self._current_fallback_reason(run),
+        )
+        self._persist()
+        return amended
+
+    def _draft_structured_meal_entries(
+        self,
+        *,
+        person: Person,
+        run: AgentRun,
+        items: Sequence[dict[str, Any]],
+        logged_at: datetime,
+        default_meal_type: str,
+        settings: dict[str, Any],
+        source_type: str = "structured_meal",
+    ) -> tuple[list[DiaryEntry], list[dict[str, object]], Nutrients, list[dict[str, object]]]:
+        entries: list[DiaryEntry] = []
+        evidence: list[dict[str, object]] = []
+        estimated_food_versions: list[dict[str, object]] = []
+        totals = Nutrients()
+        for item in items:
+            phrase = str(item.get("phrase") or "").strip()
+            quantity_g = float(item.get("quantity_g") or item.get("quantity") or 0)
+            if not phrase or quantity_g <= 0:
+                raise ValueError("structured meal items require phrase and positive quantity_g")
+            resolved = self._resolve_meal_item_food(
+                person=person,
+                run=run,
+                phrase=phrase,
+                settings=settings,
+            )
+            if resolved.pending_version is not None:
+                estimated_food_versions.append(resolved.pending_version)
+            item_meal_type = normalize_meal_type(str(item.get("meal_type") or default_meal_type))
+            entry = DiaryEntry(
+                id=self._next_id("diary_entry"),
+                person_id=person.id,
+                logged_at=logged_at,
+                meal_type=item_meal_type,
+                food_version_id=resolved.food_version_id,
+                quantity_g=quantity_g,
+                source="agent_structured_proposal",
+            )
+            entries.append(entry)
+            totals += resolved.version.nutrients_per_100g.scale(quantity_g / 100)
+            evidence.append(
+                {
+                    "source_type": source_type,
+                    "source_text": str(item.get("source_text") or phrase),
+                    "phrase": phrase,
+                    "food_id": resolved.version.food_id,
+                    "food_name": resolved.food_name,
+                    "food_version_id": resolved.food_version_id,
+                    "quantity_g": quantity_g,
+                    "resolution_reason": resolved.resolution_reason,
+                    "confidence": resolved.confidence,
+                }
+            )
+        return entries, evidence, totals, estimated_food_versions
+
+    def _structured_entry_index(
+        self,
+        entries: Sequence[DiaryEntry],
+        *,
+        phrase: str,
+        entry_id: str,
+        pending_versions: dict[str, dict[str, Any]],
+    ) -> int | None:
+        if entry_id:
+            for index, entry in enumerate(entries):
+                if entry.id == entry_id:
+                    return index
+        if phrase:
+            for index, entry in enumerate(entries):
+                if self._proposal_entry_matches_phrase(entry, phrase, pending_versions=pending_versions):
+                    return index
+        return None
+
+    def _structured_logged_at(self, person: Person, *, day: date, time_text: str | None = None) -> datetime:
+        cleaned_time = (time_text or "12:00:00").strip()
+        if len(cleaned_time) == 5:
+            cleaned_time = f"{cleaned_time}:00"
+        return self._parse_person_datetime(f"{day.isoformat()}T{cleaned_time}", person)
 
     def propose_text_meal(
         self,
@@ -3936,6 +4063,167 @@ class HealthMonitorService:
             citations=({"record_type": "diary_entry", "record_id": selected.id},),
             proposal_id=proposal.id,
         )
+
+    def draft_diary_correction_proposal(
+        self,
+        *,
+        person_id: str,
+        entry_id: str | None = None,
+        day: date | None = None,
+        phrase: str | None = None,
+        quantity_g: float,
+        source_text: str = "structured diary correction",
+        agent_settings: dict[str, Any] | None = None,
+    ) -> CreateDiaryEntriesProposal:
+        settings = self._agent_settings(agent_settings)
+        run = AgentRun(
+            id=self._next_id("agent_run"),
+            person_id=person_id,
+            input_text=source_text,
+            settings=settings,
+            status="started",
+            **self._run_metadata(settings),
+        )
+        self.agent_runs[run.id] = run
+        selected: DaySummaryEntry | None = None
+        if entry_id is not None:
+            for entry in self.diary.entries.values():
+                if entry.id == entry_id and entry.person_id == person_id and entry.deleted_at is None:
+                    version = self.catalog.get_version(entry.food_version_id)
+                    food = self.catalog.foods[version.food_id]
+                    selected = DaySummaryEntry(
+                        id=entry.id,
+                        logged_at=entry.logged_at,
+                        meal_type=entry.meal_type,
+                        food_id=food.id,
+                        food_name=food.name,
+                        brand=food.brand,
+                        food_version_id=version.id,
+                        food_version_label=version.label,
+                        quantity_g=entry.quantity_g,
+                        nutrients=version.nutrients_per_100g.scale(entry.quantity_g / 100),
+                        source=entry.source,
+                        evidence_status=version.source,
+                        confidence=version.confidence,
+                    )
+                    break
+        if selected is None:
+            if day is None or phrase is None:
+                raise ValueError("entry_id or day+phrase is required for structured correction")
+            normalized = phrase.casefold().strip()
+            matches = [
+                entry
+                for entries in self.day_summary(person_id, day).meals.values()
+                for entry in entries
+                if normalized in entry.food_name.casefold()
+                or normalized in (entry.brand or "").casefold()
+            ]
+            if not matches:
+                raise ValueError(f"no diary entry matching '{phrase}' on {day.isoformat()}")
+            matches.sort(key=lambda entry: entry.logged_at)
+            selected = matches[0]
+        payload = {
+            "entry_id": selected.id,
+            "quantity_g": float(quantity_g),
+            "previous_quantity_g": selected.quantity_g,
+            "day": selected.logged_at.date().isoformat(),
+            "food_name": selected.food_name,
+        }
+        proposal = self.proposals.create(
+            CreateDiaryEntriesProposal(
+                id=self._next_id("proposal"),
+                person_id=person_id,
+                entries=(),
+                proposal_type="diary_entry_update",
+                summary=(
+                    f"Update {selected.food_name} on {selected.logged_at.date().isoformat()} "
+                    f"to {float(quantity_g):g} g"
+                ),
+                payload=payload,
+                evidence=(
+                    {
+                        "source_type": "agent_structured_correction",
+                        "raw_text": source_text,
+                        "entry_id": selected.id,
+                    },
+                ),
+                source_agent_run_id=run.id,
+            )
+        )
+        self._record_agent_tool_call(
+            run=run,
+            tool_name="draft_diary_correction",
+            input_summary=f"entry_id={selected.id}; new={float(quantity_g):g}g",
+            output_summary=f"proposal_id={proposal.id}; food={selected.food_name}",
+            source_record_ids=(selected.id, proposal.id),
+        )
+        self.agent_runs[run.id] = replace(
+            run,
+            status="proposal_created",
+            proposal_id=proposal.id,
+            tool_loop_count=len(self.agent_tool_calls_for_run(run.id)),
+        )
+        self._persist()
+        return proposal
+
+    def draft_review_note_proposal(
+        self,
+        *,
+        person_id: str,
+        body: str,
+        title: str | None = None,
+        starts_on: date | None = None,
+        ends_on: date | None = None,
+        source_text: str = "structured review note",
+        agent_settings: dict[str, Any] | None = None,
+    ) -> CreateDiaryEntriesProposal:
+        settings = self._agent_settings(agent_settings)
+        run = AgentRun(
+            id=self._next_id("agent_run"),
+            person_id=person_id,
+            input_text=source_text,
+            settings=settings,
+            status="started",
+            **self._run_metadata(settings),
+        )
+        self.agent_runs[run.id] = run
+        starts_on_text = starts_on.isoformat() if starts_on is not None else None
+        ends_on_text = ends_on.isoformat() if ends_on is not None else None
+        note_title = title or "Review note"
+        proposal = self.proposals.create(
+            CreateDiaryEntriesProposal(
+                id=self._next_id("proposal"),
+                person_id=person_id,
+                entries=(),
+                proposal_type="review_note",
+                summary=note_title,
+                payload={
+                    "note_type": "review",
+                    "title": note_title,
+                    "body": body.strip(),
+                    "starts_on": starts_on_text,
+                    "ends_on": ends_on_text,
+                    "source": "agent_chat",
+                },
+                evidence=({"source_type": "agent_structured_review", "raw_text": source_text},),
+                source_agent_run_id=run.id,
+            )
+        )
+        self._record_agent_tool_call(
+            run=run,
+            tool_name="draft_review_note",
+            input_summary=f"chars={len(body.strip())}",
+            output_summary=f"proposal_id={proposal.id}; title={note_title}",
+            source_record_ids=(proposal.id,),
+        )
+        self.agent_runs[run.id] = replace(
+            run,
+            status="proposal_created",
+            proposal_id=proposal.id,
+            tool_loop_count=len(self.agent_tool_calls_for_run(run.id)),
+        )
+        self._persist()
+        return proposal
 
     def propose_label_scan(
         self,

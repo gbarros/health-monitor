@@ -88,17 +88,33 @@ class NutritionAgentToolsTest(unittest.TestCase):
             logged_at_local="2026-07-02T10:00:00",
             text="50g queijo",
         )
+        structured_meal = tools.draft_meal_proposal(
+            deps,
+            day="2026-07-02",
+            time="12:30",
+            meal_type="lunch",
+            items=[{"phrase": "queijo", "quantity_g": 40}],
+            source_text="agent extracted 40g queijo",
+        )
         correction = tools.draft_diary_correction_proposal(
             deps,
-            message="Change queijo on 2026-07-01 to 50g",
+            day="2026-07-01",
+            phrase="queijo",
+            quantity_g=50,
+            source_text="agent extracted correction",
         )
         review = tools.draft_review_note_proposal(
             deps,
-            message="Save review note: Social dinner was the main issue.",
+            body="Social dinner was the main issue.",
+            title="Review note",
+            source_text="agent extracted review note",
         )
 
         self.assertEqual(text_meal["proposal_status"], "draft")
         self.assertEqual(text_meal["proposal_type"], "diary_entries")
+        self.assertEqual(structured_meal["proposal_type"], "diary_entries")
+        self.assertEqual(structured_meal["entries"][0]["meal_type"], "lunch")
+        self.assertEqual(structured_meal["entries"][0]["quantity_g"], 40)
         self.assertEqual(correction["proposal_type"], "diary_entry_update")
         self.assertEqual(review["proposal_type"], "review_note")
         self.assertEqual(service.day_summary(deps.person_id, date(2026, 7, 1)).totals.rounded(), Nutrients(315, 23, 2.6, 23.5, sodium_mg=620))

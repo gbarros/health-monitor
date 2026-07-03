@@ -94,6 +94,32 @@ class HealthMonitorServiceProtocol(Protocol):
     ) -> Any:
         pass
 
+    def draft_structured_meal_proposal(
+        self,
+        *,
+        person_id: str,
+        items: Any,
+        day: date,
+        time_text: str | None = None,
+        meal_type: str | None = None,
+        agent_settings: dict[str, Any] | None = None,
+        source_text: str = "",
+    ) -> Any:
+        pass
+
+    def amend_structured_meal_proposal(
+        self,
+        *,
+        proposal_id: str,
+        person_id: str,
+        add: Any = (),
+        remove: Any = (),
+        set_quantity: Any = (),
+        agent_settings: dict[str, Any] | None = None,
+        source_text: str = "",
+    ) -> Any:
+        pass
+
 
 @dataclass(frozen=True)
 class AgentDeps:
@@ -365,7 +391,9 @@ class PydanticAINutritionAgent:
                 "structured app data. Read tools can inspect diary, week summaries, "
                 "weight trend, food resolution, lookup candidates, and food version "
                 "history, and can run targeted OCR on attachment ids when image text "
-                "is needed. Draft tools may create proposals, but they must not claim "
+                "is needed. For food logging, extract structured items yourself and "
+                "call draft_meal_proposal or amend_meal_proposal; do not route raw user "
+                "text through deterministic parsers. Draft tools may create proposals, but they must not claim "
                 "that diary entries, profile fields, goal targets, or review notes were "
                 "applied. If asked to change data, draft a proposal and explain that "
                 "the user must confirm it. "
@@ -412,6 +440,21 @@ class PydanticAINutritionAgent:
             return tools.food_lookup(ctx.deps, phrase=phrase, barcode=barcode)
 
         @agent.tool
+        async def search_foods(ctx, query: str) -> dict[str, Any]:
+            """Search local foods by user-facing name, brand, or alias."""
+            return tools.search_foods(ctx.deps, query=query)
+
+        @agent.tool
+        async def get_food_details(ctx, phrase: str) -> dict[str, Any]:
+            """Return local food versions, default version, and latest diary usage for a phrase."""
+            return tools.get_food_details(ctx.deps, phrase=phrase)
+
+        @agent.tool
+        async def list_open_proposals(ctx) -> dict[str, Any]:
+            """List draft or clarification proposals that can be confirmed, rejected, or amended."""
+            return tools.list_open_proposals(ctx.deps)
+
+        @agent.tool
         async def food_version_history(ctx, phrase: str) -> dict[str, Any]:
             """Inspect matching local food versions, defaults, and recent diary usage."""
             return tools.food_version_history(ctx.deps, phrase=phrase)
@@ -435,20 +478,130 @@ class PydanticAINutritionAgent:
             )
 
         @agent.tool
+        async def draft_meal_proposal(
+            ctx,
+            items: list[dict[str, Any]],
+            day: str,
+            time: str | None = None,
+            meal_type: str | None = None,
+            source_text: str = "",
+        ) -> dict[str, Any]:
+            """Draft a meal proposal from model-extracted structured items with phrase and quantity_g."""
+            return tools.draft_meal_proposal(
+                ctx.deps,
+                items=items,
+                day=day,
+                time=time,
+                meal_type=meal_type,
+                source_text=source_text,
+            )
+
+        @agent.tool
+        async def amend_meal_proposal(
+            ctx,
+            proposal_id: str,
+            add: list[dict[str, Any]] | None = None,
+            remove: list[dict[str, Any]] | None = None,
+            set_quantity: list[dict[str, Any]] | None = None,
+            source_text: str = "",
+        ) -> dict[str, Any]:
+            """Amend an open meal proposal using structured add/remove/set_quantity instructions."""
+            return tools.amend_meal_proposal(
+                ctx.deps,
+                proposal_id=proposal_id,
+                add=add,
+                remove=remove,
+                set_quantity=set_quantity,
+                source_text=source_text,
+            )
+
+        @agent.tool
+        async def log_weight(ctx, weight_kg: float, measured_at: str | None = None) -> dict[str, Any]:
+            """Log a weight measurement directly; measured_at is optional local ISO datetime."""
+            return tools.log_weight(ctx.deps, weight_kg=weight_kg, measured_at=measured_at)
+
+        @agent.tool
+        async def repeat_meal(ctx, source_day: str, meal_type: str, target_time: str | None = None) -> dict[str, Any]:
+            """Draft a proposal copying one meal type from source_day to today."""
+            return tools.repeat_meal(ctx.deps, source_day=source_day, meal_type=meal_type, target_time=target_time)
+
+        @agent.tool
+        async def draft_range_estimate(
+            ctx,
+            label: str,
+            low_kcal: float,
+            high_kcal: float,
+            meal_type: str | None = None,
+            day: str | None = None,
+        ) -> dict[str, Any]:
+            """Draft a midpoint calorie-range estimate proposal."""
+            return tools.draft_range_estimate(
+                ctx.deps,
+                label=label,
+                low_kcal=low_kcal,
+                high_kcal=high_kcal,
+                meal_type=meal_type,
+                day=day,
+            )
+
+        @agent.tool
+        async def draft_recipe_proposal(
+            ctx,
+            name: str,
+            ingredients: list[dict[str, Any]],
+            total_cooked_weight_g: float,
+            aliases: list[str] | None = None,
+            quantity_g: float | None = None,
+            meal_type: str | None = None,
+        ) -> dict[str, Any]:
+            """Draft a recipe/lote proposal from structured ingredients."""
+            return tools.draft_recipe_proposal(
+                ctx.deps,
+                name=name,
+                aliases=aliases,
+                ingredients=ingredients,
+                total_cooked_weight_g=total_cooked_weight_g,
+                quantity_g=quantity_g,
+                meal_type=meal_type,
+            )
+
+        @agent.tool
         async def draft_diary_correction_proposal(
             ctx,
-            message: str,
+            quantity_g: float,
+            entry_id: str | None = None,
+            day: str | None = None,
+            phrase: str | None = None,
+            source_text: str = "",
         ) -> dict[str, Any]:
             """Draft a diary correction proposal without applying it."""
-            return tools.draft_diary_correction_proposal(ctx.deps, message=message)
+            return tools.draft_diary_correction_proposal(
+                ctx.deps,
+                quantity_g=quantity_g,
+                entry_id=entry_id,
+                day=day,
+                phrase=phrase,
+                source_text=source_text,
+            )
 
         @agent.tool
         async def draft_review_note_proposal(
             ctx,
-            message: str,
+            body: str,
+            title: str | None = None,
+            starts_on: str | None = None,
+            ends_on: str | None = None,
+            source_text: str = "",
         ) -> dict[str, Any]:
             """Draft a review note proposal without saving a review note."""
-            return tools.draft_review_note_proposal(ctx.deps, message=message)
+            return tools.draft_review_note_proposal(
+                ctx.deps,
+                body=body,
+                title=title,
+                starts_on=starts_on,
+                ends_on=ends_on,
+                source_text=source_text,
+            )
 
         @agent.tool
         async def draft_profile_update_proposal(

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 
 from health_monitor.agent.runtime import AgentDeps
@@ -168,6 +168,57 @@ class NutritionAgentTools:
             ]
         }
 
+    def search_foods(self, deps: AgentDeps, *, query: str) -> dict[str, Any]:
+        normalized = query.casefold().strip()
+        catalog = deps.service.catalog
+        foods = [
+            food
+            for food in catalog.foods.values()
+            if food.household_id == deps.household_id
+            and not food.archived
+            and deps.service._food_matches_query(food, normalized)
+        ]
+        foods.sort(key=lambda food: food.name.casefold())
+        return {
+            "query": query,
+            "foods": [
+                {
+                    "food_id": food.id,
+                    "food_name": food.name,
+                    "brand": food.brand,
+                    "default_version_id": food.default_version_id,
+                }
+                for food in foods[:20]
+            ],
+        }
+
+    def get_food_details(self, deps: AgentDeps, *, phrase: str) -> dict[str, Any]:
+        history = self.food_version_history(deps, phrase=phrase)
+        if not history["found"]:
+            return history
+        return history
+
+    def list_open_proposals(self, deps: AgentDeps) -> dict[str, Any]:
+        proposals = [
+            proposal
+            for proposal in deps.service.proposals.proposals.values()
+            if proposal.person_id == deps.person_id and proposal.status in {"draft", "needs_clarification"}
+        ]
+        proposals.sort(key=lambda proposal: proposal.created_at, reverse=True)
+        return {
+            "proposals": [
+                {
+                    "proposal_id": proposal.id,
+                    "proposal_type": proposal.proposal_type,
+                    "status": proposal.status,
+                    "summary": proposal.summary,
+                    "entry_count": len(proposal.entries),
+                    "created_at": proposal.created_at.isoformat(),
+                }
+                for proposal in proposals
+            ]
+        }
+
     def food_version_history(self, deps: AgentDeps, *, phrase: str) -> dict[str, Any]:
         normalized = phrase.casefold().strip()
         catalog = deps.service.catalog
@@ -265,49 +316,180 @@ class NutritionAgentTools:
         )
         return self._proposal_payload(proposal)
 
+    def draft_meal_proposal(
+        self,
+        deps: AgentDeps,
+        *,
+        items: list[dict[str, Any]],
+        day: str,
+        time: str | None = None,
+        meal_type: str | None = None,
+        source_text: str = "",
+    ) -> dict[str, Any]:
+        proposal = deps.service.draft_structured_meal_proposal(
+            person_id=deps.person_id,
+            items=items,
+            day=date.fromisoformat(day),
+            time_text=time,
+            meal_type=meal_type,
+            agent_settings=deps.settings,
+            source_text=source_text or "structured meal draft from agent",
+        )
+        return self._proposal_payload(proposal)
+
+    def amend_meal_proposal(
+        self,
+        deps: AgentDeps,
+        *,
+        proposal_id: str,
+        add: list[dict[str, Any]] | None = None,
+        remove: list[dict[str, Any]] | None = None,
+        set_quantity: list[dict[str, Any]] | None = None,
+        source_text: str = "",
+    ) -> dict[str, Any]:
+        proposal = deps.service.amend_structured_meal_proposal(
+            proposal_id=proposal_id,
+            person_id=deps.person_id,
+            add=add or [],
+            remove=remove or [],
+            set_quantity=set_quantity or [],
+            agent_settings=deps.settings,
+            source_text=source_text or "structured meal amendment from agent",
+        )
+        return self._proposal_payload(proposal)
+
+    def log_weight(
+        self,
+        deps: AgentDeps,
+        *,
+        weight_kg: float,
+        measured_at: str | None = None,
+    ) -> dict[str, Any]:
+        measured_at_local = measured_at or datetime.combine(deps.today, datetime.min.time()).replace(hour=8).isoformat()
+        entry = deps.service.log_weight(
+            person_id=deps.person_id,
+            measured_at_local=measured_at_local,
+            weight_kg=weight_kg,
+            note="Criado pelo agente.",
+            source="agent_chat",
+        )
+        return {
+            "weight_entry_id": entry.id,
+            "weight_kg": entry.weight_kg,
+            "measured_at": entry.measured_at.isoformat(),
+        }
+
+    def repeat_meal(
+        self,
+        deps: AgentDeps,
+        *,
+        source_day: str,
+        meal_type: str,
+        target_time: str | None = None,
+    ) -> dict[str, Any]:
+        proposal = deps.service.repeat_meal(
+            person_id=deps.person_id,
+            source_day=date.fromisoformat(source_day),
+            meal_type=meal_type,
+            logged_at_local=f"{deps.today.isoformat()}T{target_time or '12:00:00'}",
+        )
+        return self._proposal_payload(proposal)
+
+    def draft_range_estimate(
+        self,
+        deps: AgentDeps,
+        *,
+        label: str,
+        low_kcal: float,
+        high_kcal: float,
+        meal_type: str | None = None,
+        day: str | None = None,
+    ) -> dict[str, Any]:
+        proposal = deps.service.draft_range_estimate_proposal(
+            person_id=deps.person_id,
+            label=label,
+            low_kcal=low_kcal,
+            high_kcal=high_kcal,
+            meal_type=meal_type,
+            day=date.fromisoformat(day) if day else deps.today,
+            agent_settings=deps.settings,
+        )
+        return self._proposal_payload(proposal)
+
+    def draft_recipe_proposal(
+        self,
+        deps: AgentDeps,
+        *,
+        name: str,
+        aliases: list[str] | None = None,
+        ingredients: list[dict[str, Any]],
+        total_cooked_weight_g: float,
+        quantity_g: float | None = None,
+        meal_type: str | None = None,
+    ) -> dict[str, Any]:
+        recipe_text = "\n".join(
+            [
+                f"Recipe: {name}",
+                *(f"Alias: {alias}" for alias in aliases or []),
+                f"Yield: {total_cooked_weight_g:g} g",
+                "Ingredients:",
+                *(
+                    f"{float(item['quantity_g']):g}g {item['phrase']}"
+                    for item in ingredients
+                ),
+            ]
+        )
+        proposal = deps.service.propose_recipe(
+            household_id=deps.household_id,
+            person_id=deps.person_id,
+            recipe_text=recipe_text,
+            logged_at_local=f"{deps.today.isoformat()}T12:00:00" if quantity_g is not None else None,
+            quantity_g=quantity_g,
+            meal_type=meal_type,
+        )
+        return self._proposal_payload(proposal)
+
     def draft_diary_correction_proposal(
         self,
         deps: AgentDeps,
         *,
-        message: str,
+        quantity_g: float,
+        entry_id: str | None = None,
+        day: str | None = None,
+        phrase: str | None = None,
+        source_text: str = "",
     ) -> dict[str, Any]:
-        response = deps.service.chat(
+        proposal = deps.service.draft_diary_correction_proposal(
             person_id=deps.person_id,
-            message=message,
-            today=deps.today,
-            agent_settings={**deps.settings, "agent_runtime": "deterministic"},
+            entry_id=entry_id,
+            day=date.fromisoformat(day) if day else None,
+            phrase=phrase,
+            quantity_g=quantity_g,
+            source_text=source_text or "structured correction from agent",
+            agent_settings=deps.settings,
         )
-        if response.proposal_id is None:
-            return {
-                "proposal_id": None,
-                "proposal_type": None,
-                "proposal_status": None,
-                "summary": response.message,
-                "mutation_applied": False,
-            }
-        return self._proposal_payload(deps.service.get_proposal(response.proposal_id))
+        return self._proposal_payload(proposal)
 
     def draft_review_note_proposal(
         self,
         deps: AgentDeps,
         *,
-        message: str,
+        body: str,
+        title: str | None = None,
+        starts_on: str | None = None,
+        ends_on: str | None = None,
+        source_text: str = "",
     ) -> dict[str, Any]:
-        response = deps.service.chat(
+        proposal = deps.service.draft_review_note_proposal(
             person_id=deps.person_id,
-            message=message,
-            today=deps.today,
-            agent_settings={**deps.settings, "agent_runtime": "deterministic"},
+            body=body,
+            title=title,
+            starts_on=date.fromisoformat(starts_on) if starts_on else None,
+            ends_on=date.fromisoformat(ends_on) if ends_on else None,
+            source_text=source_text or "structured review note from agent",
+            agent_settings=deps.settings,
         )
-        if response.proposal_id is None:
-            return {
-                "proposal_id": None,
-                "proposal_type": None,
-                "proposal_status": None,
-                "summary": response.message,
-                "mutation_applied": False,
-            }
-        return self._proposal_payload(deps.service.get_proposal(response.proposal_id))
+        return self._proposal_payload(proposal)
 
     def draft_profile_update_proposal(
         self,

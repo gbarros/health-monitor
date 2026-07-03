@@ -18,7 +18,7 @@ class FoodEvidenceUiTest(unittest.TestCase):
         self.assertIn("uploadDataUrlAttachment", runtime)
         self.assertIn("/api/attachments", api)
 
-    def test_label_scan_quick_action_routes_to_attachment_backed_label_endpoint(self) -> None:
+    def test_label_scan_quick_action_sends_attachment_backed_chat_intent(self) -> None:
         quick_actions = read_web_file("components/ModesAndTemplates.tsx")
         app = read_web_file("App.tsx")
         runtime = read_web_file("hooks/useAgentRuntime.ts")
@@ -26,10 +26,12 @@ class FoodEvidenceUiTest(unittest.TestCase):
 
         self.assertIn("Escanear rótulo", quick_actions)
         self.assertIn("Código de barras", app)
-        self.assertIn("draftLabelScan", app)
+        self.assertIn('intent: "label_scan"', app)
+        self.assertIn("sendAgentChat", app)
         self.assertIn("sendAgentChat", runtime)
         self.assertIn("attachmentIds", runtime)
         self.assertIn("/api/agent/chat", api)
+        self.assertIn("intent: input.intent", api)
         self.assertIn("attachment_ids", api)
 
 
