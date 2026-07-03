@@ -3,7 +3,7 @@ import "@assistant-ui/react-ui/styles/index.css";
 
 export function ChatInterface() {
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+    <div className="chat-thread-shell">
       <Thread />
     </div>
   );
