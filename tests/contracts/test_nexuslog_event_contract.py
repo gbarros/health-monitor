@@ -5,7 +5,6 @@ from io import StringIO
 
 from health_monitor.api.http_api import HttpApi
 from health_monitor.application.service import HealthMonitorService
-from health_monitor.domain.nutrients import Nutrients
 from health_monitor.observability.nexuslog import JsonLineNexusLogSink, NexusLogEvent
 from health_monitor.worker import process_available_job
 
@@ -98,26 +97,32 @@ class NexusLogEventContractTest(unittest.TestCase):
                 "aliases": ["queijo"],
             },
         ).body
-        proposal = api.handle(
+        proposal = api.service.propose_text_meal(
+            person_id=person["id"],
+            logged_at_local="2026-07-01T10:00:00",
+            text="100g queijo",
+            agent_settings={"model_profile": "deterministic-test"},
+        )
+        api.handle("POST", f"/api/proposals/{proposal.id}/confirm", {})
+        api.handle(
             "POST",
-            "/api/agent/text-meal",
+            "/api/agent/chat",
             {
                 "person_id": person["id"],
-                "logged_at_local": "2026-07-01T10:00:00",
-                "text": "100g queijo",
+                "message": "Pode resumir meu diário?",
+                "today": "2026-07-01",
                 "agent_settings": {"model_profile": "deterministic-test"},
             },
-        ).body
-        api.handle("POST", f"/api/proposals/{proposal['id']}/confirm", {})
+        )
         api.handle(
             "POST",
             "/api/jobs",
             {
-                "job_type": "agent_text_meal",
+                "job_type": "agent_chat",
                 "payload": {
                     "person_id": person["id"],
-                    "logged_at_local": "2026-07-02T10:00:00",
-                    "text": "50g queijo",
+                    "message": "Pode resumir meu diário amanhã?",
+                    "today": "2026-07-02",
                     "agent_settings": {"model_profile": "deterministic-test"},
                 },
             },
@@ -138,7 +143,7 @@ class NexusLogEventContractTest(unittest.TestCase):
 
         serialized = repr(sink.events)
         self.assertNotIn("100g queijo", serialized)
-        self.assertNotIn("50g queijo", serialized)
+        self.assertNotIn("Pode resumir meu diário amanhã?", serialized)
         self.assertIn(food["food"]["id"], serialized)
 
     def test_worker_processing_emits_job_processed_event(self) -> None:
@@ -150,26 +155,12 @@ class NexusLogEventContractTest(unittest.TestCase):
             name="Gabriel",
             timezone="America/Sao_Paulo",
         )
-        _, version = service.create_food_with_version(
-            household_id=household.id,
-            name="Queijo Minas",
-            brand=None,
-            version_label="current",
-            nutrients_per_100g=Nutrients(
-                calories_kcal=315,
-                protein_g=23,
-                carbs_g=2.6,
-                fat_g=23.5,
-            ),
-            source="label_scan",
-            aliases=["queijo"],
-        )
         service.enqueue_job(
-            job_type="agent_text_meal",
+            job_type="agent_chat",
             payload={
                 "person_id": person.id,
-                "logged_at_local": "2026-07-01T10:00:00",
-                "text": "100g queijo",
+                "message": "Pode resumir meu diário?",
+                "today": "2026-07-01",
                 "agent_settings": {"model_profile": "deterministic-test"},
             },
         )
@@ -181,7 +172,6 @@ class NexusLogEventContractTest(unittest.TestCase):
         self.assertEqual(sink.events[-1]["event"], "job.processed")
         self.assertEqual(sink.events[-1]["job_id"], job.id)
         self.assertEqual(sink.events[-1]["payload"]["status"], "succeeded")
-        self.assertNotIn(version.id, sink.events[-1]["payload"])
 
 
 class RecordingSink:

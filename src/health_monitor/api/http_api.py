@@ -555,42 +555,6 @@ class HttpApi:
             job = self.service.process_job(job_id)
             return HttpResponse(200, job_to_dict(job))
 
-        if method == "POST" and path == "/api/agent/text-meal":
-            proposal = self.service.propose_text_meal(
-                person_id=body["person_id"],
-                logged_at_local=body["logged_at_local"],
-                text=body["text"],
-                agent_settings=body.get("agent_settings"),
-                amend_proposal_id=body.get("amend_proposal_id"),
-            )
-            return HttpResponse(201, proposal_to_dict(proposal, self.service))
-
-        if method == "POST" and path == "/api/agent/label-scan":
-            proposal = self.service.propose_label_scan(
-                household_id=body["household_id"],
-                person_id=body["person_id"],
-                table_text=body.get("table_text"),
-                set_as_default=bool(body.get("set_as_default", True)),
-                attachment_id=body.get("attachment_id"),
-                attachment_ids=body.get("attachment_ids"),
-                barcode=body.get("barcode"),
-                logged_at_local=body.get("logged_at_local"),
-                quantity_g=float(body["quantity_g"]) if body.get("quantity_g") is not None else None,
-                meal_type=body.get("meal_type"),
-            )
-            return HttpResponse(201, proposal_to_dict(proposal, self.service))
-
-        if method == "POST" and path == "/api/agent/recipe":
-            proposal = self.service.propose_recipe(
-                household_id=body["household_id"],
-                person_id=body["person_id"],
-                recipe_text=body["recipe_text"],
-                logged_at_local=body.get("logged_at_local"),
-                quantity_g=float(body["quantity_g"]) if body.get("quantity_g") is not None else None,
-                meal_type=body.get("meal_type"),
-            )
-            return HttpResponse(201, proposal_to_dict(proposal, self.service))
-
         if method == "POST" and path == "/api/agent/chat":
             response = self.service.chat(
                 person_id=body["person_id"],

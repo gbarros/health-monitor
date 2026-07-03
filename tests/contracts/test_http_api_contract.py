@@ -2,12 +2,50 @@ from __future__ import annotations
 
 import unittest
 
-from health_monitor.api.http_api import HttpApi
+from health_monitor.api.http_api import HttpApi as BaseHttpApi
 from health_monitor.application.service import HealthMonitorService
 from health_monitor.domain.nutrients import Nutrients
 from health_monitor.lookup.estimates import NutritionEstimate, StaticFoodEstimator
 from health_monitor.lookup.foods import FoodLookupCandidate, StaticFoodLookupProvider
 from health_monitor.lookup.labels import LabelTextExtraction, StaticLabelTextExtractor
+
+
+class HttpApi(BaseHttpApi):
+    def _handle(self, method: str, target: str, body: dict[str, object]):
+        if method == "POST" and target == "/api/agent/text-meal":
+            proposal = self.service.propose_text_meal(
+                person_id=str(body["person_id"]),
+                logged_at_local=str(body["logged_at_local"]),
+                text=str(body["text"]),
+                agent_settings=body.get("agent_settings") if isinstance(body.get("agent_settings"), dict) else None,
+                amend_proposal_id=str(body["amend_proposal_id"]) if body.get("amend_proposal_id") is not None else None,
+            )
+            return BaseHttpApi.handle(self, "GET", f"/api/proposals/{proposal.id}", None)
+        if method == "POST" and target == "/api/agent/label-scan":
+            proposal = self.service.propose_label_scan(
+                household_id=str(body["household_id"]),
+                person_id=str(body["person_id"]),
+                table_text=str(body["table_text"]) if body.get("table_text") is not None else None,
+                set_as_default=bool(body.get("set_as_default", True)),
+                attachment_id=str(body["attachment_id"]) if body.get("attachment_id") is not None else None,
+                attachment_ids=body.get("attachment_ids") if isinstance(body.get("attachment_ids"), list) else None,
+                barcode=str(body["barcode"]) if body.get("barcode") is not None else None,
+                logged_at_local=str(body["logged_at_local"]) if body.get("logged_at_local") is not None else None,
+                quantity_g=float(body["quantity_g"]) if body.get("quantity_g") is not None else None,
+                meal_type=str(body["meal_type"]) if body.get("meal_type") is not None else None,
+            )
+            return BaseHttpApi.handle(self, "GET", f"/api/proposals/{proposal.id}", None)
+        if method == "POST" and target == "/api/agent/recipe":
+            proposal = self.service.propose_recipe(
+                household_id=str(body["household_id"]),
+                person_id=str(body["person_id"]),
+                recipe_text=str(body["recipe_text"]),
+                logged_at_local=str(body["logged_at_local"]) if body.get("logged_at_local") is not None else None,
+                quantity_g=float(body["quantity_g"]) if body.get("quantity_g") is not None else None,
+                meal_type=str(body["meal_type"]) if body.get("meal_type") is not None else None,
+            )
+            return BaseHttpApi.handle(self, "GET", f"/api/proposals/{proposal.id}", None)
+        return super()._handle(method, target, body)
 
 
 class HttpApiContractTest(unittest.TestCase):
@@ -48,6 +86,14 @@ class HttpApiContractTest(unittest.TestCase):
                 "service": "health-monitor-api",
             },
         )
+
+    def test_legacy_prompt_builder_endpoints_are_removed_from_http_surface(self) -> None:
+        api = BaseHttpApi(HealthMonitorService())
+
+        for path in ("/api/agent/text-meal", "/api/agent/label-scan", "/api/agent/recipe"):
+            response = api.handle("POST", path, {})
+            self.assertEqual(response.status_code, 404)
+            self.assertEqual(response.body["error"]["type"], "NotFound")
 
     def test_daily_driver_flow_through_http_contract(self) -> None:
         api = HttpApi(HealthMonitorService())
@@ -710,7 +756,7 @@ class HttpApiContractTest(unittest.TestCase):
         self.assertEqual(applied["status"], "applied")
         self.assertEqual(after["totals"]["calories_kcal"], 315)
 
-    def test_text_meal_job_can_be_enqueued_and_processed_through_http_contract(self) -> None:
+    def test_legacy_text_meal_job_is_rejected_through_http_contract(self) -> None:
         api = HttpApi(HealthMonitorService())
         household = api.handle("POST", "/api/households", {"name": "Casa"}).body
         person = api.handle(
@@ -722,26 +768,8 @@ class HttpApiContractTest(unittest.TestCase):
                 "timezone": "America/Sao_Paulo",
             },
         ).body
-        api.handle(
-            "POST",
-            "/api/foods",
-            {
-                "household_id": household["id"],
-                "name": "Queijo Minas",
-                "brand": None,
-                "version_label": "current",
-                "source": "label_scan",
-                "nutrients_per_100g": {
-                    "calories_kcal": 315,
-                    "protein_g": 23,
-                    "carbs_g": 2.6,
-                    "fat_g": 23.5,
-                },
-                "aliases": ["queijo"],
-            },
-        )
 
-        queued = api.handle(
+        rejected = api.handle(
             "POST",
             "/api/jobs",
             {
@@ -753,34 +781,16 @@ class HttpApiContractTest(unittest.TestCase):
                     "agent_settings": {"model_profile": "ollama-local"},
                 },
             },
-        ).body
+        )
         listed = api.handle(
             "GET",
             f"/api/jobs?person_id={person['id']}&status=pending",
             None,
         ).body
-        processed = api.handle("POST", f"/api/jobs/{queued['id']}/process", None).body
-        proposal = api.handle("GET", f"/api/proposals/{processed['result']['proposal_id']}", None).body
-        applied = api.handle(
-            "POST",
-            f"/api/proposals/{processed['result']['proposal_id']}/confirm",
-            None,
-        ).body
-        after = api.handle(
-            "GET",
-            f"/api/diary/day?person_id={person['id']}&day=2026-07-01",
-            None,
-        ).body
 
-        self.assertEqual(queued["status"], "pending")
-        self.assertEqual([job["id"] for job in listed], [queued["id"]])
-        self.assertEqual(processed["status"], "succeeded")
-        self.assertEqual(processed["attempts"], 1)
-        self.assertEqual(processed["result"]["proposal_type"], "diary_entries")
-        self.assertEqual(proposal["id"], processed["result"]["proposal_id"])
-        self.assertEqual(proposal["status"], "draft")
-        self.assertEqual(applied["status"], "applied")
-        self.assertEqual(after["totals"]["calories_kcal"], 315)
+        self.assertEqual(rejected.status_code, 400)
+        self.assertEqual(rejected.body["error"]["type"], "ValueError")
+        self.assertEqual(listed, [])
 
     def test_chat_job_points_to_saved_chat_turn_through_http_contract(self) -> None:
         api = HttpApi(HealthMonitorService())

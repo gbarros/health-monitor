@@ -4783,7 +4783,7 @@ class HealthMonitorService:
         payload: dict[str, Any],
         client_request_id: str | None = None,
     ) -> BackgroundJob:
-        if job_type not in {"agent_text_meal", "agent_label_scan", "agent_recipe", "agent_chat"}:
+        if job_type != "agent_chat":
             raise ValueError(f"unsupported job type: {job_type}")
         if client_request_id:
             for existing in self.jobs.values():
@@ -4886,50 +4886,6 @@ class HealthMonitorService:
 
     def _execute_job(self, job: BackgroundJob) -> dict[str, Any]:
         payload = dict(job.payload)
-        if job.job_type == "agent_text_meal":
-            proposal = self.propose_text_meal(
-                person_id=str(payload["person_id"]),
-                logged_at_local=str(payload["logged_at_local"]),
-                text=str(payload["text"]),
-                agent_settings=payload.get("agent_settings"),
-            )
-            return {
-                "proposal_id": proposal.id,
-                "proposal_type": proposal.proposal_type,
-                "proposal_status": proposal.status,
-            }
-        if job.job_type == "agent_label_scan":
-            proposal = self.propose_label_scan(
-                household_id=str(payload["household_id"]),
-                person_id=str(payload["person_id"]),
-                table_text=payload.get("table_text"),
-                set_as_default=bool(payload.get("set_as_default", True)),
-                attachment_id=payload.get("attachment_id"),
-                attachment_ids=payload.get("attachment_ids"),
-                barcode=payload.get("barcode"),
-                logged_at_local=payload.get("logged_at_local"),
-                quantity_g=float(payload["quantity_g"]) if payload.get("quantity_g") is not None else None,
-                meal_type=payload.get("meal_type"),
-            )
-            return {
-                "proposal_id": proposal.id,
-                "proposal_type": proposal.proposal_type,
-                "proposal_status": proposal.status,
-            }
-        if job.job_type == "agent_recipe":
-            proposal = self.propose_recipe(
-                household_id=str(payload["household_id"]),
-                person_id=str(payload["person_id"]),
-                recipe_text=str(payload["recipe_text"]),
-                logged_at_local=payload.get("logged_at_local"),
-                quantity_g=float(payload["quantity_g"]) if payload.get("quantity_g") is not None else None,
-                meal_type=payload.get("meal_type"),
-            )
-            return {
-                "proposal_id": proposal.id,
-                "proposal_type": proposal.proposal_type,
-                "proposal_status": proposal.status,
-            }
         if job.job_type == "agent_chat":
             response = self.chat(
                 person_id=str(payload["person_id"]),

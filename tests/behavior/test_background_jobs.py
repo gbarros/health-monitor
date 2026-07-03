@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import tempfile
 import unittest
-from datetime import date
 from pathlib import Path
 
 from health_monitor.application.service import HealthMonitorService
@@ -12,43 +11,11 @@ from health_monitor.worker import process_available_job
 
 
 class BackgroundJobsTest(unittest.TestCase):
-    def test_text_meal_job_processes_into_draft_proposal_without_diary_mutation(self) -> None:
+    def test_legacy_mode_jobs_are_rejected(self) -> None:
         service = HealthMonitorService()
-        household = service.create_household(name="Casa")
-        person = service.create_person(
-            household_id=household.id,
-            name="Gabriel",
-            timezone="America/Sao_Paulo",
-        )
-        service.create_food_with_version(
-            household_id=household.id,
-            name="Queijo Minas",
-            brand=None,
-            version_label="current",
-            nutrients_per_100g=Nutrients(calories_kcal=315, protein_g=23, carbs_g=2.6, fat_g=23.5),
-            source="label_scan",
-            aliases=["queijo"],
-        )
-        job = service.enqueue_job(
-            job_type="agent_text_meal",
-            payload={
-                "person_id": person.id,
-                "logged_at_local": "2026-07-01T10:00:00",
-                "text": "100g queijo",
-                "agent_settings": {"model_profile": "ollama-local"},
-            },
-        )
 
-        processed = service.process_next_job()
-        summary = service.day_summary(person_id=person.id, day=date(2026, 7, 1))
-        proposal = service.get_proposal(processed.result["proposal_id"])
-
-        self.assertEqual(job.status, "pending")
-        self.assertEqual(processed.status, "succeeded")
-        self.assertEqual(processed.attempts, 1)
-        self.assertEqual(processed.result["proposal_type"], "diary_entries")
-        self.assertEqual(proposal.status, "draft")
-        self.assertEqual(summary.totals, Nutrients())
+        with self.assertRaisesRegex(ValueError, "unsupported job type: agent_text_meal"):
+            service.enqueue_job(job_type="agent_text_meal", payload={})
 
     def test_pending_job_survives_restart_and_can_be_processed_by_worker_service(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -60,21 +27,12 @@ class BackgroundJobsTest(unittest.TestCase):
                 name="Gabriel",
                 timezone="America/Sao_Paulo",
             )
-            first.create_food_with_version(
-                household_id=household.id,
-                name="Queijo Minas",
-                brand=None,
-                version_label="current",
-                nutrients_per_100g=Nutrients(calories_kcal=315, protein_g=23, carbs_g=2.6, fat_g=23.5),
-                source="label_scan",
-                aliases=["queijo"],
-            )
             queued = first.enqueue_job(
-                job_type="agent_text_meal",
+                job_type="agent_chat",
                 payload={
                     "person_id": person.id,
-                    "logged_at_local": "2026-07-01T10:00:00",
-                    "text": "100g queijo",
+                    "message": "Pode resumir meu dia?",
+                    "today": "2026-07-01",
                 },
             )
 
@@ -84,12 +42,12 @@ class BackgroundJobsTest(unittest.TestCase):
 
             third = HealthMonitorService(repository=SQLiteStateRepository(db_path))
             persisted = third.get_job(queued.id)
-            proposal = third.get_proposal(persisted.result["proposal_id"])
+            turn = third.chat_turns_for_person(person.id)[0]
 
             self.assertEqual(restored.status, "pending")
             self.assertEqual(processed.id, queued.id)
             self.assertEqual(persisted.status, "succeeded")
-            self.assertEqual(proposal.summary, "1 diary entries drafted from text meal")
+            self.assertEqual(persisted.result["chat_turn_id"], turn.id)
 
     def test_client_request_id_makes_job_enqueue_idempotent(self) -> None:
         service = HealthMonitorService()
@@ -117,21 +75,12 @@ class BackgroundJobsTest(unittest.TestCase):
             name="Gabriel",
             timezone="America/Sao_Paulo",
         )
-        service.create_food_with_version(
-            household_id=household.id,
-            name="Queijo Minas",
-            brand=None,
-            version_label="current",
-            nutrients_per_100g=Nutrients(calories_kcal=315, protein_g=23, carbs_g=2.6, fat_g=23.5),
-            source="label_scan",
-            aliases=["queijo"],
-        )
         queued = service.enqueue_job(
-            job_type="agent_text_meal",
+            job_type="agent_chat",
             payload={
                 "person_id": person.id,
-                "logged_at_local": "2026-07-01T10:00:00",
-                "text": "100g queijo",
+                "message": "Pode resumir meu dia?",
+                "today": "2026-07-01",
             },
         )
 
