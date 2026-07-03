@@ -481,6 +481,15 @@ class HttpApi:
             )
             return HttpResponse(200, week_summary_to_dict(summary))
 
+        if method == "POST" and path == "/api/diary/repeat":
+            proposal = self.service.repeat_meal(
+                person_id=body["person_id"],
+                source_day=date.fromisoformat(body["source_day"]),
+                meal_type=body["meal_type"],
+                logged_at_local=body["logged_at_local"],
+            )
+            return HttpResponse(201, proposal_to_dict(proposal, self.service))
+
         if method == "GET" and path == "/api/review-notes":
             notes = self.service.review_notes_for_person(query["person_id"])
             return HttpResponse(200, [review_note_to_dict(note) for note in notes])

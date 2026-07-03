@@ -9,6 +9,7 @@ import type {
   Person,
   Proposal,
   WeightTrend,
+  WeekSummary,
 } from "./types";
 
 export const STORAGE_KEYS = {
@@ -92,6 +93,12 @@ export async function loadWeightTrend(personId: string): Promise<WeightTrend> {
   return apiGet<WeightTrend>(`/api/weights/trend?person_id=${encodeURIComponent(personId)}`);
 }
 
+export async function loadWeekSummary(personId: string, start: string, end: string): Promise<WeekSummary> {
+  return apiGet<WeekSummary>(
+    `/api/summaries/week?person_id=${encodeURIComponent(personId)}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`,
+  );
+}
+
 export async function loadProposals(personId: string): Promise<Proposal[]> {
   return apiGet<Proposal[]>(`/api/proposals?person_id=${encodeURIComponent(personId)}`);
 }
@@ -138,6 +145,20 @@ export async function logWeight(input: {
     weight_kg: input.weightKg,
     note: input.note,
     source: "manual_ui",
+  });
+}
+
+export async function repeatMeal(input: {
+  personId: string;
+  sourceDay: string;
+  mealType: string;
+  loggedAtLocal?: string;
+}): Promise<Proposal> {
+  return apiPost<Proposal>("/api/diary/repeat", {
+    person_id: input.personId,
+    source_day: input.sourceDay,
+    meal_type: input.mealType,
+    logged_at_local: input.loggedAtLocal ?? localDateTimeForApi(),
   });
 }
 

@@ -98,6 +98,31 @@ test("phase 4 recipe modal creates a reusable batch food for chat logging", asyn
   await expect(dayCard(page)).toContainText("Lote E2E");
 });
 
+test("phase 5 repeat meal quick action drafts a copy proposal", async ({ page }) => {
+  await createFirstProfile(page, "Eva");
+  const ids = await storedIds(page);
+  await seedFood(page, ids.householdId, {
+    name: "Cafe E2E",
+    version_label: "base",
+    nutrients_per_100g: { calories_kcal: 200, protein_g: 12, carbs_g: 20, fat_g: 8 },
+    aliases: ["cafe e2e"],
+  });
+
+  await composer(page).fill("Café:\n50g Cafe E2E");
+  await page.getByRole("button", { name: "Enviar", exact: true }).click();
+  await page.getByRole("button", { name: "Confirmar" }).last().click();
+
+  const today = await page.evaluate(() => new Date().toISOString().slice(0, 10));
+  await page.getByLabel("Ações rápidas").getByRole("button", { name: "Repetir refeição" }).click();
+  const repeatDialog = page.getByRole("dialog", { name: "Repetir refeição" });
+  await repeatDialog.getByLabel("Dia de origem").fill(today);
+  await repeatDialog.getByLabel("Refeição").selectOption("breakfast");
+  await page.getByRole("button", { name: "Rascunhar repetição" }).click();
+
+  await expect(page.getByText(/diary entries copied from breakfast/)).toBeVisible();
+  await expect(page.getByLabel("Proposta pendente")).toContainText("Cafe E2E");
+});
+
 test("phase 2 follow-up meal note amends the open proposal before confirmation", async ({ page }) => {
   await createFirstProfile(page, "Bruno");
   const ids = await storedIds(page);

@@ -495,6 +495,44 @@ class AgentTextMealFlowTest(unittest.TestCase):
         self.assertEqual(applied.status, "applied")
         self.assertEqual(after.totals.rounded(), Nutrients(312.5, 24.5, 2.4, 22.75))
 
+    def test_repeat_meal_api_service_wrapper_copies_structured_entries_as_proposal(self) -> None:
+        service = HealthMonitorService()
+        household = service.create_household(name="Casa")
+        person = service.create_person(
+            household_id=household.id,
+            name="Gabriel",
+            timezone="America/Sao_Paulo",
+        )
+        _, cheese = service.create_food_with_version(
+            household_id=household.id,
+            name="Queijo Minas",
+            brand=None,
+            version_label="current",
+            nutrients_per_100g=Nutrients(calories_kcal=315, protein_g=23, carbs_g=2.6, fat_g=23.5),
+            source="label_scan",
+            aliases=["queijo"],
+        )
+        service.log_diary_entry(
+            person_id=person.id,
+            logged_at_local="2026-07-01T08:00:00",
+            food_version_id=cheese.id,
+            quantity_g=50,
+            source="manual",
+            meal_type="breakfast",
+        )
+
+        proposal = service.repeat_meal(
+            person_id=person.id,
+            source_day=date(2026, 7, 1),
+            meal_type="breakfast",
+            logged_at_local="2026-07-02T08:00:00",
+        )
+
+        self.assertEqual(proposal.status, "draft")
+        self.assertEqual(proposal.entries[0].food_version_id, cheese.id)
+        self.assertEqual(proposal.entries[0].quantity_g, 50)
+        self.assertEqual(proposal.entries[0].meal_type, "breakfast")
+
     def test_agent_run_and_pending_proposal_survive_restart(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "health-monitor.sqlite3"

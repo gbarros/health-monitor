@@ -3711,6 +3711,35 @@ class HealthMonitorService:
         self._persist()
         return proposal
 
+    def repeat_meal(
+        self,
+        *,
+        person_id: str,
+        source_day: date,
+        meal_type: str,
+        logged_at_local: str,
+    ) -> CreateDiaryEntriesProposal:
+        person = self._require_person(person_id)
+        target_logged_at = self._parse_person_datetime(logged_at_local, person)
+        run = AgentRun(
+            id=self._next_id("agent_run"),
+            person_id=person_id,
+            input_text=f"repeat {meal_type} from {source_day.isoformat()}",
+            settings=self._agent_settings(None),
+            status="started",
+            **self._run_metadata(self._agent_settings(None)),
+        )
+        self.agent_runs[run.id] = run
+        proposal = self._create_repeated_meal_proposal(
+            person_id=person_id,
+            text=run.input_text,
+            run=run,
+            target_logged_at=target_logged_at,
+            source_day=source_day,
+            meal_type=normalize_meal_type(meal_type),
+        )
+        return proposal
+
     def propose_recipe(
         self,
         *,
@@ -4779,7 +4808,7 @@ def text_looks_like_meal_amendment(text: str) -> bool:
         return True
     has_quantity = re.search(r"\d+(?:[,.]\d+)?\s*g(?:ramas?)?\s+", normalized) is not None
     has_explicit_meal_heading = re.match(
-        r"\s*(?:café da manhã|cafe da manha|breakfast|almoço|almoco|lunch|jantar|dinner|lanche|snack)\s*:",
+        r"\s*(?:café da manhã|cafe da manha|café|cafe|breakfast|almoço|almoco|lunch|jantar|dinner|lanche|snack)\s*:",
         normalized,
     ) is not None
     return bool(has_quantity and not has_explicit_meal_heading)
@@ -4792,7 +4821,7 @@ def text_looks_like_chat_meal_log(text: str) -> bool:
     if text_looks_like_meal_amendment(text):
         return True
     if re.match(
-        r"\s*(?:café da manhã|cafe da manha|breakfast|almoço|almoco|lunch|jantar|dinner|lanche|snack)\s*:",
+        r"\s*(?:café da manhã|cafe da manha|café|cafe|breakfast|almoço|almoco|lunch|jantar|dinner|lanche|snack)\s*:",
         normalized,
     ):
         return re.search(r"\d+(?:[,.]\d+)?\s*g(?:ramas?)?\s+", normalized) is not None
@@ -4819,7 +4848,7 @@ def parse_chat_weight_entry(text: str) -> float | None:
 def chat_default_logged_at(text: str, *, today: date) -> datetime:
     normalized = text.casefold().strip()
     hour = 12
-    if re.match(r"\s*(?:café da manhã|cafe da manha|breakfast)\s*:", normalized):
+    if re.match(r"\s*(?:café da manhã|cafe da manha|café|cafe|breakfast)\s*:", normalized):
         hour = 8
     elif re.match(r"\s*(?:lanche|snack)\s*:", normalized):
         hour = 16
@@ -4878,7 +4907,7 @@ def parse_text_meal_removal(fragment: str) -> ParsedMealRemoval | None:
 
 def strip_meal_heading(text: str) -> str:
     return re.sub(
-        r"^\s*(?:café da manhã|cafe da manha|breakfast|almoço|almoco|lunch|jantar|dinner|lanche|snack)\s*:\s*",
+        r"^\s*(?:café da manhã|cafe da manha|café|cafe|breakfast|almoço|almoco|lunch|jantar|dinner|lanche|snack)\s*:\s*",
         "",
         text,
         flags=re.I,
@@ -4891,7 +4920,7 @@ def parse_repeated_meal_reference(
     default_logged_at: datetime,
 ) -> tuple[date, str] | None:
     match = re.fullmatch(
-        r"\s*(?:same|mesm[ao])\s+(breakfast|lunch|dinner|snack|late|café da manhã|cafe da manha|almoço|almoco|jantar|lanche)\s+(?:as|de|do|da)\s+(yesterday|ontem|today|hoje|\d{4}-\d{2}-\d{2})\s*",
+        r"\s*(?:same|mesm[ao])\s+(breakfast|lunch|dinner|snack|late|café da manhã|cafe da manha|café|cafe|almoço|almoco|jantar|lanche)\s+(?:as|de|do|da)\s+(yesterday|ontem|today|hoje|\d{4}-\d{2}-\d{2})\s*",
         text,
         re.I,
     )
@@ -4913,6 +4942,8 @@ def normalize_meal_type(value: str) -> str:
     aliases = {
         "café da manhã": "breakfast",
         "cafe da manha": "breakfast",
+        "café": "breakfast",
+        "cafe": "breakfast",
         "almoço": "lunch",
         "almoco": "lunch",
         "jantar": "dinner",

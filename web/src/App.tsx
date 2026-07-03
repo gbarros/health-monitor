@@ -14,6 +14,7 @@ import {
   logWeight,
   parseOnboardingMessage,
   rejectProposal,
+  repeatMeal,
   STORAGE_KEYS,
   todayIsoForTimezone,
   updateProposalEntry,
@@ -24,6 +25,7 @@ import { DayCard } from "./components/DayCard";
 import { ContextPanel } from "./components/ManualInputs";
 import { QuickActionRow } from "./components/ModesAndTemplates";
 import { ProposalCard } from "./components/ProposalCard";
+import { WeekCard } from "./components/WeekCard";
 import { useAgentRuntime } from "./hooks/useAgentRuntime";
 import { queryKeys } from "./queryKeys";
 import type {
@@ -48,6 +50,7 @@ function App() {
   const [weightOpen, setWeightOpen] = useState(false);
   const [recipeOpen, setRecipeOpen] = useState(false);
   const [labelOpen, setLabelOpen] = useState(false);
+  const [repeatOpen, setRepeatOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [inlineProposalIds, setInlineProposalIds] = useState<Set<string>>(() => new Set());
 
@@ -94,6 +97,7 @@ function App() {
       queryClient.invalidateQueries({ queryKey: queryKeys.daySummary(selectedPersonId, selectedDay) }),
       queryClient.invalidateQueries({ queryKey: queryKeys.activeGoal(selectedPersonId, selectedDay) }),
       queryClient.invalidateQueries({ queryKey: queryKeys.weightTrend(selectedPersonId) }),
+      queryClient.invalidateQueries({ queryKey: ["weekSummary", selectedPersonId] }),
       queryClient.invalidateQueries({ queryKey: queryKeys.proposals(selectedPersonId) }),
     ]);
   }, [queryClient, selectedDay, selectedPersonId]);
@@ -224,6 +228,26 @@ function App() {
     onError: (error) => setToast(error instanceof Error ? error.message : "Não foi possível rascunhar o rótulo."),
   });
 
+  const repeatDraft = useMutation({
+    mutationFn: (input: { sourceDay: string; mealType: string }) => {
+      if (!selectedPersonId) {
+        throw new Error("Selecione um perfil antes de repetir refeição.");
+      }
+      return repeatMeal({
+        personId: selectedPersonId,
+        sourceDay: input.sourceDay,
+        mealType: input.mealType,
+      });
+    },
+    onSuccess: async (proposal) => {
+      setRepeatOpen(false);
+      upsertProposal(proposal);
+      setToast("Refeição repetida como proposta.");
+      await invalidateDailyReadModels();
+    },
+    onError: (error) => setToast(error instanceof Error ? error.message : "Não foi possível repetir a refeição."),
+  });
+
   const activeDraft = (proposalsQuery.data ?? []).find((proposal) =>
     ["draft", "needs_clarification"].includes(proposal.status),
   );
@@ -276,6 +300,7 @@ function App() {
             proposals={proposalsQuery.data ?? []}
             proposalBusy={proposalDecision.isPending || proposalEntryUpdate.isPending}
             onToast={setToast}
+            onRepeatClick={() => setRepeatOpen(true)}
             onWeightClick={() => setWeightOpen(true)}
             onRecipeClick={() => setRecipeOpen(true)}
             onLabelClick={() => setLabelOpen(true)}
@@ -299,10 +324,7 @@ function App() {
 
         <aside className="desktop-read-column" aria-label="Resumo do dia">
           <DayCard personId={selectedPersonId} day={selectedDay} />
-          <section className="week-placeholder">
-            <p className="eyebrow">Semana</p>
-            <p>Visão semanal entra na fase 5.</p>
-          </section>
+          <WeekCard personId={selectedPersonId} day={selectedDay} />
         </aside>
       </main>
 
@@ -337,6 +359,15 @@ function App() {
           busy={weightCreate.isPending}
           onClose={() => setWeightOpen(false)}
           onSubmit={(weightKg) => weightCreate.mutate(weightKg)}
+        />
+      ) : null}
+
+      {repeatOpen ? (
+        <RepeatMealModal
+          busy={repeatDraft.isPending}
+          today={selectedDay}
+          onClose={() => setRepeatOpen(false)}
+          onSubmit={(input) => repeatDraft.mutate(input)}
         />
       ) : null}
 
@@ -378,6 +409,7 @@ function ChatWorkspace({
   proposals,
   proposalBusy,
   onToast,
+  onRepeatClick,
   onWeightClick,
   onRecipeClick,
   onLabelClick,
@@ -397,6 +429,7 @@ function ChatWorkspace({
   proposals: Proposal[];
   proposalBusy: boolean;
   onToast: (message: string) => void;
+  onRepeatClick: () => void;
   onWeightClick: () => void;
   onRecipeClick: () => void;
   onLabelClick: () => void;
@@ -431,6 +464,7 @@ function ChatWorkspace({
         <DayCard personId={personId} day={today} />
         <QuickActionRow
           onToast={onToast}
+          onRepeatClick={onRepeatClick}
           onWeightClick={onWeightClick}
           onRecipeClick={onRecipeClick}
           onLabelClick={onLabelClick}
@@ -596,6 +630,59 @@ function WeightModal({
   );
 }
 
+function RepeatMealModal({
+  busy,
+  today,
+  onClose,
+  onSubmit,
+}: {
+  busy: boolean;
+  today: string;
+  onClose: () => void;
+  onSubmit: (input: { sourceDay: string; mealType: string }) => void;
+}) {
+  const [sourceDay, setSourceDay] = useState(() => addDays(today, -1));
+  const [mealType, setMealType] = useState("breakfast");
+  return (
+    <div className="modal-backdrop" role="presentation" onClick={onClose}>
+      <form
+        className="small-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Repetir refeição"
+        onClick={(event) => event.stopPropagation()}
+        onSubmit={(event) => {
+          event.preventDefault();
+          onSubmit({ sourceDay, mealType });
+        }}
+      >
+        <div className="section-heading">
+          <span>Repetir refeição</span>
+          <button type="button" onClick={onClose}>
+            Fechar
+          </button>
+        </div>
+        <label className="field">
+          <span>Dia de origem</span>
+          <input type="date" value={sourceDay} onChange={(event) => setSourceDay(event.target.value)} />
+        </label>
+        <label className="field">
+          <span>Refeição</span>
+          <select value={mealType} onChange={(event) => setMealType(event.target.value)}>
+            <option value="breakfast">Café</option>
+            <option value="lunch">Almoço</option>
+            <option value="snack">Lanche</option>
+            <option value="dinner">Jantar</option>
+          </select>
+        </label>
+        <button type="submit" className="primary-action" disabled={busy || !sourceDay}>
+          {busy ? "Rascunhando..." : "Rascunhar repetição"}
+        </button>
+      </form>
+    </div>
+  );
+}
+
 function RecipeModal({
   busy,
   onClose,
@@ -741,6 +828,12 @@ function fileToDataUrl(file: File): Promise<string> {
     reader.onerror = () => reject(reader.error ?? new Error("Não foi possível ler o arquivo."));
     reader.readAsDataURL(file);
   });
+}
+
+function addDays(day: string, delta: number): string {
+  const date = new Date(`${day}T12:00:00`);
+  date.setDate(date.getDate() + delta);
+  return date.toISOString().slice(0, 10);
 }
 
 function OnboardingScreen({ onCreate }: { onCreate: (draft: OnboardingDraft) => Promise<void> }) {

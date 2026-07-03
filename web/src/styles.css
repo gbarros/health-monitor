@@ -785,6 +785,47 @@ h3 {
   padding: 12px;
 }
 
+.week-card {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 12px;
+}
+
+.week-bars {
+  display: grid;
+  gap: 8px;
+}
+
+.week-bar-row {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) 52px;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.week-bar-track {
+  height: 9px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #eef2f2;
+}
+
+.week-bar-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: #2f6fed;
+}
+
+.week-card__summary {
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .chat-loading {
   min-height: 120px;
   display: grid;

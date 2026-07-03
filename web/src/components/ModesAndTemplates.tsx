@@ -2,12 +2,13 @@ import { useAui } from "@assistant-ui/react";
 
 type Props = {
   onToast: (message: string) => void;
+  onRepeatClick?: () => void;
   onWeightClick?: () => void;
   onRecipeClick?: () => void;
   onLabelClick?: () => void;
 };
 
-export function QuickActionRow({ onToast, onWeightClick, onRecipeClick, onLabelClick }: Props) {
+export function QuickActionRow({ onToast, onRepeatClick, onWeightClick, onRecipeClick, onLabelClick }: Props) {
   const aui = useAui();
 
   const setComposer = (template: string) => {
@@ -16,7 +17,7 @@ export function QuickActionRow({ onToast, onWeightClick, onRecipeClick, onLabelC
 
   return (
     <nav className="quick-action-row" aria-label="Ações rápidas">
-      <button type="button" onClick={() => onToast("Repetir refeição entra na fase 5.")}>
+      <button type="button" onClick={onRepeatClick ?? (() => onToast("Repetir refeição entra na fase 5."))}>
         Repetir refeição
       </button>
       <button type="button" onClick={onWeightClick}>

@@ -74,6 +74,17 @@ export type WeightTrend = {
   delta_kg?: number | null;
 };
 
+export type WeekSummary = {
+  person_id: string;
+  start: string;
+  end: string;
+  daily: Record<string, Nutrients>;
+  daily_targets: Record<string, Nutrients>;
+  totals: Nutrients;
+  averages: Nutrients;
+  weight_delta_kg?: number | null;
+};
+
 export type Proposal = {
   id: string;
   person_id: string;

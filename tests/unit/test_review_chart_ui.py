@@ -6,15 +6,17 @@ from tests.unit.frontend_helpers import read_web_file
 
 
 class ReviewChartUiTest(unittest.TestCase):
-    def test_desktop_phase_one_reserves_week_view_without_fake_chart_data(self) -> None:
+    def test_desktop_phase_five_uses_real_week_summary_card_without_fake_chart_data(self) -> None:
         app = read_web_file("App.tsx")
+        week_card = read_web_file("components/WeekCard.tsx")
         styles = read_web_file("styles.css")
 
         self.assertIn("desktop-read-column", app)
-        self.assertIn("week-placeholder", app)
-        self.assertIn("Visão semanal entra na fase 5.", app)
+        self.assertIn("<WeekCard", app)
+        self.assertIn("loadWeekSummary", week_card)
+        self.assertIn("/api/summaries/week", read_web_file("api.ts"))
         self.assertIn(".desktop-read-column", styles)
-        self.assertIn(".week-placeholder", styles)
+        self.assertIn(".week-card", styles)
         self.assertNotIn("renderMacroChart", app)
         self.assertNotIn("renderWeightTrendChart", app)
 
