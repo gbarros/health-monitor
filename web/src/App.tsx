@@ -15,6 +15,7 @@ import {
   parseOnboardingMessage,
   rejectProposal,
   repeatMeal,
+  resolveProposalClarification,
   restoreDiaryEntry,
   STORAGE_KEYS,
   todayIsoForTimezone,
@@ -26,6 +27,7 @@ import { DayCard } from "./components/DayCard";
 import { ContextPanel } from "./components/ManualInputs";
 import { QuickActionRow, ReplayBanner } from "./components/ModesAndTemplates";
 import { ProposalCard } from "./components/ProposalCard";
+import { ProposalInbox } from "./components/ProposalInbox";
 import { WeekCard } from "./components/WeekCard";
 import { useAgentRuntime } from "./hooks/useAgentRuntime";
 import { queryKeys } from "./queryKeys";
@@ -35,6 +37,7 @@ import type {
   OnboardingDraft,
   Person,
   Proposal,
+  ProposalCandidate,
   ProposalEntry,
 } from "./types";
 
@@ -52,6 +55,7 @@ function App() {
   const [recipeOpen, setRecipeOpen] = useState(false);
   const [labelOpen, setLabelOpen] = useState(false);
   const [repeatOpen, setRepeatOpen] = useState(false);
+  const [proposalInboxOpen, setProposalInboxOpen] = useState(false);
   const [toast, setToast] = useState<{ message: string; action?: { label: string; onClick: () => void } } | null>(
     null,
   );
@@ -266,6 +270,28 @@ function App() {
     onError: (error) => showToast(error instanceof Error ? error.message : "Não foi possível repetir a refeição."),
   });
 
+  const clarificationResolve = useMutation({
+    mutationFn: ({
+      proposal,
+      unresolvedIndex,
+      candidate,
+    }: {
+      proposal: Proposal;
+      unresolvedIndex: number;
+      candidate: ProposalCandidate;
+    }) =>
+      resolveProposalClarification({
+        proposalId: proposal.id,
+        unresolvedIndex,
+        foodVersionId: candidate.food_version_id,
+      }),
+    onSuccess: async (proposal) => {
+      upsertProposal(proposal);
+      await invalidateDailyReadModels();
+    },
+    onError: (error) => showToast(error instanceof Error ? error.message : "Não foi possível resolver a proposta."),
+  });
+
   const entryRestore = useMutation({
     mutationFn: (entryId: string) => restoreDiaryEntry(entryId),
     onSuccess: async () => {
@@ -317,6 +343,14 @@ function App() {
         <button
           type="button"
           className="icon-button"
+          aria-label="Abrir propostas"
+          onClick={() => setProposalInboxOpen(true)}
+        >
+          Propostas
+        </button>
+        <button
+          type="button"
+          className="icon-button"
           aria-label="Abrir ajustes do agente"
           onClick={() => setSettingsOpen(true)}
         >
@@ -350,6 +384,9 @@ function App() {
             onRejectProposal={(proposal) => proposalDecision.mutate({ proposal, decision: "reject" })}
             onUpdateProposalEntry={(proposal, entry, quantityG) =>
               proposalEntryUpdate.mutate({ proposal, entry, quantityG })
+            }
+            onResolveClarification={(proposal, unresolvedIndex, candidate) =>
+              clarificationResolve.mutate({ proposal, unresolvedIndex, candidate })
             }
             onDayChange={setSelectedDay}
             onToast={showToast}
@@ -441,6 +478,20 @@ function App() {
         />
       ) : null}
 
+      {proposalInboxOpen ? (
+        <ProposalInbox
+          proposals={proposalsQuery.data ?? []}
+          busy={proposalDecision.isPending || proposalEntryUpdate.isPending || clarificationResolve.isPending}
+          onClose={() => setProposalInboxOpen(false)}
+          onConfirm={(proposal) => proposalDecision.mutate({ proposal, decision: "confirm" })}
+          onReject={(proposal) => proposalDecision.mutate({ proposal, decision: "reject" })}
+          onUpdateEntry={(proposal, entry, quantityG) => proposalEntryUpdate.mutate({ proposal, entry, quantityG })}
+          onResolveClarification={(proposal, unresolvedIndex, candidate) =>
+            clarificationResolve.mutate({ proposal, unresolvedIndex, candidate })
+          }
+        />
+      ) : null}
+
       {toast ? (
         <div className="toast" role="status" aria-live="polite">
           <span>{toast.message}</span>
@@ -487,6 +538,7 @@ function ChatWorkspace({
   onConfirmProposal,
   onRejectProposal,
   onUpdateProposalEntry,
+  onResolveClarification,
   onDayChange,
   onToast,
   onEntryDeleted,
@@ -512,6 +564,7 @@ function ChatWorkspace({
   onConfirmProposal: (proposal: Proposal) => void;
   onRejectProposal: (proposal: Proposal) => void;
   onUpdateProposalEntry: (proposal: Proposal, entry: ProposalEntry, quantityG: number) => void;
+  onResolveClarification: (proposal: Proposal, unresolvedIndex: number, candidate: ProposalCandidate) => void;
   onDayChange: (day: string) => void;
   onToast: (message: string) => void;
   onEntryDeleted: (entryId: string) => void;
@@ -536,6 +589,7 @@ function ChatWorkspace({
         onConfirm={onConfirmProposal}
         onReject={onRejectProposal}
         onUpdateEntry={onUpdateProposalEntry}
+        onResolveClarification={onResolveClarification}
       />
       <section className="chat-column" aria-label="Conversa">
         <DayCard
@@ -561,6 +615,7 @@ function ChatWorkspace({
           onConfirm={onConfirmProposal}
           onReject={onRejectProposal}
           onUpdateEntry={onUpdateProposalEntry}
+          onResolveClarification={onResolveClarification}
         />
       </section>
     </AssistantRuntimeProvider>
@@ -573,12 +628,14 @@ function ProposalToolRenderer({
   onConfirm,
   onReject,
   onUpdateEntry,
+  onResolveClarification,
 }: {
   proposals: Proposal[];
   busy: boolean;
   onConfirm: (proposal: Proposal) => void;
   onReject: (proposal: Proposal) => void;
   onUpdateEntry: (proposal: Proposal, entry: ProposalEntry, quantityG: number) => void;
+  onResolveClarification: (proposal: Proposal, unresolvedIndex: number, candidate: ProposalCandidate) => void;
 }) {
   const proposalById = useMemo(() => new Map(proposals.map((proposal) => [proposal.id, proposal])), [proposals]);
   const tool = useMemo(
@@ -598,11 +655,12 @@ function ProposalToolRenderer({
             onConfirm={onConfirm}
             onReject={onReject}
             onEntryQuantityChange={onUpdateEntry}
+            onResolveClarification={onResolveClarification}
           />
         );
       },
     }),
-    [busy, onConfirm, onReject, onUpdateEntry, proposalById],
+    [busy, onConfirm, onReject, onResolveClarification, onUpdateEntry, proposalById],
   );
   useAssistantToolUI(tool);
   return null;
@@ -641,12 +699,14 @@ function DraftProposalDock({
   onConfirm,
   onReject,
   onUpdateEntry,
+  onResolveClarification,
 }: {
   proposal?: Proposal;
   busy: boolean;
   onConfirm: (proposal: Proposal) => void;
   onReject: (proposal: Proposal) => void;
   onUpdateEntry: (proposal: Proposal, entry: ProposalEntry, quantityG: number) => void;
+  onResolveClarification: (proposal: Proposal, unresolvedIndex: number, candidate: ProposalCandidate) => void;
 }) {
   if (!proposal) {
     return null;
@@ -659,6 +719,7 @@ function DraftProposalDock({
         onConfirm={onConfirm}
         onReject={onReject}
         onEntryQuantityChange={onUpdateEntry}
+        onResolveClarification={onResolveClarification}
       />
     </section>
   );

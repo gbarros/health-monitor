@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { Proposal, ProposalEntry } from "../types";
+import type { Proposal, ProposalCandidate, ProposalEntry, UnresolvedItem } from "../types";
 
 export function ProposalCard({
   proposal,
@@ -7,15 +7,24 @@ export function ProposalCard({
   onConfirm,
   onReject,
   onEntryQuantityChange,
+  onResolveClarification,
+  onOpenSupersedingProposal,
+  showDetails = true,
 }: {
   proposal: Proposal;
   busy?: boolean;
   onConfirm: (proposal: Proposal) => void;
   onReject: (proposal: Proposal) => void;
   onEntryQuantityChange?: (proposal: Proposal, entry: ProposalEntry, quantityG: number) => void;
+  onResolveClarification?: (proposal: Proposal, unresolvedIndex: number, candidate: ProposalCandidate) => void;
+  onOpenSupersedingProposal?: (proposalId: string) => void;
+  showDetails?: boolean;
 }) {
   const entries = proposal.entries ?? [];
   const canConfirm = proposal.status === "draft";
+  const canReject = proposal.status === "draft" || proposal.status === "needs_clarification";
+  const unresolvedItems = (proposal.payload?.["unresolved_items"] as UnresolvedItem[] | undefined) ?? [];
+  const supersededBy = proposal.payload?.["superseded_by_proposal_id"];
   return (
     <section className="proposal-card" aria-label="Proposta de registro">
       <div className="proposal-card__header">
@@ -29,6 +38,14 @@ export function ProposalCard({
         </div>
         <span className={`status-pill status-pill--${proposal.status}`}>{proposal.status}</span>
       </div>
+
+      {proposal.status === "needs_clarification" && unresolvedItems.length ? (
+        <ClarificationPicker
+          items={unresolvedItems}
+          busy={busy}
+          onPick={(index, candidate) => onResolveClarification?.(proposal, index, candidate)}
+        />
+      ) : null}
 
       {entries.length ? (
         <div className="proposal-entry-list">
@@ -51,16 +68,125 @@ export function ProposalCard({
 
       <div className="proposal-card__totals">{proposalTotals(proposal)}</div>
 
+      {typeof supersededBy === "string" ? (
+        <button
+          type="button"
+          className="compact-button"
+          onClick={() => onOpenSupersedingProposal?.(supersededBy)}
+        >
+          Ver proposta que substituiu esta →
+        </button>
+      ) : null}
+
       <div className="proposal-actions">
-        <button type="button" onClick={() => onReject(proposal)} disabled={busy || proposal.status === "rejected"}>
+        <button type="button" onClick={() => onReject(proposal)} disabled={busy || !canReject}>
           Rejeitar
         </button>
         <button type="button" className="primary-action" onClick={() => onConfirm(proposal)} disabled={busy || !canConfirm}>
           {canConfirm ? "Confirmar" : "Precisa revisar"}
         </button>
       </div>
+
+      {showDetails ? <ProposalDetails proposal={proposal} /> : null}
     </section>
   );
+}
+
+function ClarificationPicker({
+  items,
+  busy,
+  onPick,
+}: {
+  items: UnresolvedItem[];
+  busy: boolean;
+  onPick: (unresolvedIndex: number, candidate: ProposalCandidate) => void;
+}) {
+  return (
+    <div className="clarification-picker">
+      {items.map((item, index) =>
+        item.candidates?.length ? (
+          <div key={`${item.phrase ?? index}`} className="clarification-item">
+            <p className="proposal-card__meta">
+              {item.source_text ?? item.phrase ?? "Item"}: escolha o alimento correto
+            </p>
+            <div className="clarification-candidates">
+              {item.candidates.map((candidate) => (
+                <button
+                  key={candidate.food_version_id}
+                  type="button"
+                  className="clarification-candidate"
+                  disabled={busy}
+                  onClick={() => onPick(index, candidate)}
+                >
+                  <strong>{candidate.food_name}</strong>
+                  <span>
+                    {[candidate.brand, candidate.version_label].filter(Boolean).join(" · ")}
+                    {candidate.nutrients_per_100g?.calories_kcal != null
+                      ? ` · ${Math.round(candidate.nutrients_per_100g.calories_kcal)} kcal/100g`
+                      : ""}
+                    {candidate.confidence != null ? ` · ${Math.round(candidate.confidence * 100)}%` : ""}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null,
+      )}
+    </div>
+  );
+}
+
+function ProposalDetails({ proposal }: { proposal: Proposal }) {
+  const run = proposal.agent_run;
+  return (
+    <details className="settings-disclosure proposal-details">
+      <summary>Detalhes</summary>
+      <div className="proposal-audit">
+        <span>Criada: {formatDateTime(proposal.created_at)}</span>
+        {proposal.confirmed_at ? <span>Confirmada: {formatDateTime(proposal.confirmed_at)}</span> : null}
+        {proposal.rejected_at ? <span>Rejeitada: {formatDateTime(proposal.rejected_at)}</span> : null}
+        {typeof proposal.payload?.["amended_from_proposal_id"] === "string" ? (
+          <span>Substitui proposta {String(proposal.payload["amended_from_proposal_id"]).slice(0, 8)}</span>
+        ) : null}
+      </div>
+      {run ? (
+        <div className="proposal-agent-run">
+          <span>
+            Execução: {run.runtime ?? "?"} · modelo {run.model_name ?? "?"} · {run.tool_loop_count ?? 0} chamadas
+          </span>
+          {run.fallback_reason ? (
+            <p className="form-error">Fallback usado: {run.fallback_reason}</p>
+          ) : null}
+          {run.tool_calls.length ? (
+            <div className="tool-trace">
+              {run.tool_calls.map((call) => (
+                <div key={call.id} className="tool-trace-row">
+                  <div className="tool-trace-row__header">
+                    <strong>{humanizeToolName(call.tool_name)}</strong>
+                    <span className={`status-pill status-pill--${call.status}`}>{call.status}</span>
+                  </div>
+                  {call.input_summary ? <span>Entrada: {call.input_summary}</span> : null}
+                  {call.output_summary ? <span>Saída: {call.output_summary}</span> : null}
+                  {call.error ? <span className="form-error">Erro: {call.error}</span> : null}
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </details>
+  );
+}
+
+function humanizeToolName(toolName: string): string {
+  return toolName.replaceAll("_", " ");
+}
+
+function formatDateTime(iso?: string | null): string {
+  if (!iso) {
+    return "?";
+  }
+  return new Date(iso).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
 }
 
 function ProposalEntryRow({

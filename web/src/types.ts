@@ -85,6 +85,52 @@ export type WeekSummary = {
   weight_delta_kg?: number | null;
 };
 
+export type AgentToolCall = {
+  id: string;
+  agent_run_id: string;
+  tool_name: string;
+  input_summary?: string | null;
+  output_summary?: string | null;
+  status: string;
+  error?: string | null;
+  started_at: string;
+  completed_at?: string | null;
+};
+
+export type AgentRun = {
+  id: string;
+  person_id: string;
+  input_text?: string | null;
+  status: string;
+  proposal_id?: string | null;
+  runtime?: string | null;
+  model_name?: string | null;
+  tool_loop_count?: number;
+  fallback_reason?: string | null;
+  created_at: string;
+  tool_calls: AgentToolCall[];
+};
+
+export type ProposalCandidate = {
+  food_id: string;
+  food_version_id: string;
+  food_name: string;
+  brand?: string | null;
+  version_label: string;
+  nutrients_per_100g?: Nutrients;
+  confidence?: number;
+  reason?: string;
+};
+
+export type UnresolvedItem = {
+  source_text?: string;
+  phrase?: string;
+  unit?: string | null;
+  quantity?: number;
+  quantity_basis?: string | null;
+  candidates?: ProposalCandidate[];
+};
+
 export type Proposal = {
   id: string;
   person_id: string;
@@ -95,6 +141,7 @@ export type Proposal = {
   payload?: Record<string, unknown>;
   evidence?: Array<Record<string, unknown>>;
   entries?: ProposalEntry[];
+  agent_run?: AgentRun | null;
   created_at?: string;
   confirmed_at?: string | null;
   rejected_at?: string | null;

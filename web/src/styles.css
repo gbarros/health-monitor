@@ -779,6 +779,73 @@ h3 {
   font-size: 14px;
 }
 
+.clarification-picker {
+  display: grid;
+  gap: 10px;
+}
+
+.clarification-candidates {
+  display: grid;
+  gap: 6px;
+}
+
+.clarification-candidate {
+  all: unset;
+  display: grid;
+  gap: 2px;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  box-sizing: border-box;
+}
+
+.clarification-candidate span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.proposal-details {
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+.proposal-audit,
+.proposal-agent-run {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 13px;
+  padding-top: 8px;
+}
+
+.tool-trace {
+  display: grid;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.tool-trace-row {
+  display: grid;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  font-size: 12px;
+}
+
+.tool-trace-row__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.proposal-inbox-row {
+  display: grid;
+  gap: 4px;
+  text-align: left;
+}
+
 .sheet-backdrop {
   position: fixed;
   inset: 0;

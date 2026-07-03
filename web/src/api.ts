@@ -126,6 +126,21 @@ export async function rejectProposal(proposalId: string): Promise<Proposal> {
   return apiPost<Proposal>(`/api/proposals/${encodeURIComponent(proposalId)}/reject`, {});
 }
 
+export async function loadProposal(proposalId: string): Promise<Proposal> {
+  return apiGet<Proposal>(`/api/proposals/${encodeURIComponent(proposalId)}`);
+}
+
+export async function resolveProposalClarification(input: {
+  proposalId: string;
+  unresolvedIndex: number;
+  foodVersionId: string;
+}): Promise<Proposal> {
+  return apiPost<Proposal>(`/api/proposals/${encodeURIComponent(input.proposalId)}/resolve-food`, {
+    unresolved_index: input.unresolvedIndex,
+    food_version_id: input.foodVersionId,
+  });
+}
+
 export async function updateProposalEntry(input: {
   proposalId: string;
   entryId: string;
