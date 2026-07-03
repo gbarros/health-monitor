@@ -218,13 +218,31 @@ h3 {
   top: 0;
   z-index: 20;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 10px;
   border-bottom: 1px solid var(--border);
   background: rgba(255, 255, 255, 0.92);
   padding: 10px 12px;
   backdrop-filter: blur(10px);
+}
+
+.app-nav {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+}
+
+.nav-tab {
+  min-height: 40px;
+  border-radius: 999px;
+  font-weight: 750;
+}
+
+.nav-tab.is-active {
+  border-color: var(--primary);
+  background: #e6f4f1;
+  color: var(--primary-strong);
 }
 
 .brand-block {
@@ -289,14 +307,15 @@ h3 {
   font-weight: 700;
 }
 
-.daily-layout {
+.app-main {
   flex: 1;
   min-height: 0;
-  display: block;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .chat-column {
-  height: 100%;
+  height: calc(100dvh - 73px);
   min-height: 0;
   display: grid;
   grid-template-rows: auto auto minmax(160px, 1fr) auto;
@@ -305,8 +324,14 @@ h3 {
   padding: 10px;
 }
 
-.desktop-read-column {
-  display: none;
+.page-grid,
+.settings-page,
+.data-page {
+  width: min(1120px, 100%);
+  display: grid;
+  gap: 14px;
+  margin: 0 auto;
+  padding: 12px;
 }
 
 .day-card {
@@ -459,6 +484,36 @@ h3 {
   gap: 8px;
   overflow-x: auto;
   padding-bottom: 2px;
+}
+
+.day-summary-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 8px 10px;
+}
+
+.day-summary-strip div:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.day-summary-strip strong {
+  font-size: 16px;
+}
+
+.day-summary-strip span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.compact-day-nav button {
+  min-height: 36px;
 }
 
 .quick-action-row button {
@@ -975,6 +1030,42 @@ h3 {
   padding: 12px;
 }
 
+.data-section {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 12px;
+}
+
+.data-table {
+  width: 100%;
+  min-width: 720px;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.data-table th,
+.data-table td {
+  max-width: 340px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.data-table th {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.data-table td {
+  overflow-wrap: anywhere;
+}
+
 .week-card {
   display: grid;
   gap: 12px;
@@ -1098,6 +1189,12 @@ h3 {
     grid-column: 1 / -1;
   }
 
+  .app-nav {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+    overflow-x: auto;
+  }
+
   .header-actions {
     grid-column: 1 / -1;
     justify-content: flex-start;
@@ -1126,6 +1223,11 @@ h3 {
   .quantity-editor {
     grid-column: 1 / -1;
   }
+
+  .day-summary-strip {
+    align-items: stretch;
+    flex-direction: column;
+  }
 }
 
 @media (min-width: 900px) {
@@ -1138,12 +1240,6 @@ h3 {
     padding-inline: 20px;
   }
 
-  .daily-layout {
-    min-height: 0;
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) 360px;
-  }
-
   .chat-column {
     min-height: 0;
     height: calc(100dvh - 66px);
@@ -1151,27 +1247,12 @@ h3 {
     padding: 16px;
   }
 
-  .chat-column > .day-card {
-    display: none;
-  }
-
-  .desktop-read-column {
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
-    overflow-y: auto;
-    border-left: 1px solid var(--border);
-    background: rgba(255, 255, 255, 0.64);
-    padding: 16px;
-  }
-
-  .desktop-read-column .day-card {
-    max-height: none;
-  }
-
   .chat-thread-shell {
-    --aui-thread-max-width: min(860px, calc(100vw - 440px));
+    --aui-thread-max-width: min(920px, calc(100vw - 96px));
+  }
+
+  .page-grid {
+    grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
   }
 }
 

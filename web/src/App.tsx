@@ -7,8 +7,8 @@ import {
   confirmProposal,
   createInitialProfile,
   defaultAgentSettings,
-  draftLabelScan,
-  draftRecipe,
+  loadActiveGoal,
+  loadDaySummary,
   loadChatHistory,
   loadJobs,
   loadPeople,
@@ -17,7 +17,6 @@ import {
   logWeight,
   parseOnboardingMessage,
   rejectProposal,
-  repeatMeal,
   resolveProposalClarification,
   restoreDiaryEntry,
   sendAgentChat,
@@ -41,8 +40,10 @@ import type { OutboxItem } from "./outbox";
 import { queryKeys } from "./queryKeys";
 import type {
   AgentChatResponse,
+  AgentChatTurn,
   AgentSettings,
   BackgroundJob,
+  DaySummaryEntry,
   OnboardingDraft,
   Person,
   Proposal,
@@ -67,6 +68,7 @@ function App() {
   const [proposalInboxOpen, setProposalInboxOpen] = useState(false);
   const [foodLibraryOpen, setFoodLibraryOpen] = useState(false);
   const [jobsSheetOpen, setJobsSheetOpen] = useState(false);
+  const [activeView, setActiveView] = useState<"chat" | "panel" | "data" | "settings">("chat");
   const [backgroundJobsEnabled, setBackgroundJobsEnabled] = useState(false);
   const [toast, setToast] = useState<{ message: string; action?: { label: string; onClick: () => void } } | null>(
     null,
@@ -321,29 +323,17 @@ function App() {
     onError: (error) => showToast(error instanceof Error ? error.message : "Não foi possível registrar o peso."),
   });
 
-  const recipeDraft = useMutation({
-    mutationFn: (recipeText: string) => {
+  const promptBuilderSend = useMutation({
+    mutationFn: async (input: {
+      message: string;
+      intent: "log_food" | "recipe" | "label_scan" | "repeat_meal";
+      files?: File[];
+    }) => {
       if (!householdId || !selectedPersonId) {
-        throw new Error("Selecione uma casa e perfil antes de criar receita.");
-      }
-      return draftRecipe({ householdId, personId: selectedPersonId, text: recipeText });
-    },
-    onSuccess: async (proposal) => {
-      setRecipeOpen(false);
-      upsertProposal(proposal);
-      showToast("Receita rascunhada para revisão.");
-      await invalidateDailyReadModels();
-    },
-    onError: (error) => showToast(error instanceof Error ? error.message : "Não foi possível rascunhar a receita."),
-  });
-
-  const labelDraft = useMutation({
-    mutationFn: async (input: { text: string; files: File[] }) => {
-      if (!householdId || !selectedPersonId) {
-        throw new Error("Selecione uma casa e perfil antes de escanear rótulo.");
+        throw new Error("Selecione uma casa e perfil antes de conversar com o agente.");
       }
       const attachmentIds = [];
-      for (const file of input.files) {
+      for (const file of input.files ?? []) {
         const dataUrl = await fileToDataUrl(file);
         const attachment = await uploadDataUrlAttachment({
           householdId,
@@ -353,40 +343,26 @@ function App() {
         });
         attachmentIds.push(attachment.id);
       }
-      return draftLabelScan({
-        householdId,
+      return sendAgentChat({
         personId: selectedPersonId,
-        text: input.text,
+        message: input.message,
+        intent: input.intent,
+        settings,
+        today: selectedDay,
         attachmentIds,
       });
     },
-    onSuccess: async (proposal) => {
+    onSuccess: async (response) => {
+      onAgentResponse(response);
+      setRecipeOpen(false);
       setLabelOpen(false);
-      upsertProposal(proposal);
-      showToast("Rótulo rascunhado para revisão.");
-      await invalidateDailyReadModels();
-    },
-    onError: (error) => showToast(error instanceof Error ? error.message : "Não foi possível rascunhar o rótulo."),
-  });
-
-  const repeatDraft = useMutation({
-    mutationFn: (input: { sourceDay: string; mealType: string }) => {
-      if (!selectedPersonId) {
-        throw new Error("Selecione um perfil antes de repetir refeição.");
-      }
-      return repeatMeal({
-        personId: selectedPersonId,
-        sourceDay: input.sourceDay,
-        mealType: input.mealType,
-      });
-    },
-    onSuccess: async (proposal) => {
       setRepeatOpen(false);
-      upsertProposal(proposal);
-      showToast("Refeição repetida como proposta.");
+      showToast("Mensagem enviada ao agente.");
+      await queryClient.invalidateQueries({ queryKey: queryKeys.chatHistory(selectedPersonId) });
+      setChatReloadKey((key) => key + 1);
       await invalidateDailyReadModels();
     },
-    onError: (error) => showToast(error instanceof Error ? error.message : "Não foi possível repetir a refeição."),
+    onError: (error) => showToast(error instanceof Error ? error.message : "Não foi possível enviar ao agente."),
   });
 
   const clarificationResolve = useMutation({
@@ -490,9 +466,22 @@ function App() {
       <header className="app-header">
         <div className="brand-block">
           <p className="eyebrow">Health Monitor</p>
-          <h1>Diário</h1>
+          <h1>{viewTitle(activeView)}</h1>
         </div>
         <PersonChips people={people} activePersonId={selectedPersonId} onChange={changePerson} />
+        <nav className="app-nav" aria-label="Navegação principal">
+          {(["chat", "panel", "data", "settings"] as const).map((view) => (
+            <button
+              key={view}
+              type="button"
+              className={view === activeView ? "nav-tab is-active" : "nav-tab"}
+              aria-current={view === activeView ? "page" : undefined}
+              onClick={() => setActiveView(view)}
+            >
+              {viewTitle(view)}
+            </button>
+          ))}
+        </nav>
         <div className="header-actions">
           <button
             type="button"
@@ -518,75 +507,61 @@ function App() {
           >
             Tarefas{activeJobCount > 0 ? <span className="badge-count">{activeJobCount}</span> : null}
           </button>
-          <button
-            type="button"
-            className="icon-button"
-            aria-label="Abrir ajustes do agente"
-            onClick={() => setSettingsOpen(true)}
-          >
-            Ajustes
-          </button>
         </div>
       </header>
 
-      <main className="daily-layout">
-        {chatHistoryQuery.isSuccess ? (
-          <ChatWorkspace
-            key={`${selectedPersonId}-${chatReloadKey}`}
-            householdId={householdId}
-            personId={selectedPersonId}
-            today={selectedDay}
-            settings={settings}
-            initialMessages={initialMessages}
-            proposal={fallbackDraft}
-            proposals={proposalsQuery.data ?? []}
-            proposalBusy={proposalDecision.isPending || proposalEntryUpdate.isPending}
-            onRepeatClick={() => setRepeatOpen(true)}
-            onWeightClick={() => setWeightOpen(true)}
-            onRecipeClick={() => setRecipeOpen(true)}
-            onLabelClick={() => setLabelOpen(true)}
-            onAgentResponse={onAgentResponse}
-            onProposal={onProposal}
-            onRuntimeError={onRuntimeError}
-            onSendFailed={onSendFailed}
-            backgroundJobsEnabled={backgroundJobsEnabled}
-            onJobQueued={onJobQueued}
-            outboxCount={outboxForCurrentPerson.length}
-            outboxBannerVisible={outboxForCurrentPerson.length > 0 && !outboxBannerDismissed}
-            outboxReplaying={outboxReplaying}
-            onOutboxReplay={replayOutbox}
-            onOutboxDiscard={() => {
-              discardOutbox();
-              setOutboxBannerDismissed(true);
-            }}
-            onConfirmProposal={(proposal) => proposalDecision.mutate({ proposal, decision: "confirm" })}
-            onRejectProposal={(proposal) => proposalDecision.mutate({ proposal, decision: "reject" })}
-            onUpdateProposalEntry={(proposal, entry, quantityG) =>
-              proposalEntryUpdate.mutate({ proposal, entry, quantityG })
-            }
-            onResolveClarification={(proposal, unresolvedIndex, candidate) =>
-              clarificationResolve.mutate({ proposal, unresolvedIndex, candidate })
-            }
-            onDayChange={setSelectedDay}
-            onToast={showToast}
-            onEntryDeleted={onEntryDeleted}
-          />
-        ) : (
-          <section className="chat-column" aria-label="Conversa">
-            <DayCard
+      <main className="app-main">
+        {activeView === "chat" ? (
+          chatHistoryQuery.isSuccess ? (
+            <ChatWorkspace
+              key={`${selectedPersonId}-${chatReloadKey}`}
+              householdId={householdId}
               personId={selectedPersonId}
-              day={selectedDay}
+              today={selectedDay}
+              settings={settings}
+              initialMessages={initialMessages}
+              proposal={fallbackDraft}
+              proposals={proposalsQuery.data ?? []}
+              proposalBusy={proposalDecision.isPending || proposalEntryUpdate.isPending}
+              onRepeatClick={() => setRepeatOpen(true)}
+              onWeightClick={() => setWeightOpen(true)}
+              onRecipeClick={() => setRecipeOpen(true)}
+              onLabelClick={() => setLabelOpen(true)}
+              onAgentResponse={onAgentResponse}
+              onProposal={onProposal}
+              onRuntimeError={onRuntimeError}
+              onSendFailed={onSendFailed}
+              backgroundJobsEnabled={backgroundJobsEnabled}
+              onJobQueued={onJobQueued}
+              outboxCount={outboxForCurrentPerson.length}
+              outboxBannerVisible={outboxForCurrentPerson.length > 0 && !outboxBannerDismissed}
+              outboxReplaying={outboxReplaying}
+              onOutboxReplay={replayOutbox}
+              onOutboxDiscard={() => {
+                discardOutbox();
+                setOutboxBannerDismissed(true);
+              }}
+              onConfirmProposal={(proposal) => proposalDecision.mutate({ proposal, decision: "confirm" })}
+              onRejectProposal={(proposal) => proposalDecision.mutate({ proposal, decision: "reject" })}
+              onUpdateProposalEntry={(proposal, entry, quantityG) =>
+                proposalEntryUpdate.mutate({ proposal, entry, quantityG })
+              }
+              onResolveClarification={(proposal, unresolvedIndex, candidate) =>
+                clarificationResolve.mutate({ proposal, unresolvedIndex, candidate })
+              }
               onDayChange={setSelectedDay}
-              onToast={showToast}
-              onEntryDeleted={onEntryDeleted}
             />
-            <div className="chat-loading" role="status">
-              Carregando conversa...
-            </div>
-          </section>
-        )}
+          ) : (
+            <section className="chat-column" aria-label="Conversa">
+              <div className="chat-loading" role="status">
+                Carregando conversa...
+              </div>
+            </section>
+          )
+        ) : null}
 
-        <aside className="desktop-read-column" aria-label="Resumo do dia">
+        {activeView === "panel" ? (
+          <section className="page-grid" aria-label="Painel">
           <DayCard
             personId={selectedPersonId}
             day={selectedDay}
@@ -595,7 +570,39 @@ function App() {
             onEntryDeleted={onEntryDeleted}
           />
           <WeekCard personId={selectedPersonId} day={selectedDay} />
-        </aside>
+          </section>
+        ) : null}
+
+        {activeView === "data" ? (
+          <DataPage
+            personId={selectedPersonId}
+            selectedDay={selectedDay}
+            proposals={proposalsQuery.data ?? []}
+            jobs={jobsQuery.data ?? []}
+            turns={chatHistoryQuery.data ?? []}
+          />
+        ) : null}
+
+        {activeView === "settings" ? (
+          <section className="settings-page" aria-label="Ajustes">
+            <ContextPanel
+              people={people}
+              personId={selectedPersonId}
+              settings={settings}
+              onPersonChange={changePerson}
+              onSettingsChange={setSettings}
+            />
+            <label className="check-field">
+              <input
+                type="checkbox"
+                checked={backgroundJobsEnabled}
+                onChange={(event) => setBackgroundJobsEnabled(event.target.checked)}
+              />
+              <span>Processar em segundo plano</span>
+            </label>
+            <DataPortabilityPanel onToast={showToast} />
+          </section>
+        ) : null}
       </main>
 
       {settingsOpen ? (
@@ -643,26 +650,28 @@ function App() {
 
       {repeatOpen ? (
         <RepeatMealModal
-          busy={repeatDraft.isPending}
+          busy={promptBuilderSend.isPending}
           today={selectedDay}
           onClose={() => setRepeatOpen(false)}
-          onSubmit={(input) => repeatDraft.mutate(input)}
+          onSubmit={(message) => promptBuilderSend.mutate({ message, intent: "repeat_meal" })}
         />
       ) : null}
 
       {recipeOpen ? (
         <RecipeModal
-          busy={recipeDraft.isPending}
+          busy={promptBuilderSend.isPending}
           onClose={() => setRecipeOpen(false)}
-          onSubmit={(recipeText) => recipeDraft.mutate(recipeText)}
+          onSubmit={(message) => promptBuilderSend.mutate({ message, intent: "recipe" })}
         />
       ) : null}
 
       {labelOpen ? (
         <LabelScanModal
-          busy={labelDraft.isPending}
+          busy={promptBuilderSend.isPending}
           onClose={() => setLabelOpen(false)}
-          onSubmit={(input) => labelDraft.mutate(input)}
+          onSubmit={(input) =>
+            promptBuilderSend.mutate({ message: input.message, files: input.files, intent: "label_scan" })
+          }
         />
       ) : null}
 
@@ -759,8 +768,6 @@ function ChatWorkspace({
   onUpdateProposalEntry,
   onResolveClarification,
   onDayChange,
-  onToast,
-  onEntryDeleted,
 }: {
   householdId: string | null;
   personId: string;
@@ -790,8 +797,6 @@ function ChatWorkspace({
   onUpdateProposalEntry: (proposal: Proposal, entry: ProposalEntry, quantityG: number) => void;
   onResolveClarification: (proposal: Proposal, unresolvedIndex: number, candidate: ProposalCandidate) => void;
   onDayChange: (day: string) => void;
-  onToast: (message: string) => void;
-  onEntryDeleted: (entryId: string) => void;
 }) {
   const runtime = useAgentRuntime({
     householdId,
@@ -818,13 +823,7 @@ function ChatWorkspace({
         onResolveClarification={onResolveClarification}
       />
       <section className="chat-column" aria-label="Conversa">
-        <DayCard
-          personId={personId}
-          day={today}
-          onDayChange={onDayChange}
-          onToast={onToast}
-          onEntryDeleted={onEntryDeleted}
-        />
+        <DaySummaryStrip personId={personId} day={today} onDayChange={onDayChange} />
         <QuickActionRow
           onRepeatClick={onRepeatClick}
           onWeightClick={onWeightClick}
@@ -851,6 +850,187 @@ function ChatWorkspace({
       </section>
     </AssistantRuntimeProvider>
   );
+}
+
+function viewTitle(view: "chat" | "panel" | "data" | "settings"): string {
+  if (view === "panel") return "Painel";
+  if (view === "data") return "Dados";
+  if (view === "settings") return "Ajustes";
+  return "Chat";
+}
+
+function DaySummaryStrip({
+  personId,
+  day,
+  onDayChange,
+}: {
+  personId: string;
+  day: string;
+  onDayChange: (day: string) => void;
+}) {
+  const summaryQuery = useQuery({
+    queryKey: queryKeys.daySummary(personId, day),
+    queryFn: () => loadDaySummary(personId, day),
+  });
+  const goalQuery = useQuery({
+    queryKey: queryKeys.activeGoal(personId, day),
+    queryFn: () => loadActiveGoal(personId, day),
+  });
+  const totals = summaryQuery.data?.totals;
+  const target = summaryQuery.data?.target ?? goalQuery.data?.targets;
+  const calories = Math.round(totals?.calories_kcal ?? 0);
+  const calorieTarget = Math.round(target?.calories_kcal ?? 0);
+  const remaining = calorieTarget > 0 ? calorieTarget - calories : null;
+  return (
+    <section className="day-summary-strip" aria-label="Resumo rápido do dia">
+      <div>
+        <strong>
+          {calories}
+          {calorieTarget > 0 ? ` / ${calorieTarget}` : ""} kcal
+        </strong>
+        <span>{remaining != null ? `Restante ${remaining}` : "Sem meta calórica ativa"}</span>
+      </div>
+      <div className="day-nav compact-day-nav">
+        <button type="button" onClick={() => onDayChange(addDays(day, -1))} aria-label="Dia anterior">
+          ‹
+        </button>
+        <label className="day-date-button">
+          <span>{day}</span>
+          <input type="date" value={day} onChange={(event) => onDayChange(event.target.value)} />
+        </label>
+        <button type="button" onClick={() => onDayChange(addDays(day, 1))} aria-label="Próximo dia">
+          ›
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function DataPage({
+  personId,
+  selectedDay,
+  proposals,
+  jobs,
+  turns,
+}: {
+  personId: string;
+  selectedDay: string;
+  proposals: Proposal[];
+  jobs: BackgroundJob[];
+  turns: AgentChatTurn[];
+}) {
+  const summaryQuery = useQuery({
+    queryKey: queryKeys.daySummary(personId, selectedDay),
+    queryFn: () => loadDaySummary(personId, selectedDay),
+  });
+  const entries = Object.values(summaryQuery.data?.meals ?? {}).flat();
+  return (
+    <section className="data-page" aria-label="Dados">
+      <DataTable
+        title={`Diário de ${selectedDay}`}
+        empty="Nenhum item registrado neste dia."
+        columns={["Hora", "Refeição", "Alimento", "g", "kcal", "Fonte", "Conf."]}
+        rows={entries.map((entry) => diaryEntryRow(entry))}
+      />
+      <DataTable
+        title="Propostas"
+        empty="Nenhuma proposta."
+        columns={["Criada", "Tipo", "Status", "Resumo"]}
+        rows={proposals.map((proposal) => [
+          formatDateTime(proposal.created_at),
+          proposal.proposal_type,
+          proposal.status,
+          proposal.summary,
+        ])}
+      />
+      <DataTable
+        title="Jobs"
+        empty="Nenhuma tarefa."
+        columns={["Criado", "Tipo", "Status", "Tentativas", "Erro"]}
+        rows={jobs.map((job) => [formatDateTime(job.created_at), job.job_type, job.status, String(job.attempts), job.last_error ?? ""])}
+      />
+      <DataTable
+        title="Chat turns"
+        empty="Nenhuma conversa."
+        columns={["Criado", "Usuário", "Agente", "Comportamento"]}
+        rows={turns.map((turn) => [
+          formatDateTime(turn.created_at),
+          turn.user_message,
+          turn.assistant_message,
+          turn.behavior_label,
+        ])}
+      />
+    </section>
+  );
+}
+
+function DataTable({
+  title,
+  empty,
+  columns,
+  rows,
+}: {
+  title: string;
+  empty: string;
+  columns: string[];
+  rows: string[][];
+}) {
+  const csv = [columns, ...rows].map((row) => row.map(csvCell).join(",")).join("\n");
+  const download = () => {
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${title.toLocaleLowerCase("pt-BR").replace(/[^a-z0-9]+/gi, "-")}.csv`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+  return (
+    <section className="data-section">
+      <div className="section-heading">
+        <span>{title}</span>
+        <button type="button" onClick={download} disabled={rows.length === 0}>
+          CSV
+        </button>
+      </div>
+      {rows.length ? (
+        <div className="table-scroll">
+          <table className="data-table">
+            <thead>
+              <tr>
+                {columns.map((column) => (
+                  <th key={column}>{column}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row, index) => (
+                <tr key={index}>
+                  {row.map((cell, cellIndex) => (
+                    <td key={cellIndex}>{cell}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p className="empty-copy">{empty}</p>
+      )}
+    </section>
+  );
+}
+
+function diaryEntryRow(entry: DaySummaryEntry): string[] {
+  return [
+    formatDateTime(entry.logged_at),
+    entry.meal_type,
+    `${entry.food_name}${entry.brand ? ` (${entry.brand})` : ""}`,
+    Math.round(entry.quantity_g).toString(),
+    Math.round(entry.nutrients.calories_kcal ?? 0).toString(),
+    entry.source,
+    `${Math.round(entry.confidence * 100)}%`,
+  ];
 }
 
 function ProposalToolRenderer({
@@ -1016,10 +1196,12 @@ function RepeatMealModal({
   busy: boolean;
   today: string;
   onClose: () => void;
-  onSubmit: (input: { sourceDay: string; mealType: string }) => void;
+  onSubmit: (message: string) => void;
 }) {
   const [sourceDay, setSourceDay] = useState(() => addDays(today, -1));
   const [mealType, setMealType] = useState("breakfast");
+  const mealLabel = mealTypeLabel(mealType);
+  const message = `Repetir ${mealLabel} de ${sourceDay} no dia ${today}.`;
   return (
     <div className="modal-backdrop" role="presentation" onClick={onClose}>
       <form
@@ -1030,7 +1212,7 @@ function RepeatMealModal({
         onClick={(event) => event.stopPropagation()}
         onSubmit={(event) => {
           event.preventDefault();
-          onSubmit({ sourceDay, mealType });
+          onSubmit(message);
         }}
       >
         <div className="section-heading">
@@ -1053,7 +1235,7 @@ function RepeatMealModal({
           </select>
         </label>
         <button type="submit" className="primary-action" disabled={busy || !sourceDay}>
-          {busy ? "Rascunhando..." : "Rascunhar repetição"}
+          {busy ? "Enviando..." : "Enviar ao chat"}
         </button>
       </form>
     </div>
@@ -1072,12 +1254,15 @@ function RecipeModal({
   const [name, setName] = useState("");
   const [yieldG, setYieldG] = useState("");
   const [ingredients, setIngredients] = useState("");
-  const canSubmit = name.trim() && ingredients.trim();
+  const [notes, setNotes] = useState("");
+  const canSubmit = name.trim() || yieldG.trim() || ingredients.trim() || notes.trim();
   const recipeText = [
-    `Recipe: ${name.trim()}`,
-    yieldG.trim() ? `Yield: ${yieldG.trim()} g` : "",
-    "Ingredients:",
+    "Receita/lote:",
+    name.trim() ? `Nome: ${name.trim()}` : "",
+    yieldG.trim() ? `Rendimento total: ${yieldG.trim()} g` : "",
+    ingredients.trim() ? "Ingredientes:" : "",
     ingredients.trim(),
+    notes.trim() ? `Observações: ${notes.trim()}` : "",
   ]
     .filter(Boolean)
     .join("\n");
@@ -1119,8 +1304,17 @@ function RecipeModal({
             placeholder={"500g iogurte\n30g whey\n100g morango"}
           />
         </label>
+        <label className="field">
+          <span>Texto livre</span>
+          <textarea
+            rows={3}
+            value={notes}
+            onChange={(event) => setNotes(event.target.value)}
+            placeholder="Qualquer detalhe que ajude o agente."
+          />
+        </label>
         <button type="submit" className="primary-action" disabled={busy || !canSubmit}>
-          {busy ? "Rascunhando..." : "Rascunhar receita"}
+          {busy ? "Enviando..." : "Enviar ao chat"}
         </button>
       </form>
     </div>
@@ -1134,15 +1328,17 @@ function LabelScanModal({
 }: {
   busy: boolean;
   onClose: () => void;
-  onSubmit: (input: { text: string; files: File[] }) => void;
+  onSubmit: (input: { message: string; files: File[] }) => void;
 }) {
   const [product, setProduct] = useState("");
   const [barcode, setBarcode] = useState("");
   const [tableText, setTableText] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const text = [
+    "Rótulo:",
     product.trim() ? `Produto: ${product.trim()}` : "",
     barcode.trim() ? `Código de barras: ${barcode.trim()}` : "",
+    files.length ? `${files.length} foto(s) anexada(s).` : "",
     tableText.trim(),
   ]
     .filter(Boolean)
@@ -1159,7 +1355,7 @@ function LabelScanModal({
         onSubmit={(event) => {
           event.preventDefault();
           if (canSubmit) {
-            onSubmit({ text, files });
+            onSubmit({ message: text, files });
           }
         }}
       >
@@ -1191,7 +1387,7 @@ function LabelScanModal({
           <textarea rows={6} value={tableText} onChange={(event) => setTableText(event.target.value)} />
         </label>
         <button type="submit" className="primary-action" disabled={busy || !canSubmit}>
-          {busy ? "Rascunhando..." : "Rascunhar rótulo"}
+          {busy ? "Enviando..." : "Enviar ao chat"}
         </button>
       </form>
     </div>
@@ -1205,6 +1401,25 @@ function fileToDataUrl(file: File): Promise<string> {
     reader.onerror = () => reject(reader.error ?? new Error("Não foi possível ler o arquivo."));
     reader.readAsDataURL(file);
   });
+}
+
+function formatDateTime(value: string | null | undefined): string {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
+}
+
+function csvCell(value: string): string {
+  return `"${value.replaceAll('"', '""')}"`;
+}
+
+function mealTypeLabel(mealType: string): string {
+  if (mealType === "breakfast") return "o café";
+  if (mealType === "lunch") return "o almoço";
+  if (mealType === "snack") return "o lanche";
+  if (mealType === "dinner") return "o jantar";
+  return `a refeição ${mealType}`;
 }
 
 function addDays(day: string, delta: number): string {

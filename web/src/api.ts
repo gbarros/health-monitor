@@ -391,6 +391,7 @@ export async function sendAgentChat(input: {
   message: string;
   settings: AgentSettings;
   today?: string;
+  intent?: AgentChatIntent;
   attachmentIds?: string[];
   signal?: AbortSignal;
 }): Promise<AgentChatResponse> {
@@ -401,6 +402,7 @@ export async function sendAgentChat(input: {
       person_id: input.personId,
       message: input.message,
       today: input.today ?? todayIso(),
+      intent: input.intent,
       agent_settings: input.settings,
       attachment_ids: input.attachmentIds?.length ? input.attachmentIds : undefined,
     }),
@@ -408,6 +410,8 @@ export async function sendAgentChat(input: {
   });
   return decodeResponse<AgentChatResponse>(response);
 }
+
+export type AgentChatIntent = "log_food" | "recipe" | "label_scan" | "weight" | "repeat_meal" | "review";
 
 export async function draftTextMeal(input: {
   personId: string;
