@@ -79,6 +79,7 @@ function ProposalEntryRow({
     setQuantityText(formatQuantity(entry.quantity_g));
   }, [entry.quantity_g]);
   const confidence = Number(evidence?.confidence ?? entry.confidence ?? 0);
+  const confidenceText = confidenceLabel(evidence, confidence);
   const parsedQuantity = Number(quantityText.replace(",", "."));
   const canSave =
     onEntryQuantityChange != null &&
@@ -112,9 +113,16 @@ function ProposalEntryRow({
           aria-label={`Quantidade em gramas para ${entry.food_name ?? "item"}`}
         />
       </label>
-      <span className="confidence-badge">{confidence ? `${Math.round(confidence * 100)}%` : "conf."}</span>
+      <span className="confidence-badge">{confidenceText}</span>
     </div>
   );
+}
+
+function confidenceLabel(evidence: Record<string, unknown> | undefined, confidence: number): string {
+  if (String(evidence?.source_type ?? "").includes("range")) {
+    return "faixa";
+  }
+  return confidence ? `${Math.round(confidence * 100)}%` : "conf.";
 }
 
 function proposalTotals(proposal: Proposal): string {

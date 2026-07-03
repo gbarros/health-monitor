@@ -255,6 +255,14 @@ class ParsedMealRemoval:
 
 
 @dataclass(frozen=True)
+class ParsedRangeEstimate:
+    label: str
+    low_kcal: float
+    high_kcal: float
+    source_text: str
+
+
+@dataclass(frozen=True)
 class ParsedNutritionLabel:
     food_name: str
     brand: str | None
@@ -2007,6 +2015,45 @@ class HealthMonitorService:
                 )
             )
 
+        range_estimate = parse_chat_kcal_range_estimate(message)
+        if range_estimate is not None:
+            proposal = self._create_range_estimate_proposal(
+                person_id=person_id,
+                message=message,
+                today=today,
+                run=run,
+                range_estimate=range_estimate,
+            )
+            self._record_agent_tool_call(
+                run=run,
+                tool_name="draft_range_estimate",
+                input_summary=(
+                    f"{range_estimate.label}: "
+                    f"{range_estimate.low_kcal:g}-{range_estimate.high_kcal:g} kcal"
+                ),
+                output_summary=f"proposal_id={proposal.id}",
+                source_record_ids=(proposal.id,),
+            )
+            self.agent_runs[run.id] = replace(
+                run,
+                status="proposal_created",
+                proposal_id=proposal.id,
+                tool_loop_count=len(self.agent_tool_calls_for_run(run.id)),
+                fallback_reason=self._current_fallback_reason(run),
+            )
+            return finish(
+                AgentChatResponse(
+                    run_id=run.id,
+                    person_id=person_id,
+                    message=(
+                        "Rascunhei essa refeição como faixa de calorias. "
+                        "Vou usar o ponto médio até você refinar."
+                    ),
+                    behavior_label="draft_range_estimate",
+                    proposal_id=proposal.id,
+                )
+            )
+
         if text_looks_like_chat_meal_log(message):
             proposal = self.propose_text_meal(
                 person_id=person_id,
@@ -2145,6 +2192,124 @@ class HealthMonitorService:
             fallback_reason=self._current_fallback_reason(run),
         )
         return finish(response)
+
+    def _create_range_estimate_proposal(
+        self,
+        *,
+        person_id: str,
+        message: str,
+        today: date,
+        run: AgentRun,
+        range_estimate: ParsedRangeEstimate,
+    ) -> CreateDiaryEntriesProposal:
+        person = self._require_person(person_id)
+        logged_at = chat_default_logged_at(message, today=today)
+        low_kcal = range_estimate.low_kcal
+        high_kcal = range_estimate.high_kcal
+        midpoint_kcal = (low_kcal + high_kcal) / 2
+        food_id = self._next_id("food")
+        food_version_id = self._next_id("food_version")
+        entry = DiaryEntry(
+            id=self._next_id("diary_entry"),
+            person_id=person_id,
+            logged_at=logged_at,
+            meal_type=infer_meal_type(logged_at),
+            food_version_id=food_version_id,
+            quantity_g=100,
+            source="range_estimate_proposal",
+        )
+        estimate_range = {
+            "low_kcal": low_kcal,
+            "high_kcal": high_kcal,
+            "midpoint_kcal": midpoint_kcal,
+        }
+        pending_version = {
+            "household_id": person.household_id,
+            "food_id": food_id,
+            "food_version_id": food_version_id,
+            "food_name": range_estimate.label,
+            "brand": None,
+            "version_label": "faixa estimada",
+            "nutrients_per_100g": nutrients_to_snapshot(
+                Nutrients(calories_kcal=midpoint_kcal).rounded()
+            ),
+            "source": "range_estimate",
+            "source_type": "range_estimate",
+            "source_name": "User-provided calorie range",
+            "phrase": normalize_food_phrase(range_estimate.label),
+            "barcode": None,
+            "serving_size_g": None,
+            "confidence": 0.45,
+            "estimate_range": dict(estimate_range),
+        }
+        payload: dict[str, Any] = {
+            "estimated_food_versions": [pending_version],
+            "estimate_range": dict(estimate_range),
+            "raw_text": message,
+        }
+        superseded_target = self._find_open_range_estimate_target(
+            person_id=person_id,
+            logged_at=logged_at,
+        )
+        if superseded_target is not None:
+            original = self.proposals.proposals[superseded_target]
+            payload["amended_from_proposal_id"] = original.id
+            payload["previous_estimate_range"] = original.payload.get("estimate_range")
+
+        proposal = self.proposals.create(
+            CreateDiaryEntriesProposal(
+                id=self._next_id("proposal"),
+                person_id=person_id,
+                entries=(entry,),
+                proposal_type="diary_entries_with_estimates",
+                summary=(
+                    f"{range_estimate.label}: "
+                    f"{low_kcal:g}-{high_kcal:g} kcal estimadas"
+                ),
+                payload=payload,
+                totals=self._proposal_entries_total((entry,), payload=payload),
+                evidence=(
+                    {
+                        "source_type": "range_estimate",
+                        "source_text": range_estimate.source_text,
+                        "food_version_id": food_version_id,
+                        "quantity_g": 100,
+                        "estimate_range": dict(estimate_range),
+                        "confidence": 0.45,
+                    },
+                ),
+                source_agent_run_id=run.id,
+            )
+        )
+        if superseded_target is not None:
+            self.proposals.supersede(superseded_target, superseded_by_proposal_id=proposal.id)
+        self._persist()
+        return proposal
+
+    def _find_open_range_estimate_target(
+        self,
+        *,
+        person_id: str,
+        logged_at: datetime,
+    ) -> str | None:
+        candidates: list[CreateDiaryEntriesProposal] = []
+        for proposal in self.proposals.proposals.values():
+            if proposal.person_id != person_id or proposal.status != "draft" or not proposal.entries:
+                continue
+            if proposal.proposal_type != "diary_entries_with_estimates":
+                continue
+            if not proposal.payload.get("estimate_range"):
+                continue
+            latest_entry_time = max(entry.logged_at for entry in proposal.entries)
+            if latest_entry_time.date() != logged_at.date():
+                continue
+            if abs((logged_at - latest_entry_time).total_seconds()) > 4 * 60 * 60:
+                continue
+            candidates.append(proposal)
+        if not candidates:
+            return None
+        candidates.sort(key=lambda proposal: (proposal.created_at, proposal.id), reverse=True)
+        return candidates[0].id
 
     def propose_text_meal(
         self,
@@ -4832,6 +4997,60 @@ def text_looks_like_chat_meal_log(text: str) -> bool:
     return any(item.evidence.get("quantity_basis") == "grams" for item in items)
 
 
+def parse_chat_kcal_range_estimate(text: str) -> ParsedRangeEstimate | None:
+    source_text = text.strip()
+    if not source_text:
+        return None
+    match = re.search(
+        r"(?P<low>\d{2,5}(?:[,.]\d+)?)\s*(?:-|–|—|\ba\b|\bat[eé]\b|\be\b)\s*"
+        r"(?P<high>\d{2,5}(?:[,.]\d+)?)\s*(?:kcal|calorias?)\b",
+        source_text,
+        re.I,
+    )
+    if match is None:
+        return None
+    low_kcal = float(match.group("low").replace(",", "."))
+    high_kcal = float(match.group("high").replace(",", "."))
+    if low_kcal > high_kcal:
+        low_kcal, high_kcal = high_kcal, low_kcal
+    if low_kcal < 50 or high_kcal > 10000 or (high_kcal - low_kcal) < 10:
+        return None
+
+    label = source_text[: match.start()].strip(" \t\n\r:-–—,.;~")
+    label = re.sub(
+        r"\b(?:entre|de|aprox(?:imadamente)?|cerca de|mais ou menos|talvez|acho que|estimo|estimado|registra(?:r)?|coloca(?:r)?|log(?:ar)?)\s*$",
+        "",
+        label,
+        flags=re.I,
+    ).strip(" \t\n\r:-–—,.;~")
+    if not label:
+        after = source_text[match.end() :].strip()
+        after_match = re.search(r"\b(?:na|no|num|em|para|pra|de|do|da)\s+(.+)$", after, re.I)
+        if after_match is not None:
+            label = after_match.group(1).strip(" \t\n\r:-–—,.;~")
+    if not label:
+        normalized = source_text.casefold()
+        if re.search(r"\b(?:festa|party|restaurante|social|evento|rodizio|rodízio)\b", normalized):
+            label = "Refeição social"
+    if not label:
+        return None
+    label = re.sub(r"\s+", " ", label).strip()
+    if label.casefold() in {"café", "cafe", "café da manhã", "cafe da manha"}:
+        label = "Café estimado"
+    elif label.casefold() in {"almoço", "almoco", "lunch"}:
+        label = "Almoço estimado"
+    elif label.casefold() in {"jantar", "dinner"}:
+        label = "Jantar estimado"
+    elif label.casefold() in {"lanche", "snack"}:
+        label = "Lanche estimado"
+    return ParsedRangeEstimate(
+        label=label,
+        low_kcal=low_kcal,
+        high_kcal=high_kcal,
+        source_text=source_text,
+    )
+
+
 def parse_chat_weight_entry(text: str) -> float | None:
     normalized = text.casefold()
     if not re.search(r"\b(?:kg|kgs|quilo|quilos|peso|pesei|amanheci)\b", normalized):
@@ -5590,6 +5809,8 @@ def food_from_snapshot(value: dict[str, Any]) -> Food:
 def day_summary_evidence_status(entry_source: str, version_source: str) -> str:
     entry_source = entry_source.casefold()
     version_source = version_source.casefold()
+    if "range" in entry_source or "range" in version_source:
+        return "range_estimate"
     if "model_estimate" in version_source or "estimate" in version_source:
         return "estimated"
     if "external_lookup" in version_source or "lookup" in entry_source:

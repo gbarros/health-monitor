@@ -123,6 +123,27 @@ test("phase 5 repeat meal quick action drafts a copy proposal", async ({ page })
   await expect(page.getByLabel("Proposta pendente")).toContainText("Cafe E2E");
 });
 
+test("phase 5 range meal draft uses midpoint and supersedes refined estimate", async ({ page }) => {
+  await createFirstProfile(page, "Fabi");
+
+  await composer(page).fill("Festa: 800-1200 kcal");
+  await page.getByRole("button", { name: "Enviar", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Festa: 800-1200 kcal estimadas" })).toBeVisible();
+  await expect(page.getByText("faixa").last()).toBeVisible();
+
+  await composer(page).fill("Festa: 900-1100 kcal");
+  await page.getByRole("button", { name: "Enviar", exact: true }).click();
+
+  await expect(page.getByRole("heading", { name: "Festa: 900-1100 kcal estimadas" })).toBeVisible();
+  await expect(page.getByText("Substituída")).toBeVisible();
+  await page.getByRole("button", { name: "Confirmar" }).last().click();
+
+  const card = dayCard(page);
+  await expect(card).toContainText("Festa");
+  await expect(card).toContainText("1.000 kcal");
+  await expect(card).toContainText("faixa");
+});
+
 test("phase 2 follow-up meal note amends the open proposal before confirmation", async ({ page }) => {
   await createFirstProfile(page, "Bruno");
   const ids = await storedIds(page);

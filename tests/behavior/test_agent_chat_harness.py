@@ -227,6 +227,50 @@ class AgentChatHarnessTest(unittest.TestCase):
         self.assertEqual(len(amended.entries), 2)
         self.assertEqual(amended.payload["amended_from_proposal_id"], original.id)
 
+    def test_chat_routes_party_kcal_range_and_refinement_to_midpoint_entry(self) -> None:
+        service = HealthMonitorService()
+        household = service.create_household(name="Casa")
+        person = service.create_person(
+            household_id=household.id,
+            name="Gabriel",
+            timezone="America/Sao_Paulo",
+        )
+
+        first = service.chat(
+            person_id=person.id,
+            message="Festa: 800-1200 kcal",
+            today=date(2026, 7, 2),
+        )
+        refined = service.chat(
+            person_id=person.id,
+            message="Festa: 900-1100 kcal",
+            today=date(2026, 7, 2),
+        )
+        first_proposal = service.get_proposal(first.proposal_id or "")
+        refined_proposal = service.get_proposal(refined.proposal_id or "")
+
+        self.assertEqual(first.behavior_label, "draft_range_estimate")
+        self.assertEqual(refined.behavior_label, "draft_range_estimate")
+        self.assertEqual(first_proposal.status, "superseded")
+        self.assertEqual(refined_proposal.status, "draft")
+        self.assertEqual(refined_proposal.payload["amended_from_proposal_id"], first_proposal.id)
+        self.assertEqual(
+            refined_proposal.payload["estimate_range"],
+            {"low_kcal": 900.0, "high_kcal": 1100.0, "midpoint_kcal": 1000.0},
+        )
+        self.assertEqual(refined_proposal.totals.rounded(), Nutrients(1000))
+        self.assertEqual(service.day_summary(person.id, date(2026, 7, 2)).totals, Nutrients())
+
+        applied = service.confirm_proposal(refined_proposal.id)
+        summary = service.day_summary(person.id, date(2026, 7, 2))
+        entry = summary.meals["lunch"][0]
+
+        self.assertEqual(applied.status, "applied")
+        self.assertEqual(summary.totals.rounded(), Nutrients(1000))
+        self.assertEqual(entry.food_name, "Festa")
+        self.assertEqual(entry.evidence_status, "range_estimate")
+        self.assertEqual(entry.confidence, 0.45)
+
     def test_chat_routes_weight_message_to_weight_entry(self) -> None:
         service = HealthMonitorService()
         household = service.create_household(name="Casa")
