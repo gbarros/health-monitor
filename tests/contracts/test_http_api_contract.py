@@ -2667,6 +2667,22 @@ class HttpApiContractTest(unittest.TestCase):
     def test_onboarding_profile_setup_proposal_applies_household_person_and_goal(self) -> None:
         api = HttpApi(HealthMonitorService())
 
+        api.handle(
+            "POST",
+            "/api/agent/onboarding-chat",
+            {
+                "session_id": "session-1",
+                "message": "Oi, sou Gabriel.",
+            },
+        )
+        api.handle(
+            "POST",
+            "/api/agent/onboarding-chat",
+            {
+                "session_id": "session-1",
+                "message": "Quero começar com 2000 kcal e 150g de proteína.",
+            },
+        )
         proposal = api.handle(
             "POST",
             "/api/agent/onboarding-proposal",
@@ -2707,6 +2723,13 @@ class HttpApiContractTest(unittest.TestCase):
         self.assertEqual(applied["person_id"], applied["payload"]["created_person_id"])
         self.assertEqual(people[0]["name"], "Gabriel")
         self.assertEqual(goal["targets"]["calories_kcal"], 2000)
+        self.assertEqual(len(applied["payload"]["migrated_onboarding_turn_ids"]), 2)
+        migrated_turns = api.service.chat_turns_for_person(applied["payload"]["created_person_id"])
+        self.assertEqual([turn.user_message for turn in migrated_turns], [
+            "Oi, sou Gabriel.",
+            "Quero começar com 2000 kcal e 150g de proteína.",
+        ])
+        self.assertEqual([turn.behavior_label for turn in migrated_turns], ["onboarding", "onboarding"])
 
     def test_agent_chat_review_note_text_does_not_create_proposal_without_model_tool_call(self) -> None:
         api = HttpApi(HealthMonitorService())

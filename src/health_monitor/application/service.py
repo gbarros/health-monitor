@@ -4988,12 +4988,17 @@ class HealthMonitorService:
             targets=nutrients_from_mapping(payload["targets"]),
             notes=str(payload["notes"]) if payload.get("notes") else "Created from conversational onboarding.",
         )
+        migrated_turn_ids = self._migrate_onboarding_turns_to_chat_history(
+            session_id=str(payload["session_id"]),
+            person_id=person.id,
+        )
         applied_payload = dict(payload)
         applied_payload.update(
             {
                 "created_household_id": household.id,
                 "created_person_id": person.id,
                 "created_goal_id": goal.id,
+                "migrated_onboarding_turn_ids": migrated_turn_ids,
             }
         )
         return CreateDiaryEntriesProposal(
@@ -5012,6 +5017,39 @@ class HealthMonitorService:
             confirmed_at=proposal.confirmed_at or datetime.now(timezone.utc),
             rejected_at=proposal.rejected_at,
         )
+
+    def _migrate_onboarding_turns_to_chat_history(
+        self,
+        *,
+        session_id: str,
+        person_id: str,
+    ) -> tuple[str, ...]:
+        migrated_turn_ids: list[str] = []
+        for turn in self.onboarding_turns_for_session(session_id):
+            run = AgentRun(
+                id=self._next_id("agent_run"),
+                person_id=person_id,
+                input_text=turn.user_message,
+                settings={"source": "onboarding", "session_id": session_id},
+                status="imported",
+                proposal_id=turn.proposal_id,
+                runtime="onboarding",
+                created_at=turn.created_at,
+            )
+            chat_turn = AgentChatTurn(
+                id=self._next_id("agent_chat_turn"),
+                person_id=person_id,
+                agent_run_id=run.id,
+                user_message=turn.user_message,
+                assistant_message=turn.assistant_message,
+                behavior_label="onboarding",
+                proposal_id=turn.proposal_id,
+                created_at=turn.created_at,
+            )
+            self.agent_runs[run.id] = run
+            self.chat_turns[chat_turn.id] = chat_turn
+            migrated_turn_ids.append(chat_turn.id)
+        return tuple(migrated_turn_ids)
 
     def _persist(self) -> None:
         if self.repository is not None:
