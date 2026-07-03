@@ -2,7 +2,11 @@ import type {
   AgentChatResponse,
   AgentChatTurn,
   AgentSettings,
+  Attachment,
   DaySummary,
+  Food,
+  FoodLookupCandidate,
+  FoodResponse,
   GoalProfile,
   Household,
   OnboardingDraft,
@@ -203,6 +207,98 @@ export async function deleteDiaryEntry(entryId: string): Promise<{ id: string }>
 
 export async function restoreDiaryEntry(entryId: string): Promise<{ id: string }> {
   return apiPost<{ id: string }>(`/api/diary/${encodeURIComponent(entryId)}/restore`, {});
+}
+
+export async function loadFoods(input: { householdId: string; personId?: string }): Promise<FoodResponse[]> {
+  const params = new URLSearchParams({ household_id: input.householdId });
+  if (input.personId) {
+    params.set("person_id", input.personId);
+  }
+  return apiGet<FoodResponse[]>(`/api/foods?${params.toString()}`);
+}
+
+export async function archiveFood(foodId: string): Promise<Food> {
+  return apiPost<Food>(`/api/foods/${encodeURIComponent(foodId)}/archive`, {});
+}
+
+export async function loadLookupCandidates(input: {
+  householdId: string;
+  personId: string;
+  phrase?: string;
+  barcode?: string;
+}): Promise<FoodLookupCandidate[]> {
+  const params = new URLSearchParams({ household_id: input.householdId, person_id: input.personId });
+  if (input.phrase) {
+    params.set("phrase", input.phrase);
+  }
+  if (input.barcode) {
+    params.set("barcode", input.barcode);
+  }
+  return apiGet<FoodLookupCandidate[]>(`/api/lookups/foods?${params.toString()}`);
+}
+
+export async function proposeLookupCandidate(input: {
+  householdId: string;
+  personId: string;
+  candidateId: string;
+}): Promise<Proposal> {
+  return apiPost<Proposal>("/api/lookups/foods/propose", {
+    household_id: input.householdId,
+    person_id: input.personId,
+    candidate_id: input.candidateId,
+  });
+}
+
+export async function loadAttachment(attachmentId: string): Promise<Attachment> {
+  return apiGet<Attachment>(`/api/attachments/${encodeURIComponent(attachmentId)}`);
+}
+
+export async function logCustomFood(input: {
+  householdId: string;
+  personId: string;
+  name: string;
+  brand?: string;
+  versionLabel: string;
+  nutrientsPer100g: {
+    calories_kcal: number;
+    protein_g: number;
+    carbs_g: number;
+    fat_g: number;
+    fiber_g?: number;
+    sodium_mg?: number;
+  };
+  quantityG: number;
+  mealType?: string;
+  loggedAtLocal?: string;
+}): Promise<unknown> {
+  return apiPost("/api/diary/custom-food", {
+    household_id: input.householdId,
+    person_id: input.personId,
+    name: input.name,
+    brand: input.brand,
+    version_label: input.versionLabel,
+    nutrients_per_100g: input.nutrientsPer100g,
+    logged_at_local: input.loggedAtLocal ?? localDateTimeForApi(),
+    quantity_g: input.quantityG,
+    meal_type: input.mealType,
+  });
+}
+
+export async function logFoodVersion(input: {
+  personId: string;
+  foodVersionId: string;
+  quantityG: number;
+  mealType?: string;
+  loggedAtLocal?: string;
+}): Promise<unknown> {
+  return apiPost("/api/diary", {
+    person_id: input.personId,
+    logged_at_local: input.loggedAtLocal ?? localDateTimeForApi(),
+    food_version_id: input.foodVersionId,
+    quantity_g: input.quantityG,
+    source: "manual_ui",
+    meal_type: input.mealType,
+  });
 }
 
 export async function updateWeightEntry(input: {

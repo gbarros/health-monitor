@@ -24,6 +24,7 @@ import {
 } from "./api";
 import { ChatInterface } from "./components/ChatInterface";
 import { DayCard } from "./components/DayCard";
+import { FoodLibraryDrawer } from "./components/FoodLibraryDrawer";
 import { ContextPanel } from "./components/ManualInputs";
 import { QuickActionRow, ReplayBanner } from "./components/ModesAndTemplates";
 import { ProposalCard } from "./components/ProposalCard";
@@ -56,6 +57,7 @@ function App() {
   const [labelOpen, setLabelOpen] = useState(false);
   const [repeatOpen, setRepeatOpen] = useState(false);
   const [proposalInboxOpen, setProposalInboxOpen] = useState(false);
+  const [foodLibraryOpen, setFoodLibraryOpen] = useState(false);
   const [toast, setToast] = useState<{ message: string; action?: { label: string; onClick: () => void } } | null>(
     null,
   );
@@ -351,6 +353,14 @@ function App() {
         <button
           type="button"
           className="icon-button"
+          aria-label="Abrir alimentos"
+          onClick={() => setFoodLibraryOpen(true)}
+        >
+          Alimentos
+        </button>
+        <button
+          type="button"
+          className="icon-button"
           aria-label="Abrir ajustes do agente"
           onClick={() => setSettingsOpen(true)}
         >
@@ -489,6 +499,23 @@ function App() {
           onResolveClarification={(proposal, unresolvedIndex, candidate) =>
             clarificationResolve.mutate({ proposal, unresolvedIndex, candidate })
           }
+        />
+      ) : null}
+
+      {foodLibraryOpen ? (
+        <FoodLibraryDrawer
+          householdId={householdId}
+          personId={selectedPersonId}
+          onClose={() => setFoodLibraryOpen(false)}
+          onToast={showToast}
+          onProposalDrafted={(proposal) => {
+            upsertProposal(proposal);
+            setFoodLibraryOpen(false);
+            setProposalInboxOpen(true);
+          }}
+          onLoggedDirectly={() => {
+            void invalidateDailyReadModels();
+          }}
         />
       ) : null}
 

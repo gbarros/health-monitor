@@ -6,4 +6,5 @@ export const queryKeys = {
   weekSummary: (personId: string | null, start: string, end: string) => ["weekSummary", personId, start, end] as const,
   chatHistory: (personId: string | null) => ["chatHistory", personId] as const,
   proposals: (personId: string | null) => ["proposals", personId] as const,
+  foods: (householdId: string | null, personId: string | null) => ["foods", householdId, personId] as const,
 };

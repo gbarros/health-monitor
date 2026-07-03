@@ -200,6 +200,64 @@ export type AgentSettings = {
   research_lookup: boolean;
 };
 
+export type Food = {
+  id: string;
+  household_id: string;
+  name: string;
+  brand?: string | null;
+  default_version_id?: string | null;
+  archived: boolean;
+};
+
+export type FoodVersionSummary = {
+  id: string;
+  food_id: string;
+  label: string;
+  nutrients_per_100g: Nutrients;
+  source: string;
+  serving_size_g?: number | null;
+  confidence: number;
+  created_at: string;
+  archived: boolean;
+};
+
+export type Attachment = {
+  id: string;
+  household_id: string;
+  object_type: string;
+  mime_type: string;
+  filename?: string | null;
+  created_at: string;
+  content_base64?: string;
+};
+
+export type FoodResponse = {
+  food: Food;
+  version: FoodVersionSummary;
+  aliases: string[];
+  barcodes: string[];
+  is_default: boolean;
+  last_used_at?: string | null;
+  attachments: Attachment[];
+};
+
+export type FoodLookupCandidate = {
+  id: string;
+  source_type: string;
+  source_name?: string | null;
+  source_id?: string | null;
+  source_url?: string | null;
+  product_name?: string | null;
+  brand?: string | null;
+  barcode?: string | null;
+  food_id?: string | null;
+  food_version_id?: string | null;
+  serving_size_g?: number | null;
+  nutrients_per_100g: Nutrients;
+  confidence: number;
+  warnings: string[];
+};
+
 export type OnboardingDraft = {
   householdName: string;
   personName: string;
