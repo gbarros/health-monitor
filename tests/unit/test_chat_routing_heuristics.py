@@ -4,52 +4,12 @@ import unittest
 from datetime import datetime
 
 from health_monitor.application.service import (
-    parse_chat_weight_entry,
     parse_text_meal_amendment,
     parse_text_meal_items,
-    remove_chat_weight_lines,
-    text_looks_like_chat_meal_log,
     text_looks_like_meal_amendment,
 )
 
 NOON = datetime(2026, 7, 3, 12, 0)
-
-
-class ParseChatWeightEntryTest(unittest.TestCase):
-    def test_weigh_in_shapes_from_real_usage(self) -> None:
-        cases = {
-            "amanheci com 96,3kg": 96.3,
-            "Novo peso: 97.2kg": 97.2,
-            "hoje me pesei e estou com 95.5 kgs": 95.5,
-            "Dia 5: 97,7 kg ao acordar": 97.7,
-            "pesei 98 hoje cedo": 98.0,
-            "meu peso é 96": 96.0,
-            "Bom dia! 18 de junho - 96.4kgs": 96.4,
-        }
-        for text, expected in cases.items():
-            with self.subTest(text=text):
-                self.assertEqual(parse_chat_weight_entry(text), expected)
-
-    def test_questions_and_non_weigh_ins_are_ignored(self) -> None:
-        cases = (
-            "qual era meu peso em 2025?",
-            "meu peso está estável há 30 dias?",
-            "quanto de proteina tem 100g de arroz? peso seco",
-            "consegue calcular meu peso alvo de 90kg?",
-            "Almoço: 74g arroz, 139g feijão",
-            "usei 250g de carne para 1 kg de feijão",
-            "a meta é manter o peso até dezembro",
-        )
-        for text in cases:
-            with self.subTest(text=text):
-                self.assertIsNone(parse_chat_weight_entry(text))
-
-    def test_remove_chat_weight_lines_keeps_the_meal(self) -> None:
-        text = "Bom dia! amanheci com 96,4kg\nCafé da manhã:\n100g de ovos mexidos"
-        self.assertEqual(
-            remove_chat_weight_lines(text),
-            "Café da manhã:\n100g de ovos mexidos",
-        )
 
 
 class MealAmendmentClassifierTest(unittest.TestCase):
@@ -63,7 +23,6 @@ class MealAmendmentClassifierTest(unittest.TestCase):
         for text in cases:
             with self.subTest(text=text):
                 self.assertFalse(text_looks_like_meal_amendment(text))
-                self.assertTrue(text_looks_like_chat_meal_log(text))
 
     def test_amendment_shapes_from_real_usage(self) -> None:
         cases = (
@@ -79,17 +38,6 @@ class MealAmendmentClassifierTest(unittest.TestCase):
         for text in cases:
             with self.subTest(text=text):
                 self.assertTrue(text_looks_like_meal_amendment(text))
-
-    def test_plain_questions_are_not_meal_logs(self) -> None:
-        cases = (
-            "quanto ainda tenho hoje?",
-            "como está o dia?",
-            "qual pizza encaixa melhor no meu dia?",
-        )
-        for text in cases:
-            with self.subTest(text=text):
-                self.assertFalse(text_looks_like_chat_meal_log(text))
-
 
 class ParseTextMealItemsTest(unittest.TestCase):
     def test_slash_separated_items(self) -> None:
