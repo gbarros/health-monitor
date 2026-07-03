@@ -200,6 +200,21 @@ export type AgentSettings = {
   research_lookup: boolean;
 };
 
+export type BackgroundJob = {
+  id: string;
+  job_type: string;
+  status: string;
+  payload: Record<string, unknown>;
+  client_request_id?: string | null;
+  result?: Record<string, unknown> | null;
+  last_error?: string | null;
+  attempts: number;
+  created_at: string;
+  updated_at: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+};
+
 export type RollingSummary = {
   person_id: string;
   start: string;

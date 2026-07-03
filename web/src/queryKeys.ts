@@ -9,4 +9,5 @@ export const queryKeys = {
   foods: (householdId: string | null, personId: string | null) => ["foods", householdId, personId] as const,
   rollingSummary: (personId: string | null, end: string) => ["rollingSummary", personId, end] as const,
   reviewNotes: (personId: string | null) => ["reviewNotes", personId] as const,
+  jobs: (personId: string | null) => ["jobs", personId] as const,
 };

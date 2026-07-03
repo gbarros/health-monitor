@@ -3,6 +3,7 @@ import type {
   AgentChatTurn,
   AgentSettings,
   Attachment,
+  BackgroundJob,
   DaySummary,
   Food,
   FoodLookupCandidate,
@@ -210,6 +211,33 @@ export async function deleteDiaryEntry(entryId: string): Promise<{ id: string }>
 
 export async function restoreDiaryEntry(entryId: string): Promise<{ id: string }> {
   return apiPost<{ id: string }>(`/api/diary/${encodeURIComponent(entryId)}/restore`, {});
+}
+
+export async function enqueueAgentChatJob(input: {
+  personId: string;
+  message: string;
+  settings: AgentSettings;
+  today?: string;
+  attachmentIds?: string[];
+}): Promise<BackgroundJob> {
+  return apiPost<BackgroundJob>("/api/jobs", {
+    job_type: "agent_chat",
+    payload: {
+      person_id: input.personId,
+      message: input.message,
+      today: input.today ?? todayIso(),
+      agent_settings: input.settings,
+      attachment_ids: input.attachmentIds?.length ? input.attachmentIds : undefined,
+    },
+  });
+}
+
+export async function loadJobs(personId: string): Promise<BackgroundJob[]> {
+  return apiGet<BackgroundJob[]>(`/api/jobs?person_id=${encodeURIComponent(personId)}`);
+}
+
+export async function processJob(jobId: string): Promise<BackgroundJob> {
+  return apiPost<BackgroundJob>(`/api/jobs/${encodeURIComponent(jobId)}/process`, {});
 }
 
 export async function loadRollingSummary(input: {

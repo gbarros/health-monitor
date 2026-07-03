@@ -15,10 +15,11 @@ import type { ReadonlyJSONObject } from "assistant-stream/utils";
 import { useMemo } from "react";
 import {
   ApiError,
+  enqueueAgentChatJob,
   sendAgentChat,
   uploadDataUrlAttachment,
 } from "../api";
-import type { AgentChatResponse, AgentSettings, Proposal } from "../types";
+import type { AgentChatResponse, AgentSettings, BackgroundJob, Proposal } from "../types";
 
 type RuntimeContext = {
   householdId: string | null;
@@ -26,10 +27,12 @@ type RuntimeContext = {
   today: string;
   settings: AgentSettings;
   initialMessages: readonly ThreadMessageLike[];
+  backgroundJobsEnabled: boolean;
   onAgentResponse: (response: AgentChatResponse) => void;
   onProposal: (proposal: Proposal) => void;
   onRuntimeError: (message: string) => void;
   onSendFailed: (text: string, reason: "model_unavailable" | "network") => void;
+  onJobQueued: (job: BackgroundJob) => void;
 };
 
 export function useAgentRuntime(context: RuntimeContext) {
@@ -39,10 +42,12 @@ export function useAgentRuntime(context: RuntimeContext) {
     today,
     settings,
     initialMessages,
+    backgroundJobsEnabled,
     onAgentResponse,
     onProposal,
     onRuntimeError,
     onSendFailed,
+    onJobQueued,
   } = context;
 
   const adapter = useMemo<ChatModelAdapter>(() => {
@@ -72,6 +77,19 @@ export function useAgentRuntime(context: RuntimeContext) {
               parts: lastMessage.content,
             })
             : [];
+
+          if (backgroundJobsEnabled) {
+            const job = await enqueueAgentChatJob({
+              personId,
+              message: text,
+              settings,
+              today,
+              attachmentIds,
+            });
+            onJobQueued(job);
+            return assistantText("Na fila do worker… acompanhe em Tarefas.");
+          }
+
           const response = await sendAgentChat({
             personId,
             message: text,
@@ -106,7 +124,18 @@ export function useAgentRuntime(context: RuntimeContext) {
         }
       },
     };
-  }, [householdId, onAgentResponse, onProposal, onRuntimeError, onSendFailed, personId, settings, today]);
+  }, [
+    backgroundJobsEnabled,
+    householdId,
+    onAgentResponse,
+    onJobQueued,
+    onProposal,
+    onRuntimeError,
+    onSendFailed,
+    personId,
+    settings,
+    today,
+  ]);
 
   const attachments = useMemo(
     () => new CompositeAttachmentAdapter([new SimpleImageAttachmentAdapter(), new SimpleTextAttachmentAdapter()]),

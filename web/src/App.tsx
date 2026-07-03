@@ -10,7 +10,9 @@ import {
   draftLabelScan,
   draftRecipe,
   loadChatHistory,
+  loadJobs,
   loadPeople,
+  loadProposal,
   loadProposals,
   logWeight,
   parseOnboardingMessage,
@@ -27,6 +29,7 @@ import {
 import { ChatInterface } from "./components/ChatInterface";
 import { DayCard } from "./components/DayCard";
 import { FoodLibraryDrawer } from "./components/FoodLibraryDrawer";
+import { JobsSheet } from "./components/JobsSheet";
 import { ContextPanel, DataPortabilityPanel } from "./components/ManualInputs";
 import { QuickActionRow, ReplayBanner } from "./components/ModesAndTemplates";
 import { ProposalCard } from "./components/ProposalCard";
@@ -39,6 +42,7 @@ import { queryKeys } from "./queryKeys";
 import type {
   AgentChatResponse,
   AgentSettings,
+  BackgroundJob,
   OnboardingDraft,
   Person,
   Proposal,
@@ -62,6 +66,8 @@ function App() {
   const [repeatOpen, setRepeatOpen] = useState(false);
   const [proposalInboxOpen, setProposalInboxOpen] = useState(false);
   const [foodLibraryOpen, setFoodLibraryOpen] = useState(false);
+  const [jobsSheetOpen, setJobsSheetOpen] = useState(false);
+  const [backgroundJobsEnabled, setBackgroundJobsEnabled] = useState(false);
   const [toast, setToast] = useState<{ message: string; action?: { label: string; onClick: () => void } } | null>(
     null,
   );
@@ -115,6 +121,19 @@ function App() {
     queryFn: () => loadProposals(selectedPersonId ?? ""),
     enabled: selectedPersonId != null,
   });
+
+  const jobsQuery = useQuery({
+    queryKey: queryKeys.jobs(selectedPersonId),
+    queryFn: () => loadJobs(selectedPersonId ?? ""),
+    enabled: selectedPersonId != null,
+    refetchInterval: (query) => {
+      const jobs = query.state.data ?? [];
+      return jobs.some((job) => job.status === "pending" || job.status === "running") ? 4000 : false;
+    },
+  });
+  const activeJobCount = (jobsQuery.data ?? []).filter(
+    (job) => job.status === "pending" || job.status === "running",
+  ).length;
 
   const chatHistoryQuery = useQuery({
     queryKey: queryKeys.chatHistory(selectedPersonId),
@@ -392,6 +411,40 @@ function App() {
     onError: (error) => showToast(error instanceof Error ? error.message : "Não foi possível resolver a proposta."),
   });
 
+  const onJobQueued = useCallback(
+    (job: BackgroundJob) => {
+      queryClient.setQueryData<BackgroundJob[]>(queryKeys.jobs(selectedPersonId), (current = []) => [
+        job,
+        ...current,
+      ]);
+    },
+    [queryClient, selectedPersonId],
+  );
+
+  const openJobResult = useCallback(
+    async (job: BackgroundJob) => {
+      const proposalId = job.result?.["proposal_id"];
+      if (typeof proposalId === "string") {
+        try {
+          const proposal = await loadProposal(proposalId);
+          upsertProposal(proposal);
+          setJobsSheetOpen(false);
+          setProposalInboxOpen(true);
+        } catch (error) {
+          showToast(error instanceof Error ? error.message : "Não foi possível abrir a proposta do job.");
+        }
+        return;
+      }
+      if (typeof job.result?.["chat_turn_id"] === "string" && selectedPersonId) {
+        await queryClient.invalidateQueries({ queryKey: queryKeys.chatHistory(selectedPersonId) });
+        setChatReloadKey((key) => key + 1);
+        setJobsSheetOpen(false);
+        showToast("Resposta do chat atualizada.");
+      }
+    },
+    [queryClient, selectedPersonId, showToast, upsertProposal],
+  );
+
   const entryRestore = useMutation({
     mutationFn: (entryId: string) => restoreDiaryEntry(entryId),
     onSuccess: async () => {
@@ -459,6 +512,14 @@ function App() {
         <button
           type="button"
           className="icon-button"
+          aria-label="Abrir tarefas"
+          onClick={() => setJobsSheetOpen(true)}
+        >
+          Tarefas{activeJobCount > 0 ? <span className="badge-count">{activeJobCount}</span> : null}
+        </button>
+        <button
+          type="button"
+          className="icon-button"
           aria-label="Abrir ajustes do agente"
           onClick={() => setSettingsOpen(true)}
         >
@@ -486,6 +547,8 @@ function App() {
             onProposal={onProposal}
             onRuntimeError={onRuntimeError}
             onSendFailed={onSendFailed}
+            backgroundJobsEnabled={backgroundJobsEnabled}
+            onJobQueued={onJobQueued}
             outboxCount={outboxForCurrentPerson.length}
             outboxBannerVisible={outboxForCurrentPerson.length > 0 && !outboxBannerDismissed}
             outboxReplaying={outboxReplaying}
@@ -555,6 +618,14 @@ function App() {
               onPersonChange={changePerson}
               onSettingsChange={setSettings}
             />
+            <label className="check-field">
+              <input
+                type="checkbox"
+                checked={backgroundJobsEnabled}
+                onChange={(event) => setBackgroundJobsEnabled(event.target.checked)}
+              />
+              <span>Processar em segundo plano</span>
+            </label>
             <DataPortabilityPanel onToast={showToast} />
           </div>
         </div>
@@ -624,6 +695,15 @@ function App() {
         />
       ) : null}
 
+      {jobsSheetOpen && selectedPersonId ? (
+        <JobsSheet
+          personId={selectedPersonId}
+          onClose={() => setJobsSheetOpen(false)}
+          onToast={showToast}
+          onOpenResult={openJobResult}
+        />
+      ) : null}
+
       {toast ? (
         <div className="toast" role="status" aria-live="polite">
           <span>{toast.message}</span>
@@ -665,6 +745,8 @@ function ChatWorkspace({
   onProposal,
   onRuntimeError,
   onSendFailed,
+  backgroundJobsEnabled,
+  onJobQueued,
   outboxCount,
   outboxBannerVisible,
   outboxReplaying,
@@ -694,6 +776,8 @@ function ChatWorkspace({
   onProposal: (proposal: Proposal) => void;
   onRuntimeError: (message: string) => void;
   onSendFailed: (text: string, reason: "model_unavailable" | "network") => void;
+  backgroundJobsEnabled: boolean;
+  onJobQueued: (job: BackgroundJob) => void;
   outboxCount: number;
   outboxBannerVisible: boolean;
   outboxReplaying: boolean;
@@ -713,10 +797,12 @@ function ChatWorkspace({
     today,
     settings,
     initialMessages,
+    backgroundJobsEnabled,
     onAgentResponse,
     onProposal,
     onRuntimeError,
     onSendFailed,
+    onJobQueued,
   });
 
   return (
