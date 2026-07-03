@@ -37,8 +37,13 @@ class FailingAgent:
 
 
 class LiveAgentRoutingTest(unittest.TestCase):
-    def make_service(self) -> tuple[HealthMonitorService, str]:
-        service = HealthMonitorService(agent_runtime="pydantic-ai", agent_model="ornith:9b")
+    def make_service(self, *, require_model: bool = True) -> tuple[HealthMonitorService, str]:
+        service = HealthMonitorService(
+            agent_runtime="pydantic-ai",
+            agent_model="ornith:9b",
+            require_model=require_model,
+            model_health_checker=lambda: True,
+        )
         household = service.create_household(name="Casa")
         person = service.create_person(
             household_id=household.id,
@@ -77,7 +82,8 @@ class LiveAgentRoutingTest(unittest.TestCase):
         self.assertEqual(service.day_summary(person_id, proposal.entries[0].logged_at.date()).totals, Nutrients())
 
     def test_pydantic_text_meal_failure_records_fallback_reason(self) -> None:
-        service, person_id = self.make_service()
+        # Deterministic fallback only exists when require_model is disabled.
+        service, person_id = self.make_service(require_model=False)
 
         with patch("health_monitor.application.service.PydanticAINutritionAgent", FailingAgent):
             proposal = service.propose_text_meal(

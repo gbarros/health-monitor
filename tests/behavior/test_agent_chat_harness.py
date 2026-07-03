@@ -9,7 +9,7 @@ from health_monitor.domain.nutrients import Nutrients
 
 class AgentChatHarnessTest(unittest.TestCase):
     def make_service_with_entry(self) -> tuple[HealthMonitorService, str, str]:
-        service = HealthMonitorService()
+        service = HealthMonitorService(model_health_checker=lambda: True)
         household = service.create_household(name="Casa")
         person = service.create_person(
             household_id=household.id,

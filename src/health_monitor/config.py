@@ -15,6 +15,7 @@ class AppConfig:
     nexuslog_jsonl_path: Path = Path("var/nexuslog-events/health-monitor.jsonl")
     agent_runtime: str = "deterministic"
     model_provider: str = "deterministic"
+    require_model: bool = True
     food_estimator: str = "ollama"
     ollama_base_url: str = "http://127.0.0.1:11434"
     ollama_model: str = "gemma4:e4b"
@@ -47,6 +48,8 @@ def load_config() -> AppConfig:
         ),
         agent_runtime=os.environ.get("AGENT_RUNTIME", "deterministic"),
         model_provider=os.environ.get("MODEL_PROVIDER", "deterministic"),
+        require_model=os.environ.get("REQUIRE_MODEL", "true").casefold()
+        in {"1", "true", "yes", "on"},
         food_estimator=os.environ.get("FOOD_ESTIMATOR", "ollama"),
         ollama_base_url=os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434"),
         ollama_model=os.environ.get(

@@ -17,6 +17,7 @@ from health_monitor.application.service import (
     GoalProfile,
     HealthMonitorService,
     Household,
+    ModelUnavailableError,
     Person,
     ReviewNote,
     RollingSummary,
@@ -51,6 +52,17 @@ class HttpApi:
         query = {key: values[-1] for key, values in parse_qs(parsed.query).items()}
         try:
             response = self._handle(normalized_method, target, body or {})
+        except ModelUnavailableError as exc:
+            response = HttpResponse(
+                status_code=503,
+                body={
+                    "error": {
+                        "type": "model_unavailable",
+                        "message": str(exc),
+                        "replay_message": exc.replay_message,
+                    }
+                },
+            )
         except (KeyError, TypeError, ValueError) as exc:
             response = HttpResponse(
                 status_code=400,

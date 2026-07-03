@@ -23,7 +23,7 @@ import {
 import { ChatInterface } from "./components/ChatInterface";
 import { DayCard } from "./components/DayCard";
 import { ContextPanel } from "./components/ManualInputs";
-import { QuickActionRow } from "./components/ModesAndTemplates";
+import { QuickActionRow, ReplayBanner } from "./components/ModesAndTemplates";
 import { ProposalCard } from "./components/ProposalCard";
 import { WeekCard } from "./components/WeekCard";
 import { useAgentRuntime } from "./hooks/useAgentRuntime";
@@ -52,6 +52,7 @@ function App() {
   const [labelOpen, setLabelOpen] = useState(false);
   const [repeatOpen, setRepeatOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [pendingReplay, setPendingReplay] = useState<string | null>(null);
   const [inlineProposalIds, setInlineProposalIds] = useState<Set<string>>(() => new Set());
 
   const peopleQuery = useQuery({
@@ -306,6 +307,9 @@ function App() {
             onAgentResponse={onAgentResponse}
             onProposal={onProposal}
             onRuntimeError={onRuntimeError}
+            pendingReplay={pendingReplay}
+            onModelUnavailable={setPendingReplay}
+            onReplayDismiss={() => setPendingReplay(null)}
             onConfirmProposal={(proposal) => proposalDecision.mutate({ proposal, decision: "confirm" })}
             onRejectProposal={(proposal) => proposalDecision.mutate({ proposal, decision: "reject" })}
             onUpdateProposalEntry={(proposal, entry, quantityG) =>
@@ -414,6 +418,9 @@ function ChatWorkspace({
   onAgentResponse,
   onProposal,
   onRuntimeError,
+  pendingReplay,
+  onModelUnavailable,
+  onReplayDismiss,
   onConfirmProposal,
   onRejectProposal,
   onUpdateProposalEntry,
@@ -433,6 +440,9 @@ function ChatWorkspace({
   onAgentResponse: (response: AgentChatResponse) => void;
   onProposal: (proposal: Proposal) => void;
   onRuntimeError: (message: string) => void;
+  pendingReplay: string | null;
+  onModelUnavailable: (replayMessage: string) => void;
+  onReplayDismiss: () => void;
   onConfirmProposal: (proposal: Proposal) => void;
   onRejectProposal: (proposal: Proposal) => void;
   onUpdateProposalEntry: (proposal: Proposal, entry: ProposalEntry, quantityG: number) => void;
@@ -446,6 +456,7 @@ function ChatWorkspace({
     onAgentResponse,
     onProposal,
     onRuntimeError,
+    onModelUnavailable,
   });
 
   return (
@@ -466,6 +477,9 @@ function ChatWorkspace({
           onLabelClick={onLabelClick}
         />
         <ChatInterface />
+        {pendingReplay ? (
+          <ReplayBanner message={pendingReplay} onDismiss={onReplayDismiss} />
+        ) : null}
         <DraftProposalDock
           proposal={proposal}
           busy={proposalBusy}

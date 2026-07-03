@@ -14,6 +14,7 @@ import type {
 import type { ReadonlyJSONObject } from "assistant-stream/utils";
 import { useMemo } from "react";
 import {
+  ApiError,
   sendAgentChat,
   uploadDataUrlAttachment,
 } from "../api";
@@ -28,6 +29,7 @@ type RuntimeContext = {
   onAgentResponse: (response: AgentChatResponse) => void;
   onProposal: (proposal: Proposal) => void;
   onRuntimeError: (message: string) => void;
+  onModelUnavailable: (replayMessage: string) => void;
 };
 
 export function useAgentRuntime(context: RuntimeContext) {
@@ -40,6 +42,7 @@ export function useAgentRuntime(context: RuntimeContext) {
     onAgentResponse,
     onProposal,
     onRuntimeError,
+    onModelUnavailable,
   } = context;
 
   const adapter = useMemo<ChatModelAdapter>(() => {
@@ -84,13 +87,20 @@ export function useAgentRuntime(context: RuntimeContext) {
           }
           return assistantText(chatReply(response));
         } catch (error) {
+          if (error instanceof ApiError && error.type === "model_unavailable") {
+            onModelUnavailable(error.replayMessage ?? text);
+            return assistantText(
+              "⚠️ Modelo local indisponível — sua mensagem não foi processada nem registrada. " +
+                "Quando o modelo voltar, toque em Reenviar.",
+            );
+          }
           const message = error instanceof Error ? error.message : "Unknown agent error";
           onRuntimeError(message);
-          return assistantText(`I could not complete that request.\n\n${message}`);
+          return assistantText(`Não consegui completar esse pedido.\n\n${message}`);
         }
       },
     };
-  }, [householdId, onAgentResponse, onProposal, onRuntimeError, personId, settings, today]);
+  }, [householdId, onAgentResponse, onModelUnavailable, onProposal, onRuntimeError, personId, settings, today]);
 
   const attachments = useMemo(
     () => new CompositeAttachmentAdapter([new SimpleImageAttachmentAdapter(), new SimpleTextAttachmentAdapter()]),

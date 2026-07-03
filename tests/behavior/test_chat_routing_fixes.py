@@ -5,7 +5,8 @@ import unittest
 from datetime import date
 from pathlib import Path
 
-from health_monitor.application.service import HealthMonitorService
+from health_monitor.api.http_api import HttpApi
+from health_monitor.application.service import HealthMonitorService, ModelUnavailableError
 from health_monitor.domain.nutrients import Nutrients
 from health_monitor.lookup.estimates import NutritionEstimate, StaticFoodEstimator
 from health_monitor.persistence.sqlite_state import SQLiteStateRepository
@@ -206,6 +207,75 @@ class RollingSummaryTest(unittest.TestCase):
         self.assertEqual(summary.stddev.calories_kcal, 100.0)
         self.assertEqual(summary.averages.protein_g, 60.0)
         self.assertEqual(sorted(summary.daily), [date(2026, 7, 1), date(2026, 7, 3)])
+
+
+class RequireModelFlagTest(unittest.TestCase):
+    PYDANTIC_SETTINGS = {"agent_runtime": "pydantic-ai", "model_profile": "test-model"}
+
+    def test_model_down_blocks_processing_and_carries_replay_message(self) -> None:
+        service, _, person_id = build_service(model_health_checker=lambda: False)
+        message = "Almoço: 100g de arroz"
+        with self.assertRaises(ModelUnavailableError) as caught:
+            service.chat(
+                person_id=person_id,
+                message=message,
+                today=TODAY,
+                agent_settings=self.PYDANTIC_SETTINGS,
+            )
+        self.assertEqual(caught.exception.replay_message, message)
+        # Nothing was processed deterministically behind the user's back.
+        self.assertEqual(service.proposals.proposals, {})
+        self.assertEqual(service.weight_trend(person_id=person_id).entries, ())
+
+    def test_model_down_blocks_weigh_in_too(self) -> None:
+        service, _, person_id = build_service(model_health_checker=lambda: False)
+        with self.assertRaises(ModelUnavailableError):
+            service.chat(
+                person_id=person_id,
+                message="amanheci com 96,4kg",
+                today=TODAY,
+                agent_settings=self.PYDANTIC_SETTINGS,
+            )
+        self.assertEqual(service.weight_trend(person_id=person_id).entries, ())
+
+    def test_flag_disabled_restores_deterministic_fallback(self) -> None:
+        service, _, person_id = build_service(
+            require_model=False, model_health_checker=lambda: False
+        )
+        response = service.chat(
+            person_id=person_id,
+            message="Almoço: 100g de arroz",
+            today=TODAY,
+            agent_settings=self.PYDANTIC_SETTINGS,
+        )
+        self.assertEqual(response.behavior_label, "draft_text_meal")
+        self.assertIsNotNone(response.proposal_id)
+
+    def test_deterministic_runtime_is_never_gated(self) -> None:
+        service, _, person_id = build_service(model_health_checker=lambda: False)
+        response = service.chat(
+            person_id=person_id,
+            message="Almoço: 100g de arroz",
+            today=TODAY,
+        )
+        self.assertEqual(response.behavior_label, "draft_text_meal")
+
+    def test_http_api_maps_model_unavailable_to_503(self) -> None:
+        service, _, person_id = build_service(model_health_checker=lambda: False)
+        api = HttpApi(service)
+        response = api.handle(
+            "POST",
+            "/api/agent/chat",
+            {
+                "person_id": person_id,
+                "message": "Almoço: 100g de arroz",
+                "today": TODAY.isoformat(),
+                "agent_settings": self.PYDANTIC_SETTINGS,
+            },
+        )
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.body["error"]["type"], "model_unavailable")
+        self.assertEqual(response.body["error"]["replay_message"], "Almoço: 100g de arroz")
 
 
 if __name__ == "__main__":

@@ -31,17 +31,32 @@ export async function apiPost<T>(path: string, body: unknown): Promise<T> {
   return decodeResponse<T>(response);
 }
 
+export class ApiError extends Error {
+  readonly type: string;
+  readonly replayMessage: string | null;
+
+  constructor(message: string, type: string, replayMessage: string | null = null) {
+    super(message);
+    this.name = "ApiError";
+    this.type = type;
+    this.replayMessage = replayMessage;
+  }
+}
+
 async function decodeResponse<T>(response: Response): Promise<T> {
-  const payload = (await response.json().catch(() => ({}))) as T | { error?: { message?: string } };
+  const payload = (await response.json().catch(() => ({}))) as
+    | T
+    | { error?: { type?: string; message?: string; replay_message?: string | null } };
   if (!response.ok) {
-    const message =
-      typeof payload === "object" &&
-      payload !== null &&
-      "error" in payload &&
-      payload.error?.message
-        ? payload.error.message
-        : `HTTP ${response.status}`;
-    throw new Error(message);
+    const error =
+      typeof payload === "object" && payload !== null && "error" in payload
+        ? payload.error
+        : undefined;
+    throw new ApiError(
+      error?.message ?? `HTTP ${response.status}`,
+      error?.type ?? `http_${response.status}`,
+      error?.replay_message ?? null,
+    );
   }
   return payload as T;
 }

@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import re
+import time
+import urllib.request
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 from zoneinfo import ZoneInfo
 
 from health_monitor.agent import AgentDeps, PydanticAINutritionAgent, PydanticAIUnavailable
@@ -18,6 +21,18 @@ from health_monitor.lookup.estimates import FoodEstimator, NutritionEstimate
 from health_monitor.lookup.foods import FoodLookupCandidate, FoodLookupProvider
 from health_monitor.lookup.labels import LabelTextExtraction, LabelTextExtractor
 from health_monitor.persistence.sqlite_state import StateRepository
+
+
+class ModelUnavailableError(RuntimeError):
+    """The configured model runtime is unreachable and deterministic fallback is disabled.
+
+    Carries the original user message so clients can offer a replay once the
+    model is back.
+    """
+
+    def __init__(self, message: str, *, replay_message: str | None = None) -> None:
+        super().__init__(message)
+        self.replay_message = replay_message
 
 
 @dataclass(frozen=True)
@@ -323,6 +338,8 @@ class HealthMonitorService:
         model_provider: str = "deterministic",
         agent_model: str | None = None,
         ollama_base_url: str = "http://127.0.0.1:11434",
+        require_model: bool = True,
+        model_health_checker: Callable[[], bool] | None = None,
     ) -> None:
         self.repository = repository
         self.estimator = estimator
@@ -333,6 +350,9 @@ class HealthMonitorService:
         self.model_provider = model_provider
         self.agent_model = agent_model
         self.ollama_base_url = ollama_base_url
+        self.require_model = require_model
+        self.model_health_checker = model_health_checker
+        self._model_health_cache: tuple[float, bool] | None = None
         self.households: dict[str, Household] = {}
         self.people: dict[str, Person] = {}
         self.goal_profiles: dict[str, GoalProfile] = {}
@@ -1741,6 +1761,38 @@ class HealthMonitorService:
             stddev=Nutrients(**deviations),
         )
 
+    def _model_available(self) -> bool:
+        now = time.monotonic()
+        if self._model_health_cache is not None and now - self._model_health_cache[0] < 10:
+            return self._model_health_cache[1]
+        if self.model_health_checker is not None:
+            available = bool(self.model_health_checker())
+        else:
+            try:
+                request = urllib.request.urlopen(
+                    f"{self.ollama_base_url.rstrip('/')}/api/tags", timeout=1.5
+                )
+                with request as response:
+                    json.loads(response.read().decode("utf-8"))
+                available = True
+            except Exception:
+                available = False
+        self._model_health_cache = (now, available)
+        return available
+
+    def _ensure_model_available(self, settings: dict[str, Any], *, replay_message: str) -> None:
+        if not self.require_model:
+            return
+        if settings.get("agent_runtime") != "pydantic-ai":
+            return
+        if self._model_available():
+            return
+        raise ModelUnavailableError(
+            "model runtime is unavailable and deterministic fallback is disabled "
+            f"(require_model=true, ollama={self.ollama_base_url})",
+            replay_message=replay_message,
+        )
+
     def _agent_settings(self, agent_settings: dict[str, Any] | None) -> dict[str, Any]:
         settings = dict(agent_settings or {})
         settings.setdefault("agent_runtime", self.agent_runtime)
@@ -1816,6 +1868,8 @@ class HealthMonitorService:
                 tool_loop_count=len(self.agent_tool_calls_for_run(run.id)),
                 fallback_reason=fallback_reason,
             )
+            if self.require_model:
+                raise ModelUnavailableError(fallback_reason, replay_message=message)
             return None
         except Exception as exc:
             fallback_reason = f"pydantic_ai failed: {exc}"
@@ -1835,6 +1889,8 @@ class HealthMonitorService:
                 tool_loop_count=len(self.agent_tool_calls_for_run(run.id)),
                 fallback_reason=fallback_reason,
             )
+            if self.require_model:
+                raise ModelUnavailableError(fallback_reason, replay_message=message)
             return None
 
         self._record_agent_tool_call(
@@ -1912,6 +1968,8 @@ class HealthMonitorService:
                 tool_loop_count=len(self.agent_tool_calls_for_run(run.id)),
                 fallback_reason=fallback_reason,
             )
+            if self.require_model:
+                raise ModelUnavailableError(fallback_reason, replay_message=text)
             return None
         except Exception as exc:
             fallback_reason = f"pydantic_ai failed: {exc}"
@@ -1931,6 +1989,8 @@ class HealthMonitorService:
                 tool_loop_count=len(self.agent_tool_calls_for_run(run.id)),
                 fallback_reason=fallback_reason,
             )
+            if self.require_model:
+                raise ModelUnavailableError(fallback_reason, replay_message=text)
             return None
 
         if response.proposal_id is None:
@@ -1995,6 +2055,7 @@ class HealthMonitorService:
         attachment_ids: Sequence[str] | None = None,
     ) -> AgentChatResponse:
         settings = self._agent_settings(agent_settings)
+        self._ensure_model_available(settings, replay_message=message)
         person = self._require_person(person_id)
         run = AgentRun(
             id=self._next_id("agent_run"),
@@ -2401,6 +2462,7 @@ class HealthMonitorService:
         amend_proposal_id: str | None = None,
     ) -> CreateDiaryEntriesProposal:
         settings = self._agent_settings(agent_settings)
+        self._ensure_model_available(settings, replay_message=text)
         person = self._require_person(person_id)
         logged_at = self._parse_person_datetime(logged_at_local, person)
         run = AgentRun(

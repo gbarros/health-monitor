@@ -77,6 +77,7 @@ def build_service(config: Any | None = None) -> HealthMonitorService:
         model_provider=config.model_provider,
         agent_model=config.ollama_model,
         ollama_base_url=config.ollama_base_url,
+        require_model=config.require_model,
     )
 
 
