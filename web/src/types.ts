@@ -147,6 +147,16 @@ export type Proposal = {
   rejected_at?: string | null;
 };
 
+export type OnboardingTurn = {
+  id: string;
+  session_id: string;
+  household_id: string | null;
+  user_message: string;
+  assistant_message: string;
+  proposal_id: string | null;
+  created_at: string;
+};
+
 export type ProposalEntry = {
   id: string;
   logged_at: string;
@@ -294,12 +304,4 @@ export type FoodLookupCandidate = {
   nutrients_per_100g: Nutrients;
   confidence: number;
   warnings: string[];
-};
-
-export type OnboardingDraft = {
-  householdName: string;
-  personName: string;
-  timezone: string;
-  activityLevel: string;
-  targets: Required<Nutrients>;
 };

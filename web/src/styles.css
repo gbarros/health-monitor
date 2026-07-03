@@ -143,6 +143,7 @@ h3 {
 
 .assistant-bubble,
 .onboarding-composer,
+.onboarding-proposal-panel,
 .day-card,
 .draft-dock,
 .chat-thread-shell,
@@ -161,6 +162,21 @@ h3 {
   padding: 24px;
 }
 
+.onboarding-turn {
+  display: grid;
+  gap: 8px;
+}
+
+.user-bubble {
+  justify-self: end;
+  max-width: min(620px, 92%);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-blue);
+  padding: 12px 14px;
+  line-height: 1.45;
+}
+
 .assistant-bubble p:last-child {
   color: var(--muted);
   line-height: 1.55;
@@ -175,6 +191,28 @@ h3 {
 .onboarding-example-row {
   display: flex;
   justify-content: flex-end;
+}
+
+.onboarding-proposal-panel {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+}
+
+.modal-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.modal-grid.two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.onboarding-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
 }
 
 .onboarding-helper {
@@ -194,7 +232,7 @@ h3 {
 }
 
 .onboarding-composer textarea {
-  min-height: 190px;
+  min-height: 112px;
   resize: vertical;
   padding: 12px;
   line-height: 1.5;
@@ -1237,6 +1275,10 @@ h3 {
   }
 
   .data-range-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .modal-grid.two {
     grid-template-columns: 1fr;
   }
 }

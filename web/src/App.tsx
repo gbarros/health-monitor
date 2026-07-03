@@ -5,22 +5,23 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ApiError,
   confirmProposal,
-  createInitialProfile,
   defaultAgentSettings,
+  draftOnboardingProposal,
   loadActiveGoal,
   loadDaySummary,
   loadChatHistory,
   loadDiaryRange,
   loadJobs,
+  loadOnboardingHistory,
   loadPeople,
   loadProposal,
   loadProposals,
   logWeight,
-  parseOnboardingMessage,
   rejectProposal,
   resolveProposalClarification,
   restoreDiaryEntry,
   sendAgentChat,
+  sendOnboardingChat,
   STORAGE_KEYS,
   todayIsoForTimezone,
   updateProposalEntry,
@@ -45,7 +46,7 @@ import type {
   AgentSettings,
   BackgroundJob,
   DaySummaryEntry,
-  OnboardingDraft,
+  OnboardingTurn,
   Person,
   Proposal,
   ProposalCandidate,
@@ -452,15 +453,23 @@ function App() {
     localStorage.setItem(STORAGE_KEYS.personId, nextPersonId);
   };
 
-  const completeOnboarding = async (draft: OnboardingDraft) => {
-    const { household, person } = await createInitialProfile(draft);
-    setHouseholdId(household.id);
-    setPersonId(person.id);
-    await queryClient.invalidateQueries({ queryKey: queryKeys.people(household.id) });
+  const completeOnboarding = async (applied: Proposal) => {
+    const payload = applied.payload ?? {};
+    const nextHouseholdId = typeof payload.created_household_id === "string" ? payload.created_household_id : null;
+    const nextPersonId = typeof payload.created_person_id === "string" ? payload.created_person_id : null;
+    if (!nextHouseholdId || !nextPersonId) {
+      throw new Error("A proposta aplicada não retornou os ids criados.");
+    }
+    localStorage.setItem(STORAGE_KEYS.householdId, nextHouseholdId);
+    localStorage.setItem(STORAGE_KEYS.personId, nextPersonId);
+    localStorage.removeItem(STORAGE_KEYS.onboardingSessionId);
+    setHouseholdId(nextHouseholdId);
+    setPersonId(nextPersonId);
+    await queryClient.invalidateQueries({ queryKey: queryKeys.people(nextHouseholdId) });
   };
 
   if (!householdId || !selectedPersonId || !activePerson) {
-    return <OnboardingScreen onCreate={completeOnboarding} />;
+    return <OnboardingScreen onComplete={completeOnboarding} />;
   }
 
   return (
@@ -1452,32 +1461,111 @@ function addDays(day: string, delta: number): string {
   return date.toISOString().slice(0, 10);
 }
 
-function OnboardingScreen({ onCreate }: { onCreate: (draft: OnboardingDraft) => Promise<void> }) {
-  const exampleMessage = [
-    "Somos a Casa.",
-    "Meu nome é Gabriel e meu fuso é America/Sao_Paulo.",
-    "Por enquanto use metas de 2000 kcal, 150g proteína, 180g carboidratos, 70g gordura, 30g fibra e 2300mg sódio.",
-    "Minha atividade é moderada.",
-  ].join("\n");
+function OnboardingScreen({ onComplete }: { onComplete: (proposal: Proposal) => Promise<void> }) {
+  const [sessionId] = useState(() => {
+    const existing = localStorage.getItem(STORAGE_KEYS.onboardingSessionId);
+    if (existing) return existing;
+    const next = crypto.randomUUID();
+    localStorage.setItem(STORAGE_KEYS.onboardingSessionId, next);
+    return next;
+  });
+  const [turns, setTurns] = useState<OnboardingTurn[]>([]);
   const [message, setMessage] = useState("");
+  const [householdName, setHouseholdName] = useState("Casa");
+  const [personName, setPersonName] = useState("");
+  const [timezone, setTimezone] = useState(Intl.DateTimeFormat().resolvedOptions().timeZone || "America/Sao_Paulo");
+  const [activityLevel, setActivityLevel] = useState("moderate");
+  const [targets, setTargets] = useState({
+    calories_kcal: 2000,
+    protein_g: 150,
+    carbs_g: 180,
+    fat_g: 70,
+    fiber_g: 30,
+    sodium_mg: 2300,
+  });
+  const [proposal, setProposal] = useState<Proposal | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSending, setIsSending] = useState(false);
+  const [isDrafting, setIsDrafting] = useState(false);
+  const [isConfirming, setIsConfirming] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    loadOnboardingHistory(sessionId)
+      .then((history) => {
+        if (!cancelled) setTurns(history);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId]);
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!message.trim()) {
-      setError("Escreva uma mensagem curta para criar o primeiro perfil.");
+      setError("Escreva uma mensagem para continuar.");
       return;
     }
-    setIsSubmitting(true);
+    setIsSending(true);
     setError(null);
     try {
-      await onCreate(parseOnboardingMessage(message));
+      const turn = await sendOnboardingChat({
+        sessionId,
+        message: message.trim(),
+        agentSettings: defaultAgentSettings(),
+      });
+      setTurns((current) => [...current, turn]);
+      setMessage("");
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Não foi possível criar o primeiro perfil.");
+      setError(caught instanceof Error ? caught.message : "Não foi possível continuar o cadastro.");
     } finally {
-      setIsSubmitting(false);
+      setIsSending(false);
     }
+  };
+
+  const draftSetup = async () => {
+    if (!personName.trim()) {
+      setError("Informe o nome antes de criar a proposta.");
+      return;
+    }
+    setIsDrafting(true);
+    setError(null);
+    try {
+      const drafted = await draftOnboardingProposal({
+        sessionId,
+        householdName,
+        personName,
+        timezone,
+        activityLevel,
+        targets,
+        notes: "Criado pelo cadastro conversacional.",
+        sourceText: turns.map((turn) => turn.user_message).join("\n"),
+      });
+      setProposal(drafted);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Não foi possível criar a proposta.");
+    } finally {
+      setIsDrafting(false);
+    }
+  };
+
+  const confirmSetup = async () => {
+    if (!proposal) return;
+    setIsConfirming(true);
+    setError(null);
+    try {
+      const applied = await confirmProposal(proposal.id);
+      await onComplete(applied);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Não foi possível confirmar a proposta.");
+    } finally {
+      setIsConfirming(false);
+    }
+  };
+
+  const setTarget = (key: keyof typeof targets, value: string) => {
+    setTargets((current) => ({ ...current, [key]: Number(value) || 0 }));
   };
 
   return (
@@ -1486,17 +1574,15 @@ function OnboardingScreen({ onCreate }: { onCreate: (draft: OnboardingDraft) => 
         <div className="onboarding-thread">
           <div className="assistant-bubble">
             <p className="eyebrow">Primeiro perfil</p>
-            <h1>Vamos começar pelo básico.</h1>
-            <p>
-              Me diga quem vai usar este diário e, se já souber, as metas iniciais. Pode ser texto livre;
-              depois qualquer ajuste de perfil ou meta vira proposta no chat.
-            </p>
+            <h1>Vamos configurar pelo chat.</h1>
+            <p>Oi! Vou configurar o diário. Como você se chama, qual é seu fuso e quais metas quer começar usando?</p>
           </div>
-        </div>
-        <div className="onboarding-example-row">
-          <button type="button" onClick={() => setMessage(exampleMessage)}>
-            Usar exemplo editável
-          </button>
+          {turns.map((turn) => (
+            <div className="onboarding-turn" key={turn.id}>
+              <div className="user-bubble">{turn.user_message}</div>
+              <div className="assistant-bubble">{turn.assistant_message}</div>
+            </div>
+          ))}
         </div>
         <form className="onboarding-composer" onSubmit={submit}>
           <label htmlFor="onboarding-message">Sua mensagem</label>
@@ -1504,17 +1590,64 @@ function OnboardingScreen({ onCreate }: { onCreate: (draft: OnboardingDraft) => 
             id="onboarding-message"
             value={message}
             onChange={(event) => setMessage(event.target.value)}
-            rows={8}
-            placeholder="Ex.: Somos a Casa. Meu nome é Gabriel, fuso America/Sao_Paulo. Quero começar com 2000 kcal, 150g proteína..."
+            rows={4}
+            placeholder="Ex.: Sou Gabriel, fuso America/Sao_Paulo, quero começar com 2000 kcal e 150g proteína."
           />
-          <p className="onboarding-helper">
-            A criação inicial é direta para destravar o app. Depois disso, mudanças passam por propostas confirmáveis.
-          </p>
           {error ? <p className="form-error">{error}</p> : null}
-          <button type="submit" className="primary-action" disabled={isSubmitting}>
-            {isSubmitting ? "Criando..." : "Criar primeiro perfil"}
+          <button type="submit" className="primary-action" disabled={isSending}>
+            {isSending ? "Enviando..." : "Enviar"}
           </button>
         </form>
+        <section className="onboarding-proposal-panel" aria-label="Proposta de perfil">
+          <div className="modal-grid two">
+            <label className="field">
+              <span>Casa</span>
+              <input value={householdName} onChange={(event) => setHouseholdName(event.target.value)} />
+            </label>
+            <label className="field">
+              <span>Nome</span>
+              <input value={personName} onChange={(event) => setPersonName(event.target.value)} />
+            </label>
+            <label className="field">
+              <span>Fuso</span>
+              <input value={timezone} onChange={(event) => setTimezone(event.target.value)} />
+            </label>
+            <label className="field">
+              <span>Atividade</span>
+              <select value={activityLevel} onChange={(event) => setActivityLevel(event.target.value)}>
+                <option value="sedentary">Sedentária</option>
+                <option value="light">Leve</option>
+                <option value="moderate">Moderada</option>
+                <option value="active">Alta</option>
+              </select>
+            </label>
+            <label className="field">
+              <span>kcal</span>
+              <input inputMode="numeric" value={targets.calories_kcal} onChange={(event) => setTarget("calories_kcal", event.target.value)} />
+            </label>
+            <label className="field">
+              <span>Proteína</span>
+              <input inputMode="numeric" value={targets.protein_g} onChange={(event) => setTarget("protein_g", event.target.value)} />
+            </label>
+            <label className="field">
+              <span>Carbo</span>
+              <input inputMode="numeric" value={targets.carbs_g} onChange={(event) => setTarget("carbs_g", event.target.value)} />
+            </label>
+            <label className="field">
+              <span>Gordura</span>
+              <input inputMode="numeric" value={targets.fat_g} onChange={(event) => setTarget("fat_g", event.target.value)} />
+            </label>
+          </div>
+          <div className="onboarding-actions">
+            <button type="button" onClick={draftSetup} disabled={isDrafting || isConfirming}>
+              {isDrafting ? "Criando..." : "Criar proposta"}
+            </button>
+            <button type="button" className="primary-action" onClick={confirmSetup} disabled={!proposal || isConfirming}>
+              {isConfirming ? "Confirmando..." : "Confirmar proposta"}
+            </button>
+          </div>
+          {proposal ? <p className="onboarding-helper">{proposal.summary}</p> : null}
+        </section>
       </section>
     </main>
   );

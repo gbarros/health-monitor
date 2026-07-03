@@ -10,8 +10,8 @@ import type {
   FoodLookupCandidate,
   FoodResponse,
   GoalProfile,
-  Household,
-  OnboardingDraft,
+  Nutrients,
+  OnboardingTurn,
   Person,
   Proposal,
   ReviewNote,
@@ -24,6 +24,7 @@ export const STORAGE_KEYS = {
   householdId: "health-monitor.household-id",
   personId: "health-monitor.person-id",
   selectedDay: "health-monitor.selected-day",
+  onboardingSessionId: "health-monitor.onboarding-session-id",
 } as const;
 
 export async function apiGet<T>(path: string): Promise<T> {
@@ -70,30 +71,50 @@ async function decodeResponse<T>(response: Response): Promise<T> {
   return payload as T;
 }
 
-export async function createInitialProfile(draft: OnboardingDraft): Promise<{
-  household: Household;
-  person: Person;
-}> {
-  const household = await apiPost<Household>("/api/households", { name: draft.householdName });
-  const person = await apiPost<Person>("/api/people", {
-    household_id: household.id,
-    name: draft.personName,
-    timezone: draft.timezone,
-    activity_level: draft.activityLevel,
-  });
-  await apiPost("/api/goals", {
-    person_id: person.id,
-    starts_on: todayIsoForTimezone(draft.timezone),
-    targets: draft.targets,
-    notes: "Created from chat-first onboarding.",
-  });
-  localStorage.setItem(STORAGE_KEYS.householdId, household.id);
-  localStorage.setItem(STORAGE_KEYS.personId, person.id);
-  return { household, person };
-}
-
 export async function loadPeople(householdId: string): Promise<Person[]> {
   return apiGet<Person[]>(`/api/people?household_id=${encodeURIComponent(householdId)}`);
+}
+
+export async function sendOnboardingChat(input: {
+  sessionId: string;
+  message: string;
+  householdId?: string | null;
+  agentSettings?: AgentSettings;
+}): Promise<OnboardingTurn> {
+  return apiPost<OnboardingTurn>("/api/agent/onboarding-chat", {
+    session_id: input.sessionId,
+    message: input.message,
+    household_id: input.householdId,
+    agent_settings: input.agentSettings,
+  });
+}
+
+export async function loadOnboardingHistory(sessionId: string): Promise<OnboardingTurn[]> {
+  return apiGet<OnboardingTurn[]>(`/api/agent/onboarding-history?session_id=${encodeURIComponent(sessionId)}`);
+}
+
+export async function draftOnboardingProposal(input: {
+  sessionId: string;
+  householdName: string;
+  personName: string;
+  timezone: string;
+  activityLevel: string;
+  targets: Required<Nutrients>;
+  notes?: string;
+  sourceText?: string;
+}): Promise<Proposal> {
+  return apiPost<Proposal>("/api/agent/onboarding-proposal", {
+    session_id: input.sessionId,
+    household_name: input.householdName,
+    person: {
+      name: input.personName,
+      timezone: input.timezone,
+      activity_level: input.activityLevel,
+    },
+    targets: input.targets,
+    notes: input.notes,
+    source_text: input.sourceText,
+  });
 }
 
 export async function loadChatHistory(personId: string): Promise<AgentChatTurn[]> {
@@ -439,27 +460,6 @@ export async function uploadDataUrlAttachment(input: {
   });
 }
 
-export function parseOnboardingMessage(message: string): OnboardingDraft {
-  const text = message.trim();
-  const naturalName = extractNaturalName(text);
-  const naturalTimezone = extractNaturalTimezone(text);
-  const naturalActivity = extractNaturalActivity(text);
-  return {
-    householdName: extractText(text, ["household", "casa", "family"], "Casa"),
-    personName: extractText(text, ["name", "nome", "person"], naturalName ?? "Gabriel"),
-    timezone: extractText(text, ["timezone", "fuso"], naturalTimezone ?? guessTimezone()),
-    activityLevel: extractText(text, ["activity", "atividade"], naturalActivity ?? "moderate"),
-    targets: {
-      calories_kcal: extractNumber(text, ["calories", "calorias", "kcal"], 2000),
-      protein_g: extractNumber(text, ["protein", "proteina", "proteína"], 150),
-      carbs_g: extractNumber(text, ["carbs", "carbo", "carboidratos"], 180),
-      fat_g: extractNumber(text, ["fat", "gordura"], 70),
-      fiber_g: extractNumber(text, ["fiber", "fibra"], 30),
-      sodium_mg: extractNumber(text, ["sodium", "sodio", "sódio"], 2300),
-    },
-  };
-}
-
 export function defaultAgentSettings(): AgentSettings {
   return {
     agent_runtime: "pydantic-ai",
@@ -493,58 +493,6 @@ function localDateTimeForApi(): string {
 
 function guessTimezone(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone || "America/Sao_Paulo";
-}
-
-function extractText(text: string, labels: string[], fallback: string): string {
-  for (const label of labels) {
-    const match = text.match(new RegExp(`(?:^|\\n)\\s*${label}\\s*[:=-]\\s*([^\\n]+)`, "i"));
-    if (match?.[1]?.trim()) {
-      return match[1].trim();
-    }
-  }
-  return fallback;
-}
-
-function extractNumber(text: string, labels: string[], fallback: number): number {
-  for (const label of labels) {
-    const beforeLabel = text.match(new RegExp(`(\\d+(?:[.,]\\d+)?)\\s*(?:g|mg|kcal)?\\s+${label}`, "i"));
-    if (beforeLabel?.[1]) {
-      return Number(beforeLabel[1].replace(",", "."));
-    }
-    const afterLabel = text.match(new RegExp(`${label}[^\\d]*(\\d+(?:[.,]\\d+)?)`, "i"));
-    if (afterLabel?.[1]) {
-      return Number(afterLabel[1].replace(",", "."));
-    }
-  }
-  return fallback;
-}
-
-function extractNaturalName(text: string): string | null {
-  const match =
-    text.match(/\b(?:meu nome é|me chamo|sou|i am|my name is)\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ '-]{1,40})/i) ??
-    text.match(/\b(?:para|for)\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ '-]{1,40})\b/i);
-  if (!match?.[1]) {
-    return null;
-  }
-  return match[1].replace(/\s+(?:e|and)\b.*$/i, "").trim();
-}
-
-function extractNaturalTimezone(text: string): string | null {
-  const match = text.match(/\b(?:America|Europe|Asia|Africa|Pacific|Atlantic|Australia)\/[A-Za-z_/-]+\b/);
-  return match?.[0] ?? null;
-}
-
-function extractNaturalActivity(text: string): string | null {
-  const match = text.match(/\b(?:atividade|activity)\s+(?:é|is)?\s*(sedent[aá]ria|sedentary|leve|light|moderada|moderate|alta|high)\b/i);
-  if (!match?.[1]) {
-    return null;
-  }
-  const value = match[1].toLocaleLowerCase("pt-BR");
-  if (value.startsWith("sedent")) return "sedentary";
-  if (value === "leve" || value === "light") return "light";
-  if (value === "moderada" || value === "moderate") return "moderate";
-  if (value === "alta" || value === "high") return "high";
-  return value;
 }
 
 function parseDataUrl(dataUrl: string): { mimeType: string; contentBase64: string } {
