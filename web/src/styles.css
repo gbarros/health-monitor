@@ -145,6 +145,7 @@ h3 {
 .onboarding-composer,
 .day-card,
 .draft-dock,
+.chat-thread-shell,
 .week-placeholder,
 .context-panel,
 .settings-drawer {
@@ -470,8 +471,8 @@ h3 {
   min-height: 0;
   height: 100%;
   overflow: hidden;
-  background: transparent;
-  --aui-thread-max-width: min(920px, calc(100vw - 28px));
+  padding: 4px 16px;
+  --aui-thread-max-width: min(920px, calc(100vw - 60px));
 }
 
 .chat-thread-shell [data-aui-thread-root],
@@ -533,6 +534,11 @@ h3 {
   max-width: none;
   margin-inline: auto;
   padding-block: 8px;
+}
+
+.chat-thread-shell .aui-user-message-root {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .chat-thread-shell .aui-user-message-content {
