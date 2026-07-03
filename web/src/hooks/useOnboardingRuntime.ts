@@ -17,6 +17,7 @@ import type { AgentSettings, OnboardingTurn, Proposal } from "../types";
 
 type OnboardingRuntimeContext = {
   sessionId: string;
+  householdId?: string | null;
   settings: AgentSettings;
   initialMessages: readonly ThreadMessageLike[];
   onTurn: (turn: OnboardingTurn) => void;
@@ -25,7 +26,7 @@ type OnboardingRuntimeContext = {
 };
 
 export function useOnboardingRuntime(context: OnboardingRuntimeContext) {
-  const { sessionId, settings, initialMessages, onTurn, onProposal, onRuntimeError } = context;
+  const { sessionId, householdId, settings, initialMessages, onTurn, onProposal, onRuntimeError } = context;
 
   const adapter = useMemo<ChatModelAdapter>(() => {
     return {
@@ -43,6 +44,7 @@ export function useOnboardingRuntime(context: OnboardingRuntimeContext) {
         try {
           const turn = await sendOnboardingChat({
             sessionId,
+            householdId,
             message: text,
             agentSettings: settings,
           });
@@ -66,7 +68,7 @@ export function useOnboardingRuntime(context: OnboardingRuntimeContext) {
         }
       },
     };
-  }, [onProposal, onRuntimeError, onTurn, sessionId, settings]);
+  }, [householdId, onProposal, onRuntimeError, onTurn, sessionId, settings]);
 
   const attachments = useMemo(() => new CompositeAttachmentAdapter([new SimpleTextAttachmentAdapter()]), []);
 

@@ -69,6 +69,7 @@ function App() {
   const [proposalInboxOpen, setProposalInboxOpen] = useState(false);
   const [foodLibraryOpen, setFoodLibraryOpen] = useState(false);
   const [jobsSheetOpen, setJobsSheetOpen] = useState(false);
+  const [addingPerson, setAddingPerson] = useState(false);
   const [activeView, setActiveView] = useState<"chat" | "panel" | "data" | "settings">("chat");
   const [backgroundJobsEnabled, setBackgroundJobsEnabled] = useState(false);
   const [toast, setToast] = useState<{ message: string; action?: { label: string; onClick: () => void } } | null>(
@@ -464,8 +465,19 @@ function App() {
     localStorage.removeItem(STORAGE_KEYS.onboardingSessionId);
     setHouseholdId(nextHouseholdId);
     setPersonId(nextPersonId);
+    setAddingPerson(false);
     await queryClient.invalidateQueries({ queryKey: queryKeys.people(nextHouseholdId) });
   };
+
+  if (addingPerson && householdId) {
+    return (
+      <OnboardingScreen
+        householdId={householdId}
+        onCancel={() => setAddingPerson(false)}
+        onComplete={completeOnboarding}
+      />
+    );
+  }
 
   if (!householdId || !selectedPersonId || !activePerson) {
     return <OnboardingScreen onComplete={completeOnboarding} />;
@@ -478,7 +490,12 @@ function App() {
           <p className="eyebrow">Health Monitor</p>
           <h1>{viewTitle(activeView)}</h1>
         </div>
-        <PersonChips people={people} activePersonId={selectedPersonId} onChange={changePerson} />
+        <PersonChips
+          people={people}
+          activePersonId={selectedPersonId}
+          onChange={changePerson}
+          onAddPerson={() => setAddingPerson(true)}
+        />
         <nav className="app-nav" aria-label="Navegação principal">
           {(["chat", "panel", "data", "settings"] as const).map((view) => (
             <button
@@ -1113,10 +1130,12 @@ function PersonChips({
   people,
   activePersonId,
   onChange,
+  onAddPerson,
 }: {
   people: Person[];
   activePersonId: string;
   onChange: (personId: string) => void;
+  onAddPerson: () => void;
 }) {
   return (
     <div className="person-chips" aria-label="Selecionar perfil">
@@ -1132,6 +1151,10 @@ function PersonChips({
           {person.name}
         </button>
       ))}
+      <button type="button" className="person-chip add-person-chip" onClick={onAddPerson}>
+        <span>+</span>
+        Pessoa
+      </button>
     </div>
   );
 }
@@ -1460,7 +1483,15 @@ function addDays(day: string, delta: number): string {
   return date.toISOString().slice(0, 10);
 }
 
-function OnboardingScreen({ onComplete }: { onComplete: (proposal: Proposal) => Promise<void> }) {
+function OnboardingScreen({
+  householdId = null,
+  onCancel,
+  onComplete,
+}: {
+  householdId?: string | null;
+  onCancel?: () => void;
+  onComplete: (proposal: Proposal) => Promise<void>;
+}) {
   const [sessionId] = useState(() => {
     const existing = localStorage.getItem(STORAGE_KEYS.onboardingSessionId);
     if (existing) return existing;
@@ -1535,15 +1566,27 @@ function OnboardingScreen({ onComplete }: { onComplete: (proposal: Proposal) => 
     <main className="onboarding-screen">
       <section className="onboarding-chat" aria-label="Cadastro por conversa">
         <header className="onboarding-header">
-          <p className="eyebrow">Primeiro perfil</p>
-          <h1>Vamos configurar pelo chat.</h1>
-          <p>Responda em texto livre. O agente cria uma proposta de casa, perfil e metas para você confirmar.</p>
+          <div className="section-heading">
+            <span>{householdId ? "Novo perfil" : "Primeiro perfil"}</span>
+            {onCancel ? (
+              <button type="button" onClick={onCancel}>
+                Cancelar
+              </button>
+            ) : null}
+          </div>
+          <h1>{householdId ? "Adicionar pessoa pelo chat." : "Vamos configurar pelo chat."}</h1>
+          <p>
+            {householdId
+              ? "Responda em texto livre. O agente cria uma proposta para incluir a pessoa nessa casa."
+              : "Responda em texto livre. O agente cria uma proposta de casa, perfil e metas para você confirmar."}
+          </p>
         </header>
         {error ? <p className="form-error onboarding-error">{error}</p> : null}
         {historyLoaded ? (
           <OnboardingThreadWorkspace
             key={`${sessionId}-${initialMessages.length}`}
             sessionId={sessionId}
+            householdId={householdId}
             initialMessages={initialMessages}
             proposals={proposals}
             busy={isConfirming}
@@ -1569,6 +1612,7 @@ function OnboardingScreen({ onComplete }: { onComplete: (proposal: Proposal) => 
 
 function OnboardingThreadWorkspace({
   sessionId,
+  householdId,
   initialMessages,
   proposals,
   busy,
@@ -1579,6 +1623,7 @@ function OnboardingThreadWorkspace({
   onRejectProposal,
 }: {
   sessionId: string;
+  householdId?: string | null;
   initialMessages: readonly ThreadMessageLike[];
   proposals: Proposal[];
   busy: boolean;
@@ -1590,6 +1635,7 @@ function OnboardingThreadWorkspace({
 }) {
   const runtime = useOnboardingRuntime({
     sessionId,
+    householdId,
     settings: defaultAgentSettings(),
     initialMessages,
     onTurn,
@@ -1608,11 +1654,17 @@ function OnboardingThreadWorkspace({
         onResolveClarification={() => undefined}
       />
       <ChatInterface
-        welcomeMessage="Oi! Vou configurar o diário. Como você se chama, e quais metas quer começar usando?"
+        welcomeMessage={
+          householdId
+            ? "Oi! Vou adicionar uma pessoa nesta casa. Qual é o nome dela, fuso e objetivo inicial?"
+            : "Oi! Vou configurar o diário. Como você se chama, e quais metas quer começar usando?"
+        }
         suggestions={[
           {
-            text: "Começar rápido",
-            prompt: "Sou Gabriel, fuso America/Sao_Paulo. Quero começar com 2000 kcal e 150g de proteína.",
+            text: householdId ? "Adicionar rápido" : "Começar rápido",
+            prompt: householdId
+              ? "Adicionar Ana, fuso America/Sao_Paulo. Ela quer começar com 1800 kcal e 120g de proteína."
+              : "Sou Gabriel, fuso America/Sao_Paulo. Quero começar com 2000 kcal e 150g de proteína.",
           },
           {
             text: "Deixar o agente sugerir",

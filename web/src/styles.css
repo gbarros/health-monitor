@@ -293,6 +293,10 @@ h3 {
   background: var(--surface-blue);
 }
 
+.add-person-chip {
+  color: var(--accent-strong);
+}
+
 .icon-button {
   min-width: 44px;
 }

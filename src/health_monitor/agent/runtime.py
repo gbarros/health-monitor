@@ -338,14 +338,17 @@ class PydanticAINutritionAgent:
             deps=deps,
             message=(
                 f"Onboarding session id: {session_id}\n"
+                f"Existing household id, when present: {deps.household_id}\n"
                 f"User message: {message}"
             ),
             task_instructions=(
                 "You are onboarding a new household member. Ask concise follow-up questions "
                 "until household name or household id, person name, timezone, and initial targets "
                 "are clear. When enough information is available, call draft_onboarding_proposal "
-                "with structured person and target fields. Return JSON with output_type='answer' "
-                "for questions or output_type='proposal_draft' and proposal_id after drafting."
+                "with structured person and target fields. If an existing household id is present, "
+                "pass that household_id to the tool instead of inventing a household name. Return "
+                "JSON with output_type='answer' for questions or output_type='proposal_draft' and "
+                "proposal_id after drafting."
             ),
         )
         return normalize_agent_runtime_output(result.output)
