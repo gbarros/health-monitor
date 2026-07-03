@@ -3,9 +3,11 @@ import { useAui } from "@assistant-ui/react";
 type Props = {
   onToast: (message: string) => void;
   onWeightClick?: () => void;
+  onRecipeClick?: () => void;
+  onLabelClick?: () => void;
 };
 
-export function QuickActionRow({ onToast, onWeightClick }: Props) {
+export function QuickActionRow({ onToast, onWeightClick, onRecipeClick, onLabelClick }: Props) {
   const aui = useAui();
 
   const setComposer = (template: string) => {
@@ -22,17 +24,13 @@ export function QuickActionRow({ onToast, onWeightClick }: Props) {
       </button>
       <button
         type="button"
-        onClick={() =>
-          setComposer("Receita/lote:\nNome:\nRendimento total:\nIngredientes:\n- ")
-        }
+        onClick={onRecipeClick}
       >
         Receita/lote
       </button>
       <button
         type="button"
-        onClick={() =>
-          setComposer("Produto:\nCódigo de barras:\nTabela nutricional:\n")
-        }
+        onClick={onLabelClick}
       >
         Escanear rótulo
       </button>

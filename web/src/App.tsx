@@ -6,6 +6,8 @@ import {
   confirmProposal,
   createInitialProfile,
   defaultAgentSettings,
+  draftLabelScan,
+  draftRecipe,
   loadChatHistory,
   loadPeople,
   loadProposals,
@@ -15,6 +17,7 @@ import {
   STORAGE_KEYS,
   todayIsoForTimezone,
   updateProposalEntry,
+  uploadDataUrlAttachment,
 } from "./api";
 import { ChatInterface } from "./components/ChatInterface";
 import { DayCard } from "./components/DayCard";
@@ -43,6 +46,8 @@ function App() {
   const [settings, setSettings] = useState<AgentSettings>(() => defaultAgentSettings());
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [weightOpen, setWeightOpen] = useState(false);
+  const [recipeOpen, setRecipeOpen] = useState(false);
+  const [labelOpen, setLabelOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [inlineProposalIds, setInlineProposalIds] = useState<Set<string>>(() => new Set());
 
@@ -171,6 +176,54 @@ function App() {
     onError: (error) => setToast(error instanceof Error ? error.message : "Não foi possível registrar o peso."),
   });
 
+  const recipeDraft = useMutation({
+    mutationFn: (recipeText: string) => {
+      if (!householdId || !selectedPersonId) {
+        throw new Error("Selecione uma casa e perfil antes de criar receita.");
+      }
+      return draftRecipe({ householdId, personId: selectedPersonId, text: recipeText });
+    },
+    onSuccess: async (proposal) => {
+      setRecipeOpen(false);
+      upsertProposal(proposal);
+      setToast("Receita rascunhada para revisão.");
+      await invalidateDailyReadModels();
+    },
+    onError: (error) => setToast(error instanceof Error ? error.message : "Não foi possível rascunhar a receita."),
+  });
+
+  const labelDraft = useMutation({
+    mutationFn: async (input: { text: string; files: File[] }) => {
+      if (!householdId || !selectedPersonId) {
+        throw new Error("Selecione uma casa e perfil antes de escanear rótulo.");
+      }
+      const attachmentIds = [];
+      for (const file of input.files) {
+        const dataUrl = await fileToDataUrl(file);
+        const attachment = await uploadDataUrlAttachment({
+          householdId,
+          personId: selectedPersonId,
+          dataUrl,
+          filename: file.name,
+        });
+        attachmentIds.push(attachment.id);
+      }
+      return draftLabelScan({
+        householdId,
+        personId: selectedPersonId,
+        text: input.text,
+        attachmentIds,
+      });
+    },
+    onSuccess: async (proposal) => {
+      setLabelOpen(false);
+      upsertProposal(proposal);
+      setToast("Rótulo rascunhado para revisão.");
+      await invalidateDailyReadModels();
+    },
+    onError: (error) => setToast(error instanceof Error ? error.message : "Não foi possível rascunhar o rótulo."),
+  });
+
   const activeDraft = (proposalsQuery.data ?? []).find((proposal) =>
     ["draft", "needs_clarification"].includes(proposal.status),
   );
@@ -224,6 +277,8 @@ function App() {
             proposalBusy={proposalDecision.isPending || proposalEntryUpdate.isPending}
             onToast={setToast}
             onWeightClick={() => setWeightOpen(true)}
+            onRecipeClick={() => setRecipeOpen(true)}
+            onLabelClick={() => setLabelOpen(true)}
             onAgentResponse={onAgentResponse}
             onProposal={onProposal}
             onRuntimeError={onRuntimeError}
@@ -285,6 +340,22 @@ function App() {
         />
       ) : null}
 
+      {recipeOpen ? (
+        <RecipeModal
+          busy={recipeDraft.isPending}
+          onClose={() => setRecipeOpen(false)}
+          onSubmit={(recipeText) => recipeDraft.mutate(recipeText)}
+        />
+      ) : null}
+
+      {labelOpen ? (
+        <LabelScanModal
+          busy={labelDraft.isPending}
+          onClose={() => setLabelOpen(false)}
+          onSubmit={(input) => labelDraft.mutate(input)}
+        />
+      ) : null}
+
       {toast ? (
         <div className="toast" role="status" aria-live="polite">
           <span>{toast}</span>
@@ -308,6 +379,8 @@ function ChatWorkspace({
   proposalBusy,
   onToast,
   onWeightClick,
+  onRecipeClick,
+  onLabelClick,
   onAgentResponse,
   onProposal,
   onRuntimeError,
@@ -325,6 +398,8 @@ function ChatWorkspace({
   proposalBusy: boolean;
   onToast: (message: string) => void;
   onWeightClick: () => void;
+  onRecipeClick: () => void;
+  onLabelClick: () => void;
   onAgentResponse: (response: AgentChatResponse) => void;
   onProposal: (proposal: Proposal) => void;
   onRuntimeError: (message: string) => void;
@@ -354,7 +429,12 @@ function ChatWorkspace({
       />
       <section className="chat-column" aria-label="Conversa">
         <DayCard personId={personId} day={today} />
-        <QuickActionRow onToast={onToast} onWeightClick={onWeightClick} />
+        <QuickActionRow
+          onToast={onToast}
+          onWeightClick={onWeightClick}
+          onRecipeClick={onRecipeClick}
+          onLabelClick={onLabelClick}
+        />
         <ChatInterface />
         <DraftProposalDock
           proposal={proposal}
@@ -514,6 +594,153 @@ function WeightModal({
       </form>
     </div>
   );
+}
+
+function RecipeModal({
+  busy,
+  onClose,
+  onSubmit,
+}: {
+  busy: boolean;
+  onClose: () => void;
+  onSubmit: (recipeText: string) => void;
+}) {
+  const [name, setName] = useState("");
+  const [yieldG, setYieldG] = useState("");
+  const [ingredients, setIngredients] = useState("");
+  const canSubmit = name.trim() && ingredients.trim();
+  const recipeText = [
+    `Recipe: ${name.trim()}`,
+    yieldG.trim() ? `Yield: ${yieldG.trim()} g` : "",
+    "Ingredients:",
+    ingredients.trim(),
+  ]
+    .filter(Boolean)
+    .join("\n");
+  return (
+    <div className="modal-backdrop" role="presentation" onClick={onClose}>
+      <form
+        className="small-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Criar receita ou lote"
+        onClick={(event) => event.stopPropagation()}
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (canSubmit) {
+            onSubmit(recipeText);
+          }
+        }}
+      >
+        <div className="section-heading">
+          <span>Receita/lote</span>
+          <button type="button" onClick={onClose}>
+            Fechar
+          </button>
+        </div>
+        <label className="field">
+          <span>Nome</span>
+          <input value={name} onChange={(event) => setName(event.target.value)} placeholder="iogurte lean+" />
+        </label>
+        <label className="field">
+          <span>Rendimento total (g)</span>
+          <input inputMode="decimal" value={yieldG} onChange={(event) => setYieldG(event.target.value)} placeholder="1000" />
+        </label>
+        <label className="field">
+          <span>Ingredientes, um por linha</span>
+          <textarea
+            rows={7}
+            value={ingredients}
+            onChange={(event) => setIngredients(event.target.value)}
+            placeholder={"500g iogurte\n30g whey\n100g morango"}
+          />
+        </label>
+        <button type="submit" className="primary-action" disabled={busy || !canSubmit}>
+          {busy ? "Rascunhando..." : "Rascunhar receita"}
+        </button>
+      </form>
+    </div>
+  );
+}
+
+function LabelScanModal({
+  busy,
+  onClose,
+  onSubmit,
+}: {
+  busy: boolean;
+  onClose: () => void;
+  onSubmit: (input: { text: string; files: File[] }) => void;
+}) {
+  const [product, setProduct] = useState("");
+  const [barcode, setBarcode] = useState("");
+  const [tableText, setTableText] = useState("");
+  const [files, setFiles] = useState<File[]>([]);
+  const text = [
+    product.trim() ? `Produto: ${product.trim()}` : "",
+    barcode.trim() ? `Código de barras: ${barcode.trim()}` : "",
+    tableText.trim(),
+  ]
+    .filter(Boolean)
+    .join("\n");
+  const canSubmit = text.trim() || files.length > 0;
+  return (
+    <div className="modal-backdrop" role="presentation" onClick={onClose}>
+      <form
+        className="small-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Escanear rótulo"
+        onClick={(event) => event.stopPropagation()}
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (canSubmit) {
+            onSubmit({ text, files });
+          }
+        }}
+      >
+        <div className="section-heading">
+          <span>Escanear rótulo</span>
+          <button type="button" onClick={onClose}>
+            Fechar
+          </button>
+        </div>
+        <label className="field">
+          <span>Fotos do rótulo</span>
+          <input
+            type="file"
+            accept="image/*"
+            multiple
+            onChange={(event) => setFiles(Array.from(event.target.files ?? []))}
+          />
+        </label>
+        <label className="field">
+          <span>Produto</span>
+          <input value={product} onChange={(event) => setProduct(event.target.value)} placeholder="Iogurte Batavo" />
+        </label>
+        <label className="field">
+          <span>Código de barras</span>
+          <input inputMode="numeric" value={barcode} onChange={(event) => setBarcode(event.target.value)} />
+        </label>
+        <label className="field">
+          <span>Tabela colada (opcional)</span>
+          <textarea rows={6} value={tableText} onChange={(event) => setTableText(event.target.value)} />
+        </label>
+        <button type="submit" className="primary-action" disabled={busy || !canSubmit}>
+          {busy ? "Rascunhando..." : "Rascunhar rótulo"}
+        </button>
+      </form>
+    </div>
+  );
+}
+
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error ?? new Error("Não foi possível ler o arquivo."));
+    reader.readAsDataURL(file);
+  });
 }
 
 function OnboardingScreen({ onCreate }: { onCreate: (draft: OnboardingDraft) => Promise<void> }) {

@@ -722,11 +722,19 @@ h3 {
 }
 
 .field input,
-.field select {
+.field select,
+.field textarea {
   width: 100%;
   min-height: 44px;
   background: var(--surface-soft);
   padding: 0 10px;
+}
+
+.field textarea {
+  min-height: 120px;
+  resize: vertical;
+  padding-block: 10px;
+  line-height: 1.4;
 }
 
 .check-field {

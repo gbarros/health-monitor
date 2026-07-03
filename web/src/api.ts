@@ -190,6 +190,7 @@ export async function draftRecipe(input: {
   householdId: string;
   personId: string;
   text: string;
+  quantityG?: number;
   signal?: AbortSignal;
 }): Promise<Proposal> {
   const response = await fetch("/api/agent/recipe", {
@@ -199,7 +200,8 @@ export async function draftRecipe(input: {
       household_id: input.householdId,
       person_id: input.personId,
       recipe_text: input.text,
-      logged_at_local: localDateTimeForApi(),
+      logged_at_local: input.quantityG != null ? localDateTimeForApi() : undefined,
+      quantity_g: input.quantityG,
     }),
     signal: input.signal,
   });

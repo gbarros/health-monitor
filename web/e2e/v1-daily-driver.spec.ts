@@ -72,6 +72,32 @@ test("phase 3 chat-first shell records weight without selecting a mode", async (
   await expect(dayCard(page)).toContainText("96,3 kg");
 });
 
+test("phase 4 recipe modal creates a reusable batch food for chat logging", async ({ page }) => {
+  await createFirstProfile(page, "Davi");
+  const ids = await storedIds(page);
+  await seedFood(page, ids.householdId, {
+    name: "Base E2E",
+    version_label: "base",
+    nutrients_per_100g: { calories_kcal: 100, protein_g: 10, carbs_g: 5, fat_g: 2 },
+    aliases: ["base e2e"],
+  });
+
+  await page.getByLabel("Ações rápidas").getByRole("button", { name: "Receita/lote" }).click();
+  await page.getByLabel("Nome").fill("Lote E2E");
+  await page.getByLabel("Rendimento total").fill("1000");
+  await page.getByLabel("Ingredientes, um por linha").fill("1000g Base E2E");
+  await page.getByRole("button", { name: "Rascunhar receita" }).click();
+  await expect(page.getByText("Recipe food version drafted: Lote E2E")).toBeVisible();
+  await page.getByRole("status").getByRole("button", { name: "Fechar" }).click();
+  await page.getByRole("button", { name: "Confirmar" }).last().click();
+
+  await composer(page).fill("Lanche:\n120g Lote E2E");
+  await page.getByRole("button", { name: "Enviar", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "1 diary entries drafted from text meal" })).toBeVisible();
+  await page.getByRole("button", { name: "Confirmar" }).last().click();
+  await expect(dayCard(page)).toContainText("Lote E2E");
+});
+
 test("phase 2 follow-up meal note amends the open proposal before confirmation", async ({ page }) => {
   await createFirstProfile(page, "Bruno");
   const ids = await storedIds(page);

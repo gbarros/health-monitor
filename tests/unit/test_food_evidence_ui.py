@@ -20,11 +20,13 @@ class FoodEvidenceUiTest(unittest.TestCase):
 
     def test_label_scan_quick_action_routes_to_attachment_backed_label_endpoint(self) -> None:
         quick_actions = read_web_file("components/ModesAndTemplates.tsx")
+        app = read_web_file("App.tsx")
         runtime = read_web_file("hooks/useAgentRuntime.ts")
         api = read_web_file("api.ts")
 
         self.assertIn("Escanear rótulo", quick_actions)
-        self.assertIn("Código de barras", quick_actions)
+        self.assertIn("Código de barras", app)
+        self.assertIn("draftLabelScan", app)
         self.assertIn("sendAgentChat", runtime)
         self.assertIn("attachmentIds", runtime)
         self.assertIn("/api/agent/chat", api)
