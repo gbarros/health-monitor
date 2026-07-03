@@ -14,8 +14,7 @@ class MicronutrientUiTest(unittest.TestCase):
 
         self.assertIn("fiber_g?: number", types)
         self.assertIn("sodium_mg?: number", types)
-        self.assertIn("fiber_g: 30", app)
-        self.assertIn("sodium_mg: 2300", app)
+        self.assertIn("targets: Required<Nutrients>", api)
         self.assertIn("/api/agent/onboarding-proposal", api)
         self.assertIn("Fibra", day_card)
         self.assertIn("fiber_g", day_card)

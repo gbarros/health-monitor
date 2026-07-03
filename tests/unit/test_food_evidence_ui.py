@@ -11,7 +11,8 @@ class FoodEvidenceUiTest(unittest.TestCase):
         runtime = read_web_file("hooks/useAgentRuntime.ts")
         api = read_web_file("api.ts")
 
-        self.assertIn("allowAttachments: true", chat)
+        self.assertIn("allowAttachments = true", chat)
+        self.assertIn("composer={{ allowAttachments }}", chat)
         self.assertIn("SimpleImageAttachmentAdapter", runtime)
         self.assertIn("SimpleTextAttachmentAdapter", runtime)
         self.assertIn("uploadMessageAttachments", runtime)

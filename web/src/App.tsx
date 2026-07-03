@@ -1,12 +1,11 @@
 import { AssistantRuntimeProvider, useAssistantToolUI, type ThreadMessageLike } from "@assistant-ui/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { FormEvent } from "react";
+import type { ReadonlyJSONObject } from "assistant-stream/utils";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ApiError,
   confirmProposal,
   defaultAgentSettings,
-  draftOnboardingProposal,
   loadActiveGoal,
   loadDaySummary,
   loadChatHistory,
@@ -21,7 +20,6 @@ import {
   resolveProposalClarification,
   restoreDiaryEntry,
   sendAgentChat,
-  sendOnboardingChat,
   STORAGE_KEYS,
   todayIsoForTimezone,
   updateProposalEntry,
@@ -37,6 +35,7 @@ import { ProposalCard } from "./components/ProposalCard";
 import { ProposalInbox } from "./components/ProposalInbox";
 import { WeekCard } from "./components/WeekCard";
 import { useAgentRuntime } from "./hooks/useAgentRuntime";
+import { useOnboardingRuntime } from "./hooks/useOnboardingRuntime";
 import { enqueue, forPerson, readOutbox, removeById, writeOutbox, clearForPerson } from "./outbox";
 import type { OutboxItem } from "./outbox";
 import { queryKeys } from "./queryKeys";
@@ -1470,88 +1469,46 @@ function OnboardingScreen({ onComplete }: { onComplete: (proposal: Proposal) => 
     return next;
   });
   const [turns, setTurns] = useState<OnboardingTurn[]>([]);
-  const [message, setMessage] = useState("");
-  const [householdName, setHouseholdName] = useState("Casa");
-  const [personName, setPersonName] = useState("");
-  const [timezone, setTimezone] = useState(Intl.DateTimeFormat().resolvedOptions().timeZone || "America/Sao_Paulo");
-  const [activityLevel, setActivityLevel] = useState("moderate");
-  const [targets, setTargets] = useState({
-    calories_kcal: 2000,
-    protein_g: 150,
-    carbs_g: 180,
-    fat_g: 70,
-    fiber_g: 30,
-    sodium_mg: 2300,
-  });
-  const [proposal, setProposal] = useState<Proposal | null>(null);
+  const [proposals, setProposals] = useState<Proposal[]>([]);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [isSending, setIsSending] = useState(false);
-  const [isDrafting, setIsDrafting] = useState(false);
   const [isConfirming, setIsConfirming] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     loadOnboardingHistory(sessionId)
-      .then((history) => {
-        if (!cancelled) setTurns(history);
+      .then(async (history) => {
+        const proposalIds = Array.from(
+          new Set(history.map((turn) => turn.proposal_id).filter((id): id is string => id != null)),
+        );
+        const loadedProposals = await Promise.all(proposalIds.map((proposalId) => loadProposal(proposalId)));
+        if (!cancelled) {
+          setTurns(history);
+          setProposals(loadedProposals);
+          setHistoryLoaded(true);
+        }
       })
-      .catch(() => undefined);
+      .catch((caught) => {
+        if (!cancelled) {
+          setError(caught instanceof Error ? caught.message : "Não foi possível carregar o cadastro.");
+          setHistoryLoaded(true);
+        }
+      });
     return () => {
       cancelled = true;
     };
   }, [sessionId]);
 
-  const submit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!message.trim()) {
-      setError("Escreva uma mensagem para continuar.");
-      return;
-    }
-    setIsSending(true);
-    setError(null);
-    try {
-      const turn = await sendOnboardingChat({
-        sessionId,
-        message: message.trim(),
-        agentSettings: defaultAgentSettings(),
-      });
-      setTurns((current) => [...current, turn]);
-      setMessage("");
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Não foi possível continuar o cadastro.");
-    } finally {
-      setIsSending(false);
-    }
-  };
+  const initialMessages = useMemo<ThreadMessageLike[]>(
+    () => onboardingMessagesFromTurns(turns, proposals),
+    [proposals, turns],
+  );
 
-  const draftSetup = async () => {
-    if (!personName.trim()) {
-      setError("Informe o nome antes de criar a proposta.");
-      return;
-    }
-    setIsDrafting(true);
-    setError(null);
-    try {
-      const drafted = await draftOnboardingProposal({
-        sessionId,
-        householdName,
-        personName,
-        timezone,
-        activityLevel,
-        targets,
-        notes: "Criado pelo cadastro conversacional.",
-        sourceText: turns.map((turn) => turn.user_message).join("\n"),
-      });
-      setProposal(drafted);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Não foi possível criar a proposta.");
-    } finally {
-      setIsDrafting(false);
-    }
-  };
+  const upsertProposal = useCallback((proposal: Proposal) => {
+    setProposals((current) => [proposal, ...current.filter((item) => item.id !== proposal.id)]);
+  }, []);
 
-  const confirmSetup = async () => {
-    if (!proposal) return;
+  const confirmSetup = async (proposal: Proposal) => {
     setIsConfirming(true);
     setError(null);
     try {
@@ -1564,93 +1521,145 @@ function OnboardingScreen({ onComplete }: { onComplete: (proposal: Proposal) => 
     }
   };
 
-  const setTarget = (key: keyof typeof targets, value: string) => {
-    setTargets((current) => ({ ...current, [key]: Number(value) || 0 }));
+  const rejectSetup = async (proposal: Proposal) => {
+    setError(null);
+    try {
+      const rejected = await rejectProposal(proposal.id);
+      upsertProposal(rejected);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Não foi possível rejeitar a proposta.");
+    }
   };
 
   return (
     <main className="onboarding-screen">
       <section className="onboarding-chat" aria-label="Cadastro por conversa">
-        <div className="onboarding-thread">
-          <div className="assistant-bubble">
-            <p className="eyebrow">Primeiro perfil</p>
-            <h1>Vamos configurar pelo chat.</h1>
-            <p>Oi! Vou configurar o diário. Como você se chama, qual é seu fuso e quais metas quer começar usando?</p>
-          </div>
-          {turns.map((turn) => (
-            <div className="onboarding-turn" key={turn.id}>
-              <div className="user-bubble">{turn.user_message}</div>
-              <div className="assistant-bubble">{turn.assistant_message}</div>
-            </div>
-          ))}
-        </div>
-        <form className="onboarding-composer" onSubmit={submit}>
-          <label htmlFor="onboarding-message">Sua mensagem</label>
-          <textarea
-            id="onboarding-message"
-            value={message}
-            onChange={(event) => setMessage(event.target.value)}
-            rows={4}
-            placeholder="Ex.: Sou Gabriel, fuso America/Sao_Paulo, quero começar com 2000 kcal e 150g proteína."
+        <header className="onboarding-header">
+          <p className="eyebrow">Primeiro perfil</p>
+          <h1>Vamos configurar pelo chat.</h1>
+          <p>Responda em texto livre. O agente cria uma proposta de casa, perfil e metas para você confirmar.</p>
+        </header>
+        {error ? <p className="form-error onboarding-error">{error}</p> : null}
+        {historyLoaded ? (
+          <OnboardingThreadWorkspace
+            key={`${sessionId}-${initialMessages.length}`}
+            sessionId={sessionId}
+            initialMessages={initialMessages}
+            proposals={proposals}
+            busy={isConfirming}
+            onTurn={(turn) => setTurns((current) => [...current, turn])}
+            onProposal={upsertProposal}
+            onRuntimeError={setError}
+            onConfirmProposal={(proposal) => {
+              void confirmSetup(proposal);
+            }}
+            onRejectProposal={(proposal) => {
+              void rejectSetup(proposal);
+            }}
           />
-          {error ? <p className="form-error">{error}</p> : null}
-          <button type="submit" className="primary-action" disabled={isSending}>
-            {isSending ? "Enviando..." : "Enviar"}
-          </button>
-        </form>
-        <section className="onboarding-proposal-panel" aria-label="Proposta de perfil">
-          <div className="modal-grid two">
-            <label className="field">
-              <span>Casa</span>
-              <input value={householdName} onChange={(event) => setHouseholdName(event.target.value)} />
-            </label>
-            <label className="field">
-              <span>Nome</span>
-              <input value={personName} onChange={(event) => setPersonName(event.target.value)} />
-            </label>
-            <label className="field">
-              <span>Fuso</span>
-              <input value={timezone} onChange={(event) => setTimezone(event.target.value)} />
-            </label>
-            <label className="field">
-              <span>Atividade</span>
-              <select value={activityLevel} onChange={(event) => setActivityLevel(event.target.value)}>
-                <option value="sedentary">Sedentária</option>
-                <option value="light">Leve</option>
-                <option value="moderate">Moderada</option>
-                <option value="active">Alta</option>
-              </select>
-            </label>
-            <label className="field">
-              <span>kcal</span>
-              <input inputMode="numeric" value={targets.calories_kcal} onChange={(event) => setTarget("calories_kcal", event.target.value)} />
-            </label>
-            <label className="field">
-              <span>Proteína</span>
-              <input inputMode="numeric" value={targets.protein_g} onChange={(event) => setTarget("protein_g", event.target.value)} />
-            </label>
-            <label className="field">
-              <span>Carbo</span>
-              <input inputMode="numeric" value={targets.carbs_g} onChange={(event) => setTarget("carbs_g", event.target.value)} />
-            </label>
-            <label className="field">
-              <span>Gordura</span>
-              <input inputMode="numeric" value={targets.fat_g} onChange={(event) => setTarget("fat_g", event.target.value)} />
-            </label>
+        ) : (
+          <div className="onboarding-status" role="status">
+            Carregando cadastro...
           </div>
-          <div className="onboarding-actions">
-            <button type="button" onClick={draftSetup} disabled={isDrafting || isConfirming}>
-              {isDrafting ? "Criando..." : "Criar proposta"}
-            </button>
-            <button type="button" className="primary-action" onClick={confirmSetup} disabled={!proposal || isConfirming}>
-              {isConfirming ? "Confirmando..." : "Confirmar proposta"}
-            </button>
-          </div>
-          {proposal ? <p className="onboarding-helper">{proposal.summary}</p> : null}
-        </section>
+        )}
       </section>
     </main>
   );
+}
+
+function OnboardingThreadWorkspace({
+  sessionId,
+  initialMessages,
+  proposals,
+  busy,
+  onTurn,
+  onProposal,
+  onRuntimeError,
+  onConfirmProposal,
+  onRejectProposal,
+}: {
+  sessionId: string;
+  initialMessages: readonly ThreadMessageLike[];
+  proposals: Proposal[];
+  busy: boolean;
+  onTurn: (turn: OnboardingTurn) => void;
+  onProposal: (proposal: Proposal) => void;
+  onRuntimeError: (message: string) => void;
+  onConfirmProposal: (proposal: Proposal) => void;
+  onRejectProposal: (proposal: Proposal) => void;
+}) {
+  const runtime = useOnboardingRuntime({
+    sessionId,
+    settings: defaultAgentSettings(),
+    initialMessages,
+    onTurn,
+    onProposal,
+    onRuntimeError,
+  });
+
+  return (
+    <AssistantRuntimeProvider runtime={runtime}>
+      <ProposalToolRenderer
+        proposals={proposals}
+        busy={busy}
+        onConfirm={onConfirmProposal}
+        onReject={onRejectProposal}
+        onUpdateEntry={() => undefined}
+        onResolveClarification={() => undefined}
+      />
+      <ChatInterface
+        welcomeMessage="Oi! Vou configurar o diário. Como você se chama, e quais metas quer começar usando?"
+        suggestions={[
+          {
+            text: "Começar rápido",
+            prompt: "Sou Gabriel, fuso America/Sao_Paulo. Quero começar com 2000 kcal e 150g de proteína.",
+          },
+          {
+            text: "Deixar o agente sugerir",
+            prompt: "Quero perder gordura. Pode sugerir metas iniciais para mim.",
+          },
+        ]}
+        placeholder="Escreva seu nome, fuso, objetivo, metas ou peça para o agente sugerir..."
+        allowAttachments={false}
+      />
+    </AssistantRuntimeProvider>
+  );
+}
+
+function onboardingMessagesFromTurns(
+  turns: readonly OnboardingTurn[],
+  proposals: readonly Proposal[],
+): ThreadMessageLike[] {
+  const proposalById = new Map(proposals.map((proposal) => [proposal.id, proposal]));
+  return turns.flatMap((turn) => [
+    {
+      role: "user" as const,
+      content: [{ type: "text" as const, text: turn.user_message }],
+    },
+    {
+      role: "assistant" as const,
+      content: assistantContentForOnboardingTurn(turn, proposalById.get(turn.proposal_id ?? "")),
+    },
+  ]);
+}
+
+function assistantContentForOnboardingTurn(turn: OnboardingTurn, proposal?: Proposal) {
+  const content = [{ type: "text" as const, text: turn.assistant_message }];
+  if (!proposal) {
+    return content;
+  }
+  const proposalJson = JSON.parse(JSON.stringify(proposal)) as ReadonlyJSONObject;
+  return [
+    ...content,
+    {
+      type: "tool-call" as const,
+      toolCallId: `proposal-${proposal.id}`,
+      toolName: "draft_proposal",
+      args: { proposal: proposalJson },
+      argsText: JSON.stringify({ proposal: proposalJson }),
+      result: { proposal },
+    },
+  ];
 }
 
 export default App;

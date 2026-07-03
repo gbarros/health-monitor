@@ -1,19 +1,31 @@
 import { Thread } from "@assistant-ui/react-ui";
 import "@assistant-ui/react-ui/styles/index.css";
 
-export function ChatInterface() {
+type ChatInterfaceProps = {
+  welcomeMessage?: string;
+  suggestions?: { text: string; prompt: string }[];
+  placeholder?: string;
+  allowAttachments?: boolean;
+};
+
+export function ChatInterface({
+  welcomeMessage = "Pode escrever como você escreveria no ChatGPT: refeição, dúvida, correção, rótulo ou ajuste de metas.",
+  suggestions = [
+    { text: "Registrar refeição", prompt: "Café da manhã:\n100g iogurte\n30g whey\n1 banana" },
+    { text: "Revisar o dia", prompt: "Como está meu dia até agora?" },
+  ],
+  placeholder = "Escreva uma refeição, pergunta, correção ou cole uma tabela...",
+  allowAttachments = true,
+}: ChatInterfaceProps) {
   return (
     <div className="chat-thread-shell">
       <Thread
         assistantAvatar={{ fallback: "HM" }}
         welcome={{
-          message: "Pode escrever como você escreveria no ChatGPT: refeição, dúvida, correção, rótulo ou ajuste de metas.",
-          suggestions: [
-            { text: "Registrar refeição", prompt: "Café da manhã:\n100g iogurte\n30g whey\n1 banana" },
-            { text: "Revisar o dia", prompt: "Como está meu dia até agora?" },
-          ],
+          message: welcomeMessage,
+          suggestions,
         }}
-        composer={{ allowAttachments: true }}
+        composer={{ allowAttachments }}
         userMessage={{ allowEdit: false }}
         assistantMessage={{
           allowReload: false,
@@ -27,7 +39,7 @@ export function ChatInterface() {
           welcome: { message: "Como posso ajudar com o diário hoje?" },
           thread: { scrollToBottom: { tooltip: "Ir para o final" } },
           composer: {
-            input: { placeholder: "Escreva uma refeição, pergunta, correção ou cole uma tabela..." },
+            input: { placeholder },
             send: { tooltip: "Enviar" },
             cancel: { tooltip: "Cancelar" },
             addAttachment: { tooltip: "Anexar foto ou arquivo" },
