@@ -18,6 +18,7 @@ from health_monitor.application.service import (
     HealthMonitorService,
     Household,
     ModelUnavailableError,
+    OnboardingTurn,
     Person,
     ReviewNote,
     RollingSummary,
@@ -603,6 +604,31 @@ class HttpApi:
                 ),
             )
 
+        if method == "POST" and path == "/api/agent/onboarding-chat":
+            turn = self.service.onboarding_chat(
+                session_id=body["session_id"],
+                message=body["message"],
+                household_id=body.get("household_id"),
+                agent_settings=body.get("agent_settings"),
+            )
+            return HttpResponse(201, onboarding_turn_to_dict(turn))
+
+        if method == "GET" and path == "/api/agent/onboarding-history":
+            turns = self.service.onboarding_turns_for_session(query["session_id"])
+            return HttpResponse(200, [onboarding_turn_to_dict(turn) for turn in turns])
+
+        if method == "POST" and path == "/api/agent/onboarding-proposal":
+            proposal = self.service.draft_onboarding_proposal(
+                session_id=body["session_id"],
+                household_name=body.get("household_name"),
+                household_id=body.get("household_id"),
+                person=dict(body["person"]),
+                targets=dict(body["targets"]),
+                notes=body.get("notes"),
+                source_text=body.get("source_text", ""),
+            )
+            return HttpResponse(201, proposal_to_dict(proposal, self.service))
+
         if method == "GET" and path == "/api/agent/chat-history":
             turns = self.service.chat_turns_for_person(query["person_id"])
             return HttpResponse(200, [agent_chat_turn_to_dict(turn) for turn in turns])
@@ -1075,6 +1101,18 @@ def agent_chat_turn_to_dict(turn: AgentChatTurn) -> dict[str, Any]:
         "assistant_message": turn.assistant_message,
         "behavior_label": turn.behavior_label,
         "citations": [dict(item) for item in turn.citations],
+        "proposal_id": turn.proposal_id,
+        "created_at": turn.created_at.isoformat(),
+    }
+
+
+def onboarding_turn_to_dict(turn: OnboardingTurn) -> dict[str, Any]:
+    return {
+        "id": turn.id,
+        "session_id": turn.session_id,
+        "household_id": turn.household_id,
+        "user_message": turn.user_message,
+        "assistant_message": turn.assistant_message,
         "proposal_id": turn.proposal_id,
         "created_at": turn.created_at.isoformat(),
     }

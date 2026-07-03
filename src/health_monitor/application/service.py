@@ -207,6 +207,17 @@ class AgentChatTurn:
 
 
 @dataclass(frozen=True)
+class OnboardingTurn:
+    id: str
+    session_id: str
+    user_message: str
+    assistant_message: str
+    household_id: str | None = None
+    proposal_id: str | None = None
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+@dataclass(frozen=True)
 class BackgroundJob:
     id: str
     job_type: str
@@ -386,6 +397,7 @@ class HealthMonitorService:
         self.agent_runs: dict[str, AgentRun] = {}
         self.agent_tool_calls: dict[str, AgentToolCall] = {}
         self.chat_turns: dict[str, AgentChatTurn] = {}
+        self.onboarding_turns: dict[str, OnboardingTurn] = {}
         self.review_notes: dict[str, ReviewNote] = {}
         self.lookup_candidates: dict[str, FoodLookupCandidate] = {}
         self.attachments: dict[str, AttachmentObject] = {}
@@ -4776,6 +4788,103 @@ class HealthMonitorService:
                 return turn
         raise KeyError(agent_run_id)
 
+    def onboarding_turns_for_session(self, session_id: str) -> tuple[OnboardingTurn, ...]:
+        turns = [
+            turn
+            for turn in self.onboarding_turns.values()
+            if turn.session_id == session_id
+        ]
+        turns.sort(key=lambda turn: (turn.created_at, turn.id))
+        return tuple(turns)
+
+    def onboarding_chat(
+        self,
+        *,
+        session_id: str,
+        message: str,
+        household_id: str | None = None,
+        agent_settings: dict[str, Any] | None = None,
+    ) -> OnboardingTurn:
+        settings = self._agent_settings(agent_settings)
+        self._ensure_model_available(settings, replay_message=message)
+        if household_id is not None:
+            self._require_household(household_id)
+        assistant_message = (
+            "Vou configurar o diário por conversa. Diga seu nome, fuso horário, "
+            "objetivo e qualquer meta inicial que você já queira propor."
+        )
+        turn = OnboardingTurn(
+            id=self._next_id("onboarding_turn"),
+            session_id=session_id,
+            household_id=household_id,
+            user_message=message,
+            assistant_message=assistant_message,
+        )
+        self.onboarding_turns[turn.id] = turn
+        self._persist()
+        return turn
+
+    def draft_onboarding_proposal(
+        self,
+        *,
+        session_id: str,
+        household_name: str | None,
+        household_id: str | None,
+        person: dict[str, Any],
+        targets: dict[str, Any],
+        notes: str | None = None,
+        source_text: str = "",
+    ) -> CreateDiaryEntriesProposal:
+        if household_id is not None:
+            household = self._require_household(household_id)
+            resolved_household_id = household.id
+            resolved_household_name = household.name
+        else:
+            resolved_household_id = None
+            resolved_household_name = str(household_name or "Casa").strip() or "Casa"
+        person_name = str(person.get("name") or "").strip()
+        if not person_name:
+            raise ValueError("person name is required")
+        timezone_name = str(person.get("timezone") or "America/Sao_Paulo").strip()
+        ZoneInfo(timezone_name)
+        target_nutrients = nutrients_from_mapping(targets)
+        if target_nutrients.calories_kcal <= 0:
+            raise ValueError("daily calorie target must be positive")
+        payload = {
+            "session_id": session_id,
+            "household_id": resolved_household_id,
+            "household_name": resolved_household_name,
+            "person": {
+                "name": person_name,
+                "timezone": timezone_name,
+                "birth_date": person.get("birth_date"),
+                "sex": person.get("sex"),
+                "height_cm": person.get("height_cm"),
+                "activity_level": person.get("activity_level"),
+            },
+            "targets": nutrients_to_snapshot(target_nutrients),
+            "notes": notes,
+        }
+        proposal = self.proposals.create(
+            CreateDiaryEntriesProposal(
+                id=self._next_id("proposal"),
+                person_id=f"onboarding:{session_id}",
+                entries=(),
+                proposal_type="profile_setup",
+                summary=f"Profile setup drafted for {person_name}",
+                payload=payload,
+                evidence=(
+                    {
+                        "source_type": "onboarding_chat",
+                        "session_id": session_id,
+                        "raw_text": source_text,
+                    },
+                ),
+            )
+        )
+        self._persist()
+        return proposal
+
     def enqueue_job(
         self,
         *,
@@ -4951,6 +5060,11 @@ class HealthMonitorService:
             return applied
         if proposal.proposal_type == "goal_profile":
             applied = self._apply_goal_profile_proposal(proposal)
+            self.proposals.proposals[proposal_id] = applied
+            self._persist()
+            return applied
+        if proposal.proposal_type == "profile_setup":
+            applied = self._apply_profile_setup_proposal(proposal)
             self.proposals.proposals[proposal_id] = applied
             self._persist()
             return applied
@@ -5418,6 +5532,64 @@ class HealthMonitorService:
             rejected_at=proposal.rejected_at,
         )
 
+    def _apply_profile_setup_proposal(
+        self,
+        proposal: CreateDiaryEntriesProposal,
+    ) -> CreateDiaryEntriesProposal:
+        if proposal.status == "rejected":
+            raise ValueError("cannot apply rejected proposal")
+        payload = proposal.payload
+        person_payload = dict(payload["person"])
+        household_id = payload.get("household_id")
+        if household_id:
+            household = self._require_household(str(household_id))
+        else:
+            household = self.create_household(name=str(payload["household_name"]))
+        birth_date = (
+            date.fromisoformat(str(person_payload["birth_date"]))
+            if person_payload.get("birth_date")
+            else None
+        )
+        person = self.create_person(
+            household_id=household.id,
+            name=str(person_payload["name"]),
+            timezone=str(person_payload["timezone"]),
+            birth_date=birth_date,
+            sex=str(person_payload["sex"]) if person_payload.get("sex") else None,
+            height_cm=float(person_payload["height_cm"]) if person_payload.get("height_cm") is not None else None,
+            activity_level=str(person_payload["activity_level"]) if person_payload.get("activity_level") else None,
+        )
+        goal = self.create_goal_profile(
+            person_id=person.id,
+            starts_on=date.today(),
+            targets=nutrients_from_mapping(payload["targets"]),
+            notes=str(payload["notes"]) if payload.get("notes") else "Created from conversational onboarding.",
+        )
+        applied_payload = dict(payload)
+        applied_payload.update(
+            {
+                "created_household_id": household.id,
+                "created_person_id": person.id,
+                "created_goal_id": goal.id,
+            }
+        )
+        return CreateDiaryEntriesProposal(
+            id=proposal.id,
+            person_id=person.id,
+            entries=proposal.entries,
+            proposal_type=proposal.proposal_type,
+            status="applied",
+            summary=proposal.summary,
+            payload=applied_payload,
+            totals=proposal.totals,
+            evidence=proposal.evidence,
+            source_agent_run_id=proposal.source_agent_run_id,
+            applied_record_ids=(household.id, person.id, goal.id),
+            created_at=proposal.created_at,
+            confirmed_at=proposal.confirmed_at or datetime.now(timezone.utc),
+            rejected_at=proposal.rejected_at,
+        )
+
     def _persist(self) -> None:
         if self.repository is not None:
             self.repository.save(self._snapshot())
@@ -5438,6 +5610,7 @@ class HealthMonitorService:
                 self.agent_runs,
                 self.agent_tool_calls,
                 self.chat_turns,
+                self.onboarding_turns,
                 self.jobs,
                 self.review_notes,
                 self.attachments,
@@ -5477,6 +5650,9 @@ class HealthMonitorService:
             ],
             "agent_chat_turns": [
                 agent_chat_turn_to_snapshot(item) for item in self.chat_turns.values()
+            ],
+            "onboarding_turns": [
+                onboarding_turn_to_snapshot(item) for item in self.onboarding_turns.values()
             ],
             "jobs": [background_job_to_snapshot(item) for item in self.jobs.values()],
             "review_notes": [
@@ -5536,6 +5712,10 @@ class HealthMonitorService:
         self.chat_turns = {
             item["id"]: agent_chat_turn_from_snapshot(item)
             for item in snapshot.get("agent_chat_turns", [])
+        }
+        self.onboarding_turns = {
+            item["id"]: onboarding_turn_from_snapshot(item)
+            for item in snapshot.get("onboarding_turns", [])
         }
         self.jobs = {
             item["id"]: background_job_from_snapshot(item)
@@ -6854,6 +7034,30 @@ def agent_chat_turn_from_snapshot(value: dict[str, Any]) -> AgentChatTurn:
         assistant_message=value["assistant_message"],
         behavior_label=value["behavior_label"],
         citations=tuple(dict(item) for item in value.get("citations", [])),
+        proposal_id=value.get("proposal_id"),
+        created_at=datetime.fromisoformat(value["created_at"]),
+    )
+
+
+def onboarding_turn_to_snapshot(turn: OnboardingTurn) -> dict[str, Any]:
+    return {
+        "id": turn.id,
+        "session_id": turn.session_id,
+        "household_id": turn.household_id,
+        "user_message": turn.user_message,
+        "assistant_message": turn.assistant_message,
+        "proposal_id": turn.proposal_id,
+        "created_at": turn.created_at.isoformat(),
+    }
+
+
+def onboarding_turn_from_snapshot(value: dict[str, Any]) -> OnboardingTurn:
+    return OnboardingTurn(
+        id=value["id"],
+        session_id=value["session_id"],
+        household_id=value.get("household_id"),
+        user_message=value["user_message"],
+        assistant_message=value["assistant_message"],
         proposal_id=value.get("proposal_id"),
         created_at=datetime.fromisoformat(value["created_at"]),
     )

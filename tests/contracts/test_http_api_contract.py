@@ -2625,6 +2625,89 @@ class HttpApiContractTest(unittest.TestCase):
         self.assertEqual(response.events[-1]["data"]["run_id"], response.body["run_id"])
         self.assertEqual(len(api.service.chat_turns_for_person(person["id"])), 1)
 
+    def test_onboarding_chat_turns_are_persisted_by_session(self) -> None:
+        api = HttpApi(HealthMonitorService(require_model=False))
+
+        response = api.handle(
+            "POST",
+            "/api/agent/onboarding-chat",
+            {
+                "session_id": "session-1",
+                "message": "Oi, sou Gabriel.",
+                "agent_settings": {"agent_runtime": "pydantic-ai", "model_profile": "test"},
+            },
+        )
+        history = api.handle("GET", "/api/agent/onboarding-history?session_id=session-1", None).body
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(history[0]["user_message"], "Oi, sou Gabriel.")
+        self.assertEqual(history[0]["assistant_message"], response.body["assistant_message"])
+
+    def test_onboarding_refuses_when_required_model_is_unavailable(self) -> None:
+        api = HttpApi(
+            HealthMonitorService(
+                require_model=True,
+                model_health_checker=lambda: False,
+            )
+        )
+
+        response = api.handle(
+            "POST",
+            "/api/agent/onboarding-chat",
+            {
+                "session_id": "session-1",
+                "message": "Oi, sou Gabriel.",
+                "agent_settings": {"agent_runtime": "pydantic-ai", "model_profile": "test"},
+            },
+        )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.body["error"]["type"], "model_unavailable")
+
+    def test_onboarding_profile_setup_proposal_applies_household_person_and_goal(self) -> None:
+        api = HttpApi(HealthMonitorService())
+
+        proposal = api.handle(
+            "POST",
+            "/api/agent/onboarding-proposal",
+            {
+                "session_id": "session-1",
+                "household_name": "Casa",
+                "person": {
+                    "name": "Gabriel",
+                    "timezone": "America/Sao_Paulo",
+                    "activity_level": "moderate",
+                },
+                "targets": {
+                    "calories_kcal": 2000,
+                    "protein_g": 150,
+                    "carbs_g": 180,
+                    "fat_g": 70,
+                    "fiber_g": 30,
+                    "sodium_mg": 2300,
+                },
+                "notes": "Setup inicial",
+                "source_text": "conversa livre",
+            },
+        ).body
+        applied = api.handle("POST", f"/api/proposals/{proposal['id']}/confirm", None).body
+        people = api.handle(
+            "GET",
+            f"/api/people?household_id={applied['payload']['created_household_id']}",
+            None,
+        ).body
+        goal = api.handle(
+            "GET",
+            f"/api/goals/active?person_id={applied['payload']['created_person_id']}&day=2026-07-03",
+            None,
+        ).body
+
+        self.assertEqual(proposal["proposal_type"], "profile_setup")
+        self.assertEqual(applied["status"], "applied")
+        self.assertEqual(applied["person_id"], applied["payload"]["created_person_id"])
+        self.assertEqual(people[0]["name"], "Gabriel")
+        self.assertEqual(goal["targets"]["calories_kcal"], 2000)
+
     def test_agent_chat_review_note_text_does_not_create_proposal_without_model_tool_call(self) -> None:
         api = HttpApi(HealthMonitorService())
         household = api.handle("POST", "/api/households", {"name": "Casa"}).body

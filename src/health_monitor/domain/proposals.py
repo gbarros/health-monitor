@@ -27,6 +27,7 @@ ProposalType = Literal[
     "review_note",
     "profile_update",
     "goal_profile",
+    "profile_setup",
 ]
 
 
