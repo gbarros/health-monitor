@@ -1,11 +1,3 @@
-export type ModeId =
-  | "general_chat"
-  | "text_meal"
-  | "label_scan"
-  | "recipe"
-  | "correction"
-  | "review_note";
-
 export type Person = {
   id: string;
   household_id: string;

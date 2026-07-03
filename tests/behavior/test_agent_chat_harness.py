@@ -148,6 +148,106 @@ class AgentChatHarnessTest(unittest.TestCase):
         self.assertEqual(applied.status, "applied")
         self.assertEqual(after.totals.rounded(), Nutrients(157.5, 11.5, 1.3, 11.75))
 
+    def test_chat_routes_meal_log_to_text_meal_proposal(self) -> None:
+        service = HealthMonitorService()
+        household = service.create_household(name="Casa")
+        person = service.create_person(
+            household_id=household.id,
+            name="Gabriel",
+            timezone="America/Sao_Paulo",
+        )
+        service.create_food_with_version(
+            household_id=household.id,
+            name="Arroz",
+            brand=None,
+            version_label="cozido",
+            nutrients_per_100g=Nutrients(130, 2.7, 28, 0.3),
+            source="reference",
+            aliases=["arroz"],
+        )
+
+        response = service.chat(
+            person_id=person.id,
+            message="Almoço:\n150g arroz",
+            today=date(2026, 7, 2),
+            agent_settings={"external_lookup": False},
+        )
+        proposal = service.get_proposal(response.proposal_id or "")
+
+        self.assertEqual(response.behavior_label, "draft_text_meal")
+        self.assertEqual(proposal.status, "draft")
+        self.assertEqual(proposal.entries[0].meal_type, "lunch")
+        self.assertEqual(proposal.entries[0].quantity_g, 150)
+        self.assertEqual(service.day_summary(person.id, date(2026, 7, 2)).totals, Nutrients())
+
+    def test_chat_routes_follow_up_meal_patch_to_open_proposal(self) -> None:
+        service = HealthMonitorService()
+        household = service.create_household(name="Casa")
+        person = service.create_person(
+            household_id=household.id,
+            name="Gabriel",
+            timezone="America/Sao_Paulo",
+        )
+        service.create_food_with_version(
+            household_id=household.id,
+            name="Arroz",
+            brand=None,
+            version_label="cozido",
+            nutrients_per_100g=Nutrients(130, 2.7, 28, 0.3),
+            source="reference",
+            aliases=["arroz"],
+        )
+        service.create_food_with_version(
+            household_id=household.id,
+            name="Frango",
+            brand=None,
+            version_label="grelhado",
+            nutrients_per_100g=Nutrients(165, 31, 0, 3.6),
+            source="reference",
+            aliases=["frango"],
+        )
+        first = service.chat(
+            person_id=person.id,
+            message="Almoço:\n150g arroz",
+            today=date(2026, 7, 2),
+            agent_settings={"external_lookup": False},
+        )
+
+        second = service.chat(
+            person_id=person.id,
+            message="esqueci 113g de frango",
+            today=date(2026, 7, 2),
+            agent_settings={"external_lookup": False},
+        )
+        original = service.get_proposal(first.proposal_id or "")
+        amended = service.get_proposal(second.proposal_id or "")
+
+        self.assertEqual(original.status, "superseded")
+        self.assertEqual(second.behavior_label, "draft_text_meal")
+        self.assertEqual(len(amended.entries), 2)
+        self.assertEqual(amended.payload["amended_from_proposal_id"], original.id)
+
+    def test_chat_routes_weight_message_to_weight_entry(self) -> None:
+        service = HealthMonitorService()
+        household = service.create_household(name="Casa")
+        person = service.create_person(
+            household_id=household.id,
+            name="Gabriel",
+            timezone="America/Sao_Paulo",
+        )
+
+        response = service.chat(
+            person_id=person.id,
+            message="amanheci com 96,3kgs",
+            today=date(2026, 7, 2),
+        )
+        trend = service.weight_trend(person_id=person.id)
+
+        self.assertEqual(response.behavior_label, "log_weight")
+        self.assertIsNone(response.proposal_id)
+        self.assertEqual(trend.latest_kg, 96.3)
+        self.assertIn("96.3 kg", response.message)
+
     def test_week_question_is_grounded_in_week_summary_and_record_citations(self) -> None:
         service, person_id, first_entry_id = self.make_service_with_entry()
         version_id = service.diary.entries[first_entry_id].food_version_id

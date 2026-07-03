@@ -696,6 +696,19 @@ h3 {
   padding: 16px;
 }
 
+.small-modal {
+  align-self: center;
+  justify-self: center;
+  width: min(360px, calc(100vw - 24px));
+  display: grid;
+  gap: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  padding: 16px;
+}
+
 .context-panel {
   display: grid;
   gap: 12px;

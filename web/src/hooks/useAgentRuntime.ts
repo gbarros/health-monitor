@@ -14,41 +14,32 @@ import type {
 import type { ReadonlyJSONObject } from "assistant-stream/utils";
 import { useMemo } from "react";
 import {
-  draftLabelScan,
-  draftRecipe,
-  draftTextMeal,
   sendAgentChat,
   uploadDataUrlAttachment,
 } from "../api";
-import type { AgentChatResponse, AgentSettings, ModeId, Proposal } from "../types";
+import type { AgentChatResponse, AgentSettings, Proposal } from "../types";
 
 type RuntimeContext = {
   householdId: string | null;
   personId: string | null;
-  activeMode: ModeId;
   today: string;
   settings: AgentSettings;
   initialMessages: readonly ThreadMessageLike[];
-  openDraftProposalId?: string | null;
   onAgentResponse: (response: AgentChatResponse) => void;
   onProposal: (proposal: Proposal) => void;
   onRuntimeError: (message: string) => void;
-  onModeCompleted?: () => void;
 };
 
 export function useAgentRuntime(context: RuntimeContext) {
   const {
     householdId,
     personId,
-    activeMode,
     today,
     settings,
     initialMessages,
-    openDraftProposalId,
     onAgentResponse,
     onProposal,
     onRuntimeError,
-    onModeCompleted,
   } = context;
 
   const adapter = useMemo<ChatModelAdapter>(() => {
@@ -66,70 +57,30 @@ export function useAgentRuntime(context: RuntimeContext) {
         }
 
         const text = textFromContent(lastMessage.content);
-        if (!text && activeMode !== "label_scan") {
-          return assistantText("Send a note or question and I will route it through the selected mode.");
+        if (!text && !messageHasUploadableAttachment(lastMessage.content)) {
+          return assistantText("Escreva uma refeição, pergunta, correção ou anexe uma foto de rótulo.");
         }
 
         try {
-          if (activeMode === "text_meal" || shouldDraftMealFromChat(activeMode, text, openDraftProposalId)) {
-            const proposal = await draftTextMeal({
-              personId,
-              text,
-              settings,
-              amendProposalId: activeMode === "text_meal" ? undefined : openDraftProposalId ?? undefined,
-              signal: options.abortSignal,
-            });
-            onProposal(proposal);
-            onModeCompleted?.();
-            return assistantProposal(proposal, proposalReply(proposal, "Proposta de refeição pronta."));
-          }
-
-          if (activeMode === "recipe") {
-            if (!householdId) {
-              return assistantText("Select or create a household before drafting recipes.");
-            }
-            const proposal = await draftRecipe({
-              householdId,
-              personId,
-              text,
-              signal: options.abortSignal,
-            });
-            onProposal(proposal);
-            onModeCompleted?.();
-            return assistantProposal(proposal, proposalReply(proposal, "Proposta de receita pronta."));
-          }
-
-          if (activeMode === "label_scan") {
-            if (!householdId) {
-              return assistantText("Select or create a household before scanning labels.");
-            }
-            const attachmentIds = await uploadMessageAttachments({
+          const attachmentIds = householdId
+            ? await uploadMessageAttachments({
               householdId,
               personId,
               parts: lastMessage.content,
-            });
-            const proposal = await draftLabelScan({
-              householdId,
-              personId,
-              text,
-              attachmentIds,
-              signal: options.abortSignal,
-            });
-            onProposal(proposal);
-            onModeCompleted?.();
-            return assistantProposal(proposal, proposalReply(proposal, "Proposta de rótulo pronta."));
-          }
-
+            })
+            : [];
           const response = await sendAgentChat({
             personId,
-            message: messageForMode(activeMode, text),
+            message: text,
             settings,
             today,
+            attachmentIds,
             signal: options.abortSignal,
           });
           onAgentResponse(response);
           if (response.proposal) {
             onProposal(response.proposal);
+            return assistantProposal(response.proposal, chatReply(response));
           }
           return assistantText(chatReply(response));
         } catch (error) {
@@ -139,7 +90,7 @@ export function useAgentRuntime(context: RuntimeContext) {
         }
       },
     };
-  }, [activeMode, householdId, onAgentResponse, onModeCompleted, onProposal, onRuntimeError, openDraftProposalId, personId, settings, today]);
+  }, [householdId, onAgentResponse, onProposal, onRuntimeError, personId, settings, today]);
 
   const attachments = useMemo(
     () => new CompositeAttachmentAdapter([new SimpleImageAttachmentAdapter(), new SimpleTextAttachmentAdapter()]),
@@ -183,28 +134,8 @@ function textFromContent(content: readonly ThreadUserMessagePart[]): string {
     .trim();
 }
 
-function messageForMode(mode: ModeId, text: string): string {
-  if (mode === "correction") {
-    return `Correction request:\n${text}`;
-  }
-  if (mode === "review_note") {
-    return `Review note request:\n${text}`;
-  }
-  return text;
-}
-
-function shouldDraftMealFromChat(mode: ModeId, text: string, openDraftProposalId?: string | null): boolean {
-  if (mode !== "general_chat" || !openDraftProposalId) {
-    return false;
-  }
-  const normalized = text.toLocaleLowerCase("pt-BR");
-  if (/^\s*-+\s*\d/.test(normalized)) {
-    return true;
-  }
-  if (/\b(esqueci|faltou|adicione|adiciona|remove|remova|subtrai|retira)\b/.test(normalized)) {
-    return true;
-  }
-  return /\d+(?:[,.]\d+)?\s*g(?:ramas?)?\s+\S+/.test(normalized);
+function messageHasUploadableAttachment(content: readonly ThreadUserMessagePart[]): boolean {
+  return content.some((part) => part.type === "image" || part.type === "file");
 }
 
 function chatReply(response: AgentChatResponse): string {

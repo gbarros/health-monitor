@@ -24,10 +24,10 @@ class FoodEvidenceUiTest(unittest.TestCase):
         api = read_web_file("api.ts")
 
         self.assertIn("Escanear rótulo", quick_actions)
-        self.assertIn('setComposer("label_scan"', quick_actions)
-        self.assertIn("draftLabelScan", runtime)
+        self.assertIn("Código de barras", quick_actions)
+        self.assertIn("sendAgentChat", runtime)
         self.assertIn("attachmentIds", runtime)
-        self.assertIn("/api/agent/label-scan", api)
+        self.assertIn("/api/agent/chat", api)
         self.assertIn("attachment_ids", api)
 
 

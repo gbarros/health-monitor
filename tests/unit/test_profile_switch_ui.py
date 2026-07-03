@@ -17,11 +17,11 @@ class ProfileSwitchUiTest(unittest.TestCase):
         self.assertIn(".person-chips", styles)
         self.assertIn(".person-chip.is-active", styles)
 
-    def test_profile_switch_changes_person_scoped_queries_and_resets_transient_mode(self) -> None:
+    def test_profile_switch_changes_person_scoped_queries_without_mode_state(self) -> None:
         app = read_web_file("App.tsx")
 
         self.assertIn("const changePerson", app)
-        self.assertIn('setActiveMode("general_chat")', app)
+        self.assertNotIn("setActiveMode", app)
         self.assertIn("queryKeys.people(householdId)", app)
         self.assertIn("queryKeys.proposals(selectedPersonId)", app)
         self.assertIn("queryKeys.chatHistory(selectedPersonId)", app)

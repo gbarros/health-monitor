@@ -40,7 +40,7 @@ test("phase 1 mobile shell logs a meal and updates the day card", async ({ page 
   await composer(page).fill("100g Queijo Minas E2E");
   await page.getByRole("button", { name: "Enviar", exact: true }).click();
 
-  await expect(page.getByText("Proposta de refeição pronta.")).toBeVisible();
+  await expect(page.getByText("Rascunhei a refeição.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Confirmar" }).last()).toBeVisible();
   await page.getByRole("button", { name: "Confirmar" }).last().click();
 
@@ -59,6 +59,17 @@ test("phase 1 chat history hydrates after reload without duplicating the reply",
   await page.reload();
   await expect(page.getByText("Can you alter my profile and goals?")).toHaveCount(1);
   await expect(page.getByText("I can help change profile fields and nutrition goals")).toHaveCount(1);
+});
+
+test("phase 3 chat-first shell records weight without selecting a mode", async ({ page }) => {
+  await createFirstProfile(page, "Clara");
+
+  await expect(page.getByText("CURRENT MODE")).toHaveCount(0);
+  await composer(page).fill("amanheci com 96,3kgs");
+  await page.getByRole("button", { name: "Enviar", exact: true }).click();
+
+  await expect(page.getByText("Registrei o peso de 96.3 kg para hoje.")).toBeVisible();
+  await expect(dayCard(page)).toContainText("96,3 kg");
 });
 
 test("phase 2 follow-up meal note amends the open proposal before confirmation", async ({ page }) => {

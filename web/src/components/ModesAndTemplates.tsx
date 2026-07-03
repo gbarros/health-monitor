@@ -1,16 +1,14 @@
 import { useAui } from "@assistant-ui/react";
-import type { ModeId } from "../types";
 
 type Props = {
-  onModeChange: (mode: ModeId) => void;
   onToast: (message: string) => void;
+  onWeightClick?: () => void;
 };
 
-export function QuickActionRow({ onModeChange, onToast }: Props) {
+export function QuickActionRow({ onToast, onWeightClick }: Props) {
   const aui = useAui();
 
-  const setComposer = (mode: ModeId, template: string) => {
-    onModeChange(mode);
+  const setComposer = (template: string) => {
     aui.thread().composer().setText(template);
   };
 
@@ -19,13 +17,13 @@ export function QuickActionRow({ onModeChange, onToast }: Props) {
       <button type="button" onClick={() => onToast("Repetir refeição entra na fase 5.")}>
         Repetir refeição
       </button>
-      <button type="button" onClick={() => onToast("Registro rápido de peso entra na fase 3.")}>
+      <button type="button" onClick={onWeightClick}>
         Peso
       </button>
       <button
         type="button"
         onClick={() =>
-          setComposer("recipe", "Receita/lote:\nRendimento total:\nIngredientes:\n- ")
+          setComposer("Receita/lote:\nNome:\nRendimento total:\nIngredientes:\n- ")
         }
       >
         Receita/lote
@@ -33,12 +31,12 @@ export function QuickActionRow({ onModeChange, onToast }: Props) {
       <button
         type="button"
         onClick={() =>
-          setComposer("label_scan", "Produto:\nCódigo de barras:\nTabela nutricional:\n")
+          setComposer("Produto:\nCódigo de barras:\nTabela nutricional:\n")
         }
       >
         Escanear rótulo
       </button>
-      <button type="button" onClick={() => setComposer("text_meal", "")}>
+      <button type="button" onClick={() => setComposer("Almoço:\n")}>
         Registrar refeição
       </button>
     </nav>

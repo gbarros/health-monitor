@@ -146,6 +146,7 @@ export async function sendAgentChat(input: {
   message: string;
   settings: AgentSettings;
   today?: string;
+  attachmentIds?: string[];
   signal?: AbortSignal;
 }): Promise<AgentChatResponse> {
   const response = await fetch("/api/agent/chat", {
@@ -156,6 +157,7 @@ export async function sendAgentChat(input: {
       message: input.message,
       today: input.today ?? todayIso(),
       agent_settings: input.settings,
+      attachment_ids: input.attachmentIds?.length ? input.attachmentIds : undefined,
     }),
     signal: input.signal,
   });

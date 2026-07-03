@@ -9,6 +9,7 @@ import {
   loadChatHistory,
   loadPeople,
   loadProposals,
+  logWeight,
   parseOnboardingMessage,
   rejectProposal,
   STORAGE_KEYS,
@@ -25,7 +26,6 @@ import { queryKeys } from "./queryKeys";
 import type {
   AgentChatResponse,
   AgentSettings,
-  ModeId,
   OnboardingDraft,
   Person,
   Proposal,
@@ -40,9 +40,9 @@ function App() {
   const [personId, setPersonId] = useState<string | null>(() =>
     localStorage.getItem(STORAGE_KEYS.personId),
   );
-  const [activeMode, setActiveMode] = useState<ModeId>("general_chat");
   const [settings, setSettings] = useState<AgentSettings>(() => defaultAgentSettings());
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [weightOpen, setWeightOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [inlineProposalIds, setInlineProposalIds] = useState<Set<string>>(() => new Set());
 
@@ -124,7 +124,10 @@ function App() {
       upsertProposal(response.proposal);
       markProposalInline(response.proposal);
     }
-  }, [markProposalInline, upsertProposal]);
+    if (response.behavior_label === "log_weight") {
+      void invalidateDailyReadModels();
+    }
+  }, [invalidateDailyReadModels, markProposalInline, upsertProposal]);
 
   const onProposal = useCallback(
     (proposal: Proposal) => {
@@ -158,6 +161,16 @@ function App() {
     onError: (error) => setToast(error instanceof Error ? error.message : "Não foi possível editar a proposta."),
   });
 
+  const weightCreate = useMutation({
+    mutationFn: (weightKg: number) => logWeight({ personId: selectedPersonId ?? "", weightKg }),
+    onSuccess: async () => {
+      setWeightOpen(false);
+      setToast("Peso registrado.");
+      await invalidateDailyReadModels();
+    },
+    onError: (error) => setToast(error instanceof Error ? error.message : "Não foi possível registrar o peso."),
+  });
+
   const activeDraft = (proposalsQuery.data ?? []).find((proposal) =>
     ["draft", "needs_clarification"].includes(proposal.status),
   );
@@ -166,7 +179,6 @@ function App() {
   const changePerson = (nextPersonId: string) => {
     setPersonId(nextPersonId);
     localStorage.setItem(STORAGE_KEYS.personId, nextPersonId);
-    setActiveMode("general_chat");
   };
 
   const completeOnboarding = async (draft: OnboardingDraft) => {
@@ -204,20 +216,17 @@ function App() {
             key={selectedPersonId}
             householdId={householdId}
             personId={selectedPersonId}
-            activeMode={activeMode}
             today={selectedDay}
             settings={settings}
             initialMessages={initialMessages}
             proposal={fallbackDraft}
-            openDraftProposalId={activeDraft?.status === "draft" ? activeDraft.id : null}
             proposals={proposalsQuery.data ?? []}
             proposalBusy={proposalDecision.isPending || proposalEntryUpdate.isPending}
-            onModeChange={setActiveMode}
             onToast={setToast}
+            onWeightClick={() => setWeightOpen(true)}
             onAgentResponse={onAgentResponse}
             onProposal={onProposal}
             onRuntimeError={onRuntimeError}
-            onModeCompleted={() => setActiveMode("general_chat")}
             onConfirmProposal={(proposal) => proposalDecision.mutate({ proposal, decision: "confirm" })}
             onRejectProposal={(proposal) => proposalDecision.mutate({ proposal, decision: "reject" })}
             onUpdateProposalEntry={(proposal, entry, quantityG) =>
@@ -268,6 +277,14 @@ function App() {
         </div>
       ) : null}
 
+      {weightOpen ? (
+        <WeightModal
+          busy={weightCreate.isPending}
+          onClose={() => setWeightOpen(false)}
+          onSubmit={(weightKg) => weightCreate.mutate(weightKg)}
+        />
+      ) : null}
+
       {toast ? (
         <div className="toast" role="status" aria-live="polite">
           <span>{toast}</span>
@@ -283,40 +300,34 @@ function App() {
 function ChatWorkspace({
   householdId,
   personId,
-  activeMode,
   today,
   settings,
   initialMessages,
   proposal,
   proposals,
-  openDraftProposalId,
   proposalBusy,
-  onModeChange,
   onToast,
+  onWeightClick,
   onAgentResponse,
   onProposal,
   onRuntimeError,
-  onModeCompleted,
   onConfirmProposal,
   onRejectProposal,
   onUpdateProposalEntry,
 }: {
   householdId: string | null;
   personId: string;
-  activeMode: ModeId;
   today: string;
   settings: AgentSettings;
   initialMessages: readonly ThreadMessageLike[];
   proposal?: Proposal;
   proposals: Proposal[];
-  openDraftProposalId: string | null;
   proposalBusy: boolean;
-  onModeChange: (mode: ModeId) => void;
   onToast: (message: string) => void;
+  onWeightClick: () => void;
   onAgentResponse: (response: AgentChatResponse) => void;
   onProposal: (proposal: Proposal) => void;
   onRuntimeError: (message: string) => void;
-  onModeCompleted: () => void;
   onConfirmProposal: (proposal: Proposal) => void;
   onRejectProposal: (proposal: Proposal) => void;
   onUpdateProposalEntry: (proposal: Proposal, entry: ProposalEntry, quantityG: number) => void;
@@ -324,15 +335,12 @@ function ChatWorkspace({
   const runtime = useAgentRuntime({
     householdId,
     personId,
-    activeMode,
     today,
     settings,
     initialMessages,
     onAgentResponse,
     onProposal,
     onRuntimeError,
-    onModeCompleted,
-    openDraftProposalId,
   });
 
   return (
@@ -346,7 +354,7 @@ function ChatWorkspace({
       />
       <section className="chat-column" aria-label="Conversa">
         <DayCard personId={personId} day={today} />
-        <QuickActionRow onModeChange={onModeChange} onToast={onToast} />
+        <QuickActionRow onToast={onToast} onWeightClick={onWeightClick} />
         <ChatInterface />
         <DraftProposalDock
           proposal={proposal}
@@ -454,6 +462,57 @@ function DraftProposalDock({
         onEntryQuantityChange={onUpdateEntry}
       />
     </section>
+  );
+}
+
+function WeightModal({
+  busy,
+  onClose,
+  onSubmit,
+}: {
+  busy: boolean;
+  onClose: () => void;
+  onSubmit: (weightKg: number) => void;
+}) {
+  const [value, setValue] = useState("");
+  const parsed = Number(value.replace(",", "."));
+  const canSubmit = Number.isFinite(parsed) && parsed > 0;
+  return (
+    <div className="modal-backdrop" role="presentation" onClick={onClose}>
+      <form
+        className="small-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Registrar peso"
+        onClick={(event) => event.stopPropagation()}
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (canSubmit) {
+            onSubmit(parsed);
+          }
+        }}
+      >
+        <div className="section-heading">
+          <span>Registrar peso</span>
+          <button type="button" onClick={onClose}>
+            Fechar
+          </button>
+        </div>
+        <label className="field">
+          <span>Peso de hoje (kg)</span>
+          <input
+            autoFocus
+            inputMode="decimal"
+            value={value}
+            placeholder="96,3"
+            onChange={(event) => setValue(event.target.value)}
+          />
+        </label>
+        <button type="submit" className="primary-action" disabled={busy || !canSubmit}>
+          {busy ? "Registrando..." : "Registrar"}
+        </button>
+      </form>
+    </div>
   );
 }
 

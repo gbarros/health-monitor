@@ -1919,9 +1919,10 @@ class HealthMonitorService:
         message: str,
         today: date,
         agent_settings: dict[str, Any] | None = None,
+        attachment_ids: Sequence[str] | None = None,
     ) -> AgentChatResponse:
         settings = self._agent_settings(agent_settings)
-        self._require_person(person_id)
+        person = self._require_person(person_id)
         run = AgentRun(
             id=self._next_id("agent_run"),
             person_id=person_id,
@@ -1940,6 +1941,102 @@ class HealthMonitorService:
             )
             self._persist()
             return response
+
+        if attachment_ids:
+            proposal = self.propose_label_scan(
+                household_id=person.household_id,
+                person_id=person_id,
+                table_text=message or None,
+                attachment_ids=tuple(attachment_ids),
+                set_as_default=True,
+            )
+            self._record_agent_tool_call(
+                run=run,
+                tool_name="route_label_scan",
+                input_summary=f"{len(tuple(attachment_ids))} attachment(s)",
+                output_summary=f"proposal_id={proposal.id}",
+                source_record_ids=(proposal.id,),
+            )
+            self.agent_runs[run.id] = replace(
+                run,
+                status="proposal_created",
+                proposal_id=proposal.id,
+                tool_loop_count=len(self.agent_tool_calls_for_run(run.id)),
+                fallback_reason=self._current_fallback_reason(run),
+            )
+            return finish(
+                AgentChatResponse(
+                    run_id=run.id,
+                    person_id=person_id,
+                    message="Rascunhei uma proposta a partir do rótulo anexado. Revise antes de confirmar.",
+                    behavior_label="draft_label_scan",
+                    proposal_id=proposal.id,
+                )
+            )
+
+        parsed_weight = parse_chat_weight_entry(message)
+        if parsed_weight is not None:
+            measured_at = datetime.combine(today, datetime.min.time()).replace(hour=8)
+            entry = self.log_weight(
+                person_id=person_id,
+                measured_at_local=measured_at.isoformat(),
+                weight_kg=parsed_weight,
+                note="Criado pelo chat.",
+                source="agent_chat",
+            )
+            self._record_agent_tool_call(
+                run=run,
+                tool_name="log_weight",
+                input_summary=f"weight_kg={parsed_weight}",
+                output_summary=f"weight_entry_id={entry.id}",
+                source_record_ids=(entry.id,),
+            )
+            self.agent_runs[run.id] = replace(
+                run,
+                status="answered",
+                tool_loop_count=len(self.agent_tool_calls_for_run(run.id)),
+                fallback_reason=self._current_fallback_reason(run),
+            )
+            return finish(
+                AgentChatResponse(
+                    run_id=run.id,
+                    person_id=person_id,
+                    message=f"Registrei o peso de {entry.weight_kg:g} kg para hoje.",
+                    behavior_label="log_weight",
+                    citations=({"record_type": "weight_entry", "record_id": entry.id},),
+                )
+            )
+
+        if text_looks_like_chat_meal_log(message):
+            proposal = self.propose_text_meal(
+                person_id=person_id,
+                logged_at_local=chat_default_logged_at(message, today=today).isoformat(),
+                text=message,
+                agent_settings=settings,
+            )
+            self._record_agent_tool_call(
+                run=run,
+                tool_name="route_text_meal",
+                input_summary="deterministic meal-log route",
+                output_summary=f"proposal_id={proposal.id}",
+                source_record_ids=(proposal.id,),
+            )
+            self.agent_runs[run.id] = replace(
+                run,
+                status="proposal_created",
+                proposal_id=proposal.id,
+                tool_loop_count=len(self.agent_tool_calls_for_run(run.id)),
+                fallback_reason=self._current_fallback_reason(run),
+            )
+            return finish(
+                AgentChatResponse(
+                    run_id=run.id,
+                    person_id=person_id,
+                    message="Rascunhei a refeição. Revise os itens e confirme para gravar no diário.",
+                    behavior_label="draft_text_meal",
+                    proposal_id=proposal.id,
+                )
+            )
 
         correction = parse_chat_quantity_correction(message)
         if correction is not None:
@@ -4686,6 +4783,49 @@ def text_looks_like_meal_amendment(text: str) -> bool:
         normalized,
     ) is not None
     return bool(has_quantity and not has_explicit_meal_heading)
+
+
+def text_looks_like_chat_meal_log(text: str) -> bool:
+    normalized = text.casefold().strip()
+    if not normalized:
+        return False
+    if text_looks_like_meal_amendment(text):
+        return True
+    if re.match(
+        r"\s*(?:café da manhã|cafe da manha|breakfast|almoço|almoco|lunch|jantar|dinner|lanche|snack)\s*:",
+        normalized,
+    ):
+        return re.search(r"\d+(?:[,.]\d+)?\s*g(?:ramas?)?\s+", normalized) is not None
+    try:
+        _, items = parse_text_meal_items(text, default_logged_at=datetime(2026, 1, 1, 12, 0))
+    except ValueError:
+        return False
+    return any(item.evidence.get("quantity_basis") == "grams" for item in items)
+
+
+def parse_chat_weight_entry(text: str) -> float | None:
+    normalized = text.casefold()
+    if not re.search(r"\b(?:kg|kgs|quilo|quilos|peso|pesei|amanheci)\b", normalized):
+        return None
+    match = re.search(r"(\d{2,3}(?:[,.]\d{1,2})?)\s*(?:kg|kgs|quilo|quilos)?\b", normalized)
+    if match is None:
+        return None
+    weight = float(match.group(1).replace(",", "."))
+    if not 25 <= weight <= 350:
+        return None
+    return weight
+
+
+def chat_default_logged_at(text: str, *, today: date) -> datetime:
+    normalized = text.casefold().strip()
+    hour = 12
+    if re.match(r"\s*(?:café da manhã|cafe da manha|breakfast)\s*:", normalized):
+        hour = 8
+    elif re.match(r"\s*(?:lanche|snack)\s*:", normalized):
+        hour = 16
+    elif re.match(r"\s*(?:jantar|dinner)\s*:", normalized):
+        hour = 20
+    return datetime.combine(today, datetime.min.time()).replace(hour=hour)
 
 
 def parse_text_meal_amendment(text: str) -> tuple[str, list[ParsedMealRemoval]]:
