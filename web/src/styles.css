@@ -334,6 +334,13 @@ h3 {
   padding: 12px;
 }
 
+.data-range-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(160px, 220px));
+  gap: 12px;
+  align-items: end;
+}
+
 .day-card {
   display: grid;
   gap: 12px;
@@ -1227,6 +1234,10 @@ h3 {
   .day-summary-strip {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .data-range-controls {
+    grid-template-columns: 1fr;
   }
 }
 

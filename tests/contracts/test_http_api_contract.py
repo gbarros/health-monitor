@@ -94,9 +94,26 @@ class HttpApiContractTest(unittest.TestCase):
                 "source": "manual",
             },
         )
+        api.handle(
+            "POST",
+            "/api/diary",
+            {
+                "person_id": person["id"],
+                "logged_at_local": "2026-07-02T12:00:00",
+                "food_version_id": version["id"],
+                "quantity_g": 100,
+                "meal_type": "lunch",
+                "source": "manual",
+            },
+        )
         summary = api.handle(
             "GET",
             f"/api/diary/day?person_id={person['id']}&day=2026-07-01",
+            None,
+        ).body
+        range_entries = api.handle(
+            "GET",
+            f"/api/diary/range?person_id={person['id']}&start=2026-07-01&end=2026-07-02",
             None,
         ).body
 
@@ -107,6 +124,8 @@ class HttpApiContractTest(unittest.TestCase):
         self.assertEqual(summary["meals"]["breakfast"][0]["food_name"], "Iogurte Batavo")
         self.assertEqual(summary["meals"]["breakfast"][0]["evidence_status"], "exact")
         self.assertEqual(summary["meals"]["breakfast"][0]["confidence"], 1.0)
+        self.assertEqual([entry["meal_type"] for entry in range_entries], ["breakfast", "lunch"])
+        self.assertEqual([entry["quantity_g"] for entry in range_entries], [150, 100])
 
     def test_manual_diary_log_can_use_serving_count_through_http_contract(self) -> None:
         api = HttpApi(HealthMonitorService())

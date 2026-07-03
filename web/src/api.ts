@@ -5,6 +5,7 @@ import type {
   Attachment,
   BackgroundJob,
   DaySummary,
+  DaySummaryEntry,
   Food,
   FoodLookupCandidate,
   FoodResponse,
@@ -102,6 +103,12 @@ export async function loadChatHistory(personId: string): Promise<AgentChatTurn[]
 export async function loadDaySummary(personId: string, day: string): Promise<DaySummary> {
   return apiGet<DaySummary>(
     `/api/diary/day?person_id=${encodeURIComponent(personId)}&day=${encodeURIComponent(day)}`,
+  );
+}
+
+export async function loadDiaryRange(personId: string, start: string, end: string): Promise<DaySummaryEntry[]> {
+  return apiGet<DaySummaryEntry[]>(
+    `/api/diary/range?person_id=${encodeURIComponent(personId)}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`,
   );
 }
 

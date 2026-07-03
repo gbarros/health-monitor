@@ -10,6 +10,7 @@ import {
   loadActiveGoal,
   loadDaySummary,
   loadChatHistory,
+  loadDiaryRange,
   loadJobs,
   loadPeople,
   loadProposal,
@@ -161,6 +162,7 @@ function App() {
   const invalidateDailyReadModels = useCallback(async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: queryKeys.daySummary(selectedPersonId, selectedDay) }),
+      queryClient.invalidateQueries({ queryKey: ["diaryRange", selectedPersonId] }),
       queryClient.invalidateQueries({ queryKey: queryKeys.activeGoal(selectedPersonId, selectedDay) }),
       queryClient.invalidateQueries({ queryKey: queryKeys.weightTrend(selectedPersonId) }),
       queryClient.invalidateQueries({ queryKey: ["weekSummary", selectedPersonId] }),
@@ -919,16 +921,38 @@ function DataPage({
   jobs: BackgroundJob[];
   turns: AgentChatTurn[];
 }) {
-  const summaryQuery = useQuery({
-    queryKey: queryKeys.daySummary(personId, selectedDay),
-    queryFn: () => loadDaySummary(personId, selectedDay),
+  const [rangeStart, setRangeStart] = useState(selectedDay);
+  const [rangeEnd, setRangeEnd] = useState(selectedDay);
+  useEffect(() => {
+    setRangeStart(selectedDay);
+    setRangeEnd(selectedDay);
+  }, [selectedDay]);
+  const rangeQueryStart = rangeStart <= rangeEnd ? rangeStart : rangeEnd;
+  const rangeQueryEnd = rangeStart <= rangeEnd ? rangeEnd : rangeStart;
+  const diaryRangeQuery = useQuery({
+    queryKey: queryKeys.diaryRange(personId, rangeQueryStart, rangeQueryEnd),
+    queryFn: () => loadDiaryRange(personId, rangeQueryStart, rangeQueryEnd),
   });
-  const entries = Object.values(summaryQuery.data?.meals ?? {}).flat();
+  const entries = diaryRangeQuery.data ?? [];
   return (
     <section className="data-page" aria-label="Dados">
+      <div className="data-range-controls" aria-label="Intervalo do diário">
+        <label className="field">
+          <span>Início</span>
+          <input type="date" value={rangeStart} onChange={(event) => setRangeStart(event.target.value)} />
+        </label>
+        <label className="field">
+          <span>Fim</span>
+          <input type="date" value={rangeEnd} onChange={(event) => setRangeEnd(event.target.value)} />
+        </label>
+      </div>
       <DataTable
-        title={`Diário de ${selectedDay}`}
-        empty="Nenhum item registrado neste dia."
+        title={
+          rangeQueryStart === rangeQueryEnd
+            ? `Diário de ${rangeQueryStart}`
+            : `Diário de ${rangeQueryStart} a ${rangeQueryEnd}`
+        }
+        empty="Nenhum item registrado neste intervalo."
         columns={["Hora", "Refeição", "Alimento", "g", "kcal", "Fonte", "Conf."]}
         rows={entries.map((entry) => diaryEntryRow(entry))}
       />

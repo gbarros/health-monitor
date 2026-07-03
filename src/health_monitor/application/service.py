@@ -1638,6 +1638,21 @@ class HealthMonitorService:
             target_delta=target_delta,
         )
 
+    def diary_entries_range(self, person_id: str, start: date, end: date) -> tuple[DaySummaryEntry, ...]:
+        self._require_person(person_id)
+        if end < start:
+            raise ValueError("end must be on or after start")
+
+        entries: list[DaySummaryEntry] = []
+        current = start
+        while current <= end:
+            summary = self.day_summary(person_id, current)
+            for meal_entries in summary.meals.values():
+                entries.extend(meal_entries)
+            current += timedelta(days=1)
+        entries.sort(key=lambda entry: entry.logged_at)
+        return tuple(entries)
+
     def log_weight(
         self,
         *,

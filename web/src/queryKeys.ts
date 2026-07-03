@@ -1,6 +1,7 @@
 export const queryKeys = {
   people: (householdId: string | null) => ["people", householdId] as const,
   daySummary: (personId: string | null, day: string) => ["daySummary", personId, day] as const,
+  diaryRange: (personId: string | null, start: string, end: string) => ["diaryRange", personId, start, end] as const,
   activeGoal: (personId: string | null, day: string) => ["activeGoal", personId, day] as const,
   weightTrend: (personId: string | null) => ["weightTrend", personId] as const,
   weekSummary: (personId: string | null, start: string, end: string) => ["weekSummary", personId, start, end] as const,

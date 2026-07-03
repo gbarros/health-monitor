@@ -458,6 +458,14 @@ class HttpApi:
             )
             return HttpResponse(200, day_summary_to_dict(summary))
 
+        if method == "GET" and path == "/api/diary/range":
+            entries = self.service.diary_entries_range(
+                person_id=query["person_id"],
+                start=date.fromisoformat(query["start"]),
+                end=date.fromisoformat(query["end"]),
+            )
+            return HttpResponse(200, [day_summary_entry_to_dict(entry) for entry in entries])
+
         if method == "POST" and path == "/api/weights":
             entry = self.service.log_weight(
                 person_id=body["person_id"],
