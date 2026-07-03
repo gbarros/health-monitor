@@ -523,6 +523,7 @@ class HttpApi:
                 logged_at_local=body["logged_at_local"],
                 text=body["text"],
                 agent_settings=body.get("agent_settings"),
+                amend_proposal_id=body.get("amend_proposal_id"),
             )
             return HttpResponse(201, proposal_to_dict(proposal, self.service))
 

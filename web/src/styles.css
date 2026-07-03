@@ -537,13 +537,140 @@ h3 {
 
 .draft-dock {
   display: grid;
-  gap: 10px;
-  padding: 12px;
+  gap: 12px;
+  padding: 0 12px 12px;
 }
 
-.draft-dock p {
+.proposal-card {
+  display: grid;
+  gap: 12px;
+  width: min(760px, 100%);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 14px;
+  box-shadow: 0 10px 26px rgba(17, 24, 39, 0.08);
+}
+
+.proposal-card__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.proposal-card h3 {
+  margin: 2px 0 4px;
+  font-size: 17px;
+  line-height: 1.25;
+}
+
+.proposal-card__meta,
+.proposal-card__empty {
   color: var(--muted);
   font-size: 13px;
+}
+
+.status-pill,
+.confidence-badge {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #eef2f2;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
+.status-pill--draft {
+  background: #e8f1ff;
+  color: #2454a6;
+}
+
+.status-pill--needs_clarification {
+  background: #fff7df;
+  color: #7a4d00;
+}
+
+.status-pill--applied {
+  background: #e6f7ef;
+  color: #126b43;
+}
+
+.status-pill--rejected,
+.status-pill--superseded {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
+.proposal-entry-list {
+  display: grid;
+  gap: 8px;
+}
+
+.proposal-entry-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 96px auto;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fbfcfc;
+  padding: 10px;
+}
+
+.proposal-entry-row__main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.proposal-entry-row__main strong,
+.proposal-entry-row__main span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.proposal-entry-row__main span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.quantity-editor {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: center;
+  min-height: 44px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 0 8px;
+}
+
+.quantity-editor span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.quantity-editor input {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  text-align: right;
+  outline: none;
+}
+
+.proposal-card__totals {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 700;
 }
 
 .proposal-actions {
@@ -663,6 +790,14 @@ h3 {
 
   .entry-meta {
     justify-items: start;
+  }
+
+  .proposal-entry-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .quantity-editor {
+    grid-column: 1 / -1;
   }
 }
 

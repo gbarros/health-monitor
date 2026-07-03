@@ -40,9 +40,9 @@ test("phase 1 mobile shell logs a meal and updates the day card", async ({ page 
   await composer(page).fill("100g Queijo Minas E2E");
   await page.getByRole("button", { name: "Enviar", exact: true }).click();
 
-  await expect(page.getByText("Meal proposal drafted.")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Confirmar" })).toBeVisible();
-  await page.getByRole("button", { name: "Confirmar" }).click();
+  await expect(page.getByText("Proposta de refeição pronta.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Confirmar" }).last()).toBeVisible();
+  await page.getByRole("button", { name: "Confirmar" }).last().click();
 
   await expect(card).toContainText("315 kcal");
   await expect(card).toContainText("Queijo Minas E2E");
@@ -59,6 +59,47 @@ test("phase 1 chat history hydrates after reload without duplicating the reply",
   await page.reload();
   await expect(page.getByText("Can you alter my profile and goals?")).toHaveCount(1);
   await expect(page.getByText("I can help change profile fields and nutrition goals")).toHaveCount(1);
+});
+
+test("phase 2 follow-up meal note amends the open proposal before confirmation", async ({ page }) => {
+  await createFirstProfile(page, "Bruno");
+  const ids = await storedIds(page);
+  await seedFood(page, ids.householdId, {
+    name: "Arroz E2E",
+    version_label: "cozido",
+    nutrients_per_100g: { calories_kcal: 130, protein_g: 2.7, carbs_g: 28, fat_g: 0.3 },
+    aliases: ["arroz e2e"],
+  });
+  await seedFood(page, ids.householdId, {
+    name: "Feijao E2E",
+    version_label: "cozido",
+    nutrients_per_100g: { calories_kcal: 76, protein_g: 4.8, carbs_g: 13.6, fat_g: 0.5 },
+    aliases: ["feijao e2e", "feijão e2e"],
+  });
+  await seedFood(page, ids.householdId, {
+    name: "Frango E2E",
+    version_label: "grelhado",
+    nutrients_per_100g: { calories_kcal: 165, protein_g: 31, carbs_g: 0, fat_g: 3.6 },
+    aliases: ["frango e2e"],
+  });
+
+  await page.getByLabel("Ações rápidas").getByRole("button", { name: "Registrar refeição" }).click();
+  await composer(page).fill("Almoço:\n150g Arroz E2E\n100g Feijao E2E");
+  await page.getByRole("button", { name: "Enviar", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "2 diary entries drafted from text meal" })).toBeVisible();
+
+  await composer(page).fill("esqueci 113g de Frango E2E");
+  await page.getByRole("button", { name: "Enviar", exact: true }).click();
+
+  await expect(page.getByRole("heading", { name: "3 diary entries drafted after meal amendment" })).toBeVisible();
+  await expect(page.getByText("Frango E2E", { exact: true })).toBeVisible();
+  await expect(page.getByText("Substituída")).toBeVisible();
+  await page.getByRole("button", { name: "Confirmar" }).last().click();
+
+  const card = dayCard(page);
+  await expect(card).toContainText("Arroz E2E");
+  await expect(card).toContainText("Feijao E2E");
+  await expect(card).toContainText("Frango E2E");
 });
 
 async function createFirstProfile(page: Page, personName: string): Promise<void> {
@@ -93,4 +134,24 @@ async function storedIds(page: Page): Promise<{ householdId: string; personId: s
     throw new Error("Expected onboarding to store household and person ids");
   }
   return { householdId: ids.householdId, personId: ids.personId };
+}
+
+async function seedFood(
+  page: Page,
+  householdId: string,
+  food: {
+    name: string;
+    version_label: string;
+    nutrients_per_100g: Record<string, number>;
+    aliases: string[];
+  },
+): Promise<void> {
+  await page.request.post("/api/foods", {
+    data: {
+      household_id: householdId,
+      brand: "E2E",
+      source: "manual_e2e",
+      ...food,
+    },
+  });
 }

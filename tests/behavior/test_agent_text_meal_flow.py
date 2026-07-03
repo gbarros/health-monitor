@@ -332,6 +332,105 @@ class AgentTextMealFlowTest(unittest.TestCase):
         self.assertEqual(summary.meals["breakfast"][0].food_name, "Leite mais proteico")
         self.assertEqual(summary.totals.rounded(), Nutrients(50, 10, 4, 0.5))
 
+    def test_follow_up_text_meal_amends_open_draft_and_supersedes_original(self) -> None:
+        service = HealthMonitorService()
+        household = service.create_household(name="Casa")
+        person = service.create_person(
+            household_id=household.id,
+            name="Gabriel",
+            timezone="America/Sao_Paulo",
+        )
+        service.create_food_with_version(
+            household_id=household.id,
+            name="Arroz",
+            brand=None,
+            version_label="cozido",
+            nutrients_per_100g=Nutrients(calories_kcal=130, protein_g=2.7, carbs_g=28, fat_g=0.3),
+            source="reference",
+            aliases=["arroz"],
+        )
+        service.create_food_with_version(
+            household_id=household.id,
+            name="Feijão",
+            brand=None,
+            version_label="cozido",
+            nutrients_per_100g=Nutrients(calories_kcal=76, protein_g=4.8, carbs_g=13.6, fat_g=0.5),
+            source="reference",
+            aliases=["feijao", "feijão"],
+        )
+        service.create_food_with_version(
+            household_id=household.id,
+            name="Frango",
+            brand=None,
+            version_label="grelhado",
+            nutrients_per_100g=Nutrients(calories_kcal=165, protein_g=31, carbs_g=0, fat_g=3.6),
+            source="reference",
+            aliases=["frango"],
+        )
+
+        original = service.propose_text_meal(
+            person_id=person.id,
+            logged_at_local="2026-07-01T12:00:00",
+            text="Almoço: 150g arroz\n100g feijão",
+            agent_settings={"external_lookup": False},
+        )
+        amended = service.propose_text_meal(
+            person_id=person.id,
+            logged_at_local="2026-07-01T12:15:00",
+            text="esqueci 113g de frango",
+            agent_settings={"external_lookup": False},
+        )
+        superseded = service.get_proposal(original.id)
+        applied = service.confirm_proposal(amended.id)
+        summary = service.day_summary(person.id, date(2026, 7, 1))
+
+        self.assertEqual(superseded.status, "superseded")
+        self.assertEqual(superseded.payload["superseded_by_proposal_id"], amended.id)
+        self.assertEqual(amended.status, "draft")
+        self.assertEqual(amended.payload["amended_from_proposal_id"], original.id)
+        self.assertEqual(len(amended.entries), 3)
+        self.assertEqual([entry.quantity_g for entry in amended.entries], [150, 100, 113])
+        self.assertEqual(applied.status, "applied")
+        self.assertEqual(len(summary.meals["lunch"]), 3)
+        self.assertEqual(summary.meals["lunch"][2].food_name, "Frango")
+
+    def test_explicit_text_meal_amendment_can_subtract_from_open_draft(self) -> None:
+        service = HealthMonitorService()
+        household = service.create_household(name="Casa")
+        person = service.create_person(
+            household_id=household.id,
+            name="Gabriel",
+            timezone="America/Sao_Paulo",
+        )
+        service.create_food_with_version(
+            household_id=household.id,
+            name="Frango",
+            brand=None,
+            version_label="grelhado",
+            nutrients_per_100g=Nutrients(calories_kcal=165, protein_g=31, carbs_g=0, fat_g=3.6),
+            source="reference",
+            aliases=["frango"],
+        )
+        original = service.propose_text_meal(
+            person_id=person.id,
+            logged_at_local="2026-07-01T12:00:00",
+            text="200g frango",
+            agent_settings={"external_lookup": False},
+        )
+
+        amended = service.propose_text_meal(
+            person_id=person.id,
+            logged_at_local="2026-07-01T12:05:00",
+            text="-50g frango",
+            amend_proposal_id=original.id,
+            agent_settings={"external_lookup": False},
+        )
+
+        self.assertEqual(service.get_proposal(original.id).status, "superseded")
+        self.assertEqual(len(amended.entries), 1)
+        self.assertEqual(amended.entries[0].quantity_g, 150)
+        self.assertEqual(amended.totals.rounded(), Nutrients(calories_kcal=247.5, protein_g=46.5, carbs_g=0, fat_g=5.4))
+
     def test_same_breakfast_as_yesterday_copies_structured_entries_as_proposal(self) -> None:
         service = HealthMonitorService()
         household = service.create_household(name="Casa")

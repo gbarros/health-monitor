@@ -11,6 +11,7 @@ import type {
   ThreadMessageLike,
   ThreadUserMessagePart,
 } from "@assistant-ui/react";
+import type { ReadonlyJSONObject } from "assistant-stream/utils";
 import { useMemo } from "react";
 import {
   draftLabelScan,
@@ -28,6 +29,7 @@ type RuntimeContext = {
   today: string;
   settings: AgentSettings;
   initialMessages: readonly ThreadMessageLike[];
+  openDraftProposalId?: string | null;
   onAgentResponse: (response: AgentChatResponse) => void;
   onProposal: (proposal: Proposal) => void;
   onRuntimeError: (message: string) => void;
@@ -42,6 +44,7 @@ export function useAgentRuntime(context: RuntimeContext) {
     today,
     settings,
     initialMessages,
+    openDraftProposalId,
     onAgentResponse,
     onProposal,
     onRuntimeError,
@@ -68,16 +71,17 @@ export function useAgentRuntime(context: RuntimeContext) {
         }
 
         try {
-          if (activeMode === "text_meal") {
+          if (activeMode === "text_meal" || shouldDraftMealFromChat(activeMode, text, openDraftProposalId)) {
             const proposal = await draftTextMeal({
               personId,
               text,
               settings,
+              amendProposalId: activeMode === "text_meal" ? undefined : openDraftProposalId ?? undefined,
               signal: options.abortSignal,
             });
             onProposal(proposal);
             onModeCompleted?.();
-            return assistantText(proposalReply(proposal, "Meal proposal drafted."));
+            return assistantProposal(proposal, proposalReply(proposal, "Proposta de refeição pronta."));
           }
 
           if (activeMode === "recipe") {
@@ -92,7 +96,7 @@ export function useAgentRuntime(context: RuntimeContext) {
             });
             onProposal(proposal);
             onModeCompleted?.();
-            return assistantText(proposalReply(proposal, "Recipe proposal drafted."));
+            return assistantProposal(proposal, proposalReply(proposal, "Proposta de receita pronta."));
           }
 
           if (activeMode === "label_scan") {
@@ -113,7 +117,7 @@ export function useAgentRuntime(context: RuntimeContext) {
             });
             onProposal(proposal);
             onModeCompleted?.();
-            return assistantText(proposalReply(proposal, "Product label proposal drafted."));
+            return assistantProposal(proposal, proposalReply(proposal, "Proposta de rótulo pronta."));
           }
 
           const response = await sendAgentChat({
@@ -135,7 +139,7 @@ export function useAgentRuntime(context: RuntimeContext) {
         }
       },
     };
-  }, [activeMode, householdId, onAgentResponse, onModeCompleted, onProposal, onRuntimeError, personId, settings, today]);
+  }, [activeMode, householdId, onAgentResponse, onModeCompleted, onProposal, onRuntimeError, openDraftProposalId, personId, settings, today]);
 
   const attachments = useMemo(
     () => new CompositeAttachmentAdapter([new SimpleImageAttachmentAdapter(), new SimpleTextAttachmentAdapter()]),
@@ -151,6 +155,23 @@ export function useAgentRuntime(context: RuntimeContext) {
 function assistantText(text: string): ChatModelRunResult {
   return {
     content: [{ type: "text", text }],
+  };
+}
+
+function assistantProposal(proposal: Proposal, text: string): ChatModelRunResult {
+  const proposalJson = JSON.parse(JSON.stringify(proposal)) as ReadonlyJSONObject;
+  return {
+    content: [
+      { type: "text", text },
+      {
+        type: "tool-call",
+        toolCallId: `proposal-${proposal.id}`,
+        toolName: "draft_proposal",
+        args: { proposal: proposalJson },
+        argsText: JSON.stringify({ proposal: proposalJson }),
+        result: { proposal },
+      },
+    ],
   };
 }
 
@@ -170,6 +191,20 @@ function messageForMode(mode: ModeId, text: string): string {
     return `Review note request:\n${text}`;
   }
   return text;
+}
+
+function shouldDraftMealFromChat(mode: ModeId, text: string, openDraftProposalId?: string | null): boolean {
+  if (mode !== "general_chat" || !openDraftProposalId) {
+    return false;
+  }
+  const normalized = text.toLocaleLowerCase("pt-BR");
+  if (/^\s*-+\s*\d/.test(normalized)) {
+    return true;
+  }
+  if (/\b(esqueci|faltou|adicione|adiciona|remove|remova|subtrai|retira)\b/.test(normalized)) {
+    return true;
+  }
+  return /\d+(?:[,.]\d+)?\s*g(?:ramas?)?\s+\S+/.test(normalized);
 }
 
 function chatReply(response: AgentChatResponse): string {

@@ -91,10 +91,25 @@ export type Proposal = {
   totals?: Nutrients;
   payload?: Record<string, unknown>;
   evidence?: Array<Record<string, unknown>>;
-  entries?: Array<Record<string, unknown>>;
+  entries?: ProposalEntry[];
   created_at?: string;
   confirmed_at?: string | null;
   rejected_at?: string | null;
+};
+
+export type ProposalEntry = {
+  id: string;
+  logged_at: string;
+  meal_type: string;
+  food_id?: string;
+  food_name?: string;
+  brand?: string | null;
+  food_version_id: string;
+  food_version_label?: string;
+  quantity_g: number;
+  nutrients?: Nutrients;
+  source?: string;
+  confidence?: number;
 };
 
 export type AgentChatResponse = {

@@ -104,6 +104,28 @@ export async function rejectProposal(proposalId: string): Promise<Proposal> {
   return apiPost<Proposal>(`/api/proposals/${encodeURIComponent(proposalId)}/reject`, {});
 }
 
+export async function updateProposalEntry(input: {
+  proposalId: string;
+  entryId: string;
+  quantityG?: number;
+  mealType?: string;
+  foodVersionId?: string;
+}): Promise<Proposal> {
+  const response = await fetch(
+    `/api/proposals/${encodeURIComponent(input.proposalId)}/entries/${encodeURIComponent(input.entryId)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        quantity_g: input.quantityG,
+        meal_type: input.mealType,
+        food_version_id: input.foodVersionId,
+      }),
+    },
+  );
+  return decodeResponse<Proposal>(response);
+}
+
 export async function logWeight(input: {
   personId: string;
   weightKg: number;
@@ -144,6 +166,7 @@ export async function draftTextMeal(input: {
   personId: string;
   text: string;
   settings: AgentSettings;
+  amendProposalId?: string;
   signal?: AbortSignal;
 }): Promise<Proposal> {
   const response = await fetch("/api/agent/text-meal", {
@@ -154,6 +177,7 @@ export async function draftTextMeal(input: {
       logged_at_local: localDateTimeForApi(),
       text: input.text,
       agent_settings: input.settings,
+      amend_proposal_id: input.amendProposalId,
     }),
     signal: input.signal,
   });

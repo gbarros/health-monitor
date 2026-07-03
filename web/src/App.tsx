@@ -1,4 +1,4 @@
-import { AssistantRuntimeProvider, type ThreadMessageLike } from "@assistant-ui/react";
+import { AssistantRuntimeProvider, useAssistantToolUI, type ThreadMessageLike } from "@assistant-ui/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { FormEvent } from "react";
 import { useCallback, useMemo, useState } from "react";
@@ -13,11 +13,13 @@ import {
   rejectProposal,
   STORAGE_KEYS,
   todayIsoForTimezone,
+  updateProposalEntry,
 } from "./api";
 import { ChatInterface } from "./components/ChatInterface";
 import { DayCard } from "./components/DayCard";
 import { ContextPanel } from "./components/ManualInputs";
 import { QuickActionRow } from "./components/ModesAndTemplates";
+import { ProposalCard } from "./components/ProposalCard";
 import { useAgentRuntime } from "./hooks/useAgentRuntime";
 import { queryKeys } from "./queryKeys";
 import type {
@@ -27,6 +29,7 @@ import type {
   OnboardingDraft,
   Person,
   Proposal,
+  ProposalEntry,
 } from "./types";
 
 function App() {
@@ -41,6 +44,7 @@ function App() {
   const [settings, setSettings] = useState<AgentSettings>(() => defaultAgentSettings());
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [inlineProposalIds, setInlineProposalIds] = useState<Set<string>>(() => new Set());
 
   const peopleQuery = useQuery({
     queryKey: queryKeys.people(householdId),
@@ -91,25 +95,43 @@ function App() {
 
   const upsertProposal = useCallback(
     (proposal: Proposal) => {
-      queryClient.setQueryData<Proposal[]>(queryKeys.proposals(proposal.person_id), (current = []) => [
-        proposal,
-        ...current.filter((item) => item.id !== proposal.id),
-      ]);
+      queryClient.setQueryData<Proposal[]>(queryKeys.proposals(proposal.person_id), (current = []) => {
+        const supersededId =
+          typeof proposal.payload?.["amended_from_proposal_id"] === "string"
+            ? proposal.payload["amended_from_proposal_id"]
+            : null;
+        const currentWithSuperseded = current.map((item) =>
+          supersededId != null && item.id === supersededId
+            ? {
+                ...item,
+                status: "superseded",
+                payload: { ...(item.payload ?? {}), superseded_by_proposal_id: proposal.id },
+              }
+            : item,
+        );
+        return [proposal, ...currentWithSuperseded.filter((item) => item.id !== proposal.id)];
+      });
     },
     [queryClient],
   );
 
+  const markProposalInline = useCallback((proposal: Proposal) => {
+    setInlineProposalIds((current) => new Set(current).add(proposal.id));
+  }, []);
+
   const onAgentResponse = useCallback((response: AgentChatResponse) => {
     if (response.proposal) {
       upsertProposal(response.proposal);
+      markProposalInline(response.proposal);
     }
-  }, [upsertProposal]);
+  }, [markProposalInline, upsertProposal]);
 
   const onProposal = useCallback(
     (proposal: Proposal) => {
       upsertProposal(proposal);
+      markProposalInline(proposal);
     },
-    [upsertProposal],
+    [markProposalInline, upsertProposal],
   );
 
   const onRuntimeError = useCallback((message: string) => {
@@ -126,9 +148,20 @@ function App() {
     onError: (error) => setToast(error instanceof Error ? error.message : "Não foi possível atualizar a proposta."),
   });
 
+  const proposalEntryUpdate = useMutation({
+    mutationFn: ({ proposal, entry, quantityG }: { proposal: Proposal; entry: ProposalEntry; quantityG: number }) =>
+      updateProposalEntry({ proposalId: proposal.id, entryId: entry.id, quantityG }),
+    onSuccess: async (proposal) => {
+      upsertProposal(proposal);
+      await invalidateDailyReadModels();
+    },
+    onError: (error) => setToast(error instanceof Error ? error.message : "Não foi possível editar a proposta."),
+  });
+
   const activeDraft = (proposalsQuery.data ?? []).find((proposal) =>
     ["draft", "needs_clarification"].includes(proposal.status),
   );
+  const fallbackDraft = activeDraft && !inlineProposalIds.has(activeDraft.id) ? activeDraft : undefined;
 
   const changePerson = (nextPersonId: string) => {
     setPersonId(nextPersonId);
@@ -175,8 +208,10 @@ function App() {
             today={selectedDay}
             settings={settings}
             initialMessages={initialMessages}
-            proposal={activeDraft}
-            proposalBusy={proposalDecision.isPending}
+            proposal={fallbackDraft}
+            openDraftProposalId={activeDraft?.status === "draft" ? activeDraft.id : null}
+            proposals={proposalsQuery.data ?? []}
+            proposalBusy={proposalDecision.isPending || proposalEntryUpdate.isPending}
             onModeChange={setActiveMode}
             onToast={setToast}
             onAgentResponse={onAgentResponse}
@@ -185,6 +220,9 @@ function App() {
             onModeCompleted={() => setActiveMode("general_chat")}
             onConfirmProposal={(proposal) => proposalDecision.mutate({ proposal, decision: "confirm" })}
             onRejectProposal={(proposal) => proposalDecision.mutate({ proposal, decision: "reject" })}
+            onUpdateProposalEntry={(proposal, entry, quantityG) =>
+              proposalEntryUpdate.mutate({ proposal, entry, quantityG })
+            }
           />
         ) : (
           <section className="chat-column" aria-label="Conversa">
@@ -250,6 +288,8 @@ function ChatWorkspace({
   settings,
   initialMessages,
   proposal,
+  proposals,
+  openDraftProposalId,
   proposalBusy,
   onModeChange,
   onToast,
@@ -259,6 +299,7 @@ function ChatWorkspace({
   onModeCompleted,
   onConfirmProposal,
   onRejectProposal,
+  onUpdateProposalEntry,
 }: {
   householdId: string | null;
   personId: string;
@@ -267,6 +308,8 @@ function ChatWorkspace({
   settings: AgentSettings;
   initialMessages: readonly ThreadMessageLike[];
   proposal?: Proposal;
+  proposals: Proposal[];
+  openDraftProposalId: string | null;
   proposalBusy: boolean;
   onModeChange: (mode: ModeId) => void;
   onToast: (message: string) => void;
@@ -276,6 +319,7 @@ function ChatWorkspace({
   onModeCompleted: () => void;
   onConfirmProposal: (proposal: Proposal) => void;
   onRejectProposal: (proposal: Proposal) => void;
+  onUpdateProposalEntry: (proposal: Proposal, entry: ProposalEntry, quantityG: number) => void;
 }) {
   const runtime = useAgentRuntime({
     householdId,
@@ -288,10 +332,18 @@ function ChatWorkspace({
     onProposal,
     onRuntimeError,
     onModeCompleted,
+    openDraftProposalId,
   });
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
+      <ProposalToolRenderer
+        proposals={proposals}
+        busy={proposalBusy}
+        onConfirm={onConfirmProposal}
+        onReject={onRejectProposal}
+        onUpdateEntry={onUpdateProposalEntry}
+      />
       <section className="chat-column" aria-label="Conversa">
         <DayCard personId={personId} day={today} />
         <QuickActionRow onModeChange={onModeChange} onToast={onToast} />
@@ -301,10 +353,52 @@ function ChatWorkspace({
           busy={proposalBusy}
           onConfirm={onConfirmProposal}
           onReject={onRejectProposal}
+          onUpdateEntry={onUpdateProposalEntry}
         />
       </section>
     </AssistantRuntimeProvider>
   );
+}
+
+function ProposalToolRenderer({
+  proposals,
+  busy,
+  onConfirm,
+  onReject,
+  onUpdateEntry,
+}: {
+  proposals: Proposal[];
+  busy: boolean;
+  onConfirm: (proposal: Proposal) => void;
+  onReject: (proposal: Proposal) => void;
+  onUpdateEntry: (proposal: Proposal, entry: ProposalEntry, quantityG: number) => void;
+}) {
+  const proposalById = useMemo(() => new Map(proposals.map((proposal) => [proposal.id, proposal])), [proposals]);
+  const tool = useMemo(
+    () => ({
+      toolName: "draft_proposal",
+      display: "standalone" as const,
+      render: ({ args, result }: { args?: { proposal?: Proposal }; result?: { proposal?: Proposal } }) => {
+        const rawProposal = result?.proposal ?? args?.proposal;
+        const proposal = rawProposal ? proposalById.get(rawProposal.id) ?? rawProposal : null;
+        if (!proposal) {
+          return null;
+        }
+        return (
+          <ProposalCard
+            proposal={proposal}
+            busy={busy}
+            onConfirm={onConfirm}
+            onReject={onReject}
+            onEntryQuantityChange={onUpdateEntry}
+          />
+        );
+      },
+    }),
+    [busy, onConfirm, onReject, onUpdateEntry, proposalById],
+  );
+  useAssistantToolUI(tool);
+  return null;
 }
 
 function PersonChips({
@@ -339,31 +433,26 @@ function DraftProposalDock({
   busy,
   onConfirm,
   onReject,
+  onUpdateEntry,
 }: {
   proposal?: Proposal;
   busy: boolean;
   onConfirm: (proposal: Proposal) => void;
   onReject: (proposal: Proposal) => void;
+  onUpdateEntry: (proposal: Proposal, entry: ProposalEntry, quantityG: number) => void;
 }) {
   if (!proposal) {
     return null;
   }
-  const canConfirm = proposal.status === "draft";
   return (
     <section className="draft-dock" aria-label="Proposta pendente">
-      <div>
-        <p className="eyebrow">Proposta</p>
-        <h3>{proposal.summary}</h3>
-        <p>{proposalTotals(proposal)}</p>
-      </div>
-      <div className="proposal-actions">
-        <button type="button" onClick={() => onReject(proposal)} disabled={busy}>
-          Rejeitar
-        </button>
-        <button type="button" className="primary-action" onClick={() => onConfirm(proposal)} disabled={busy || !canConfirm}>
-          {canConfirm ? "Confirmar" : "Precisa revisar"}
-        </button>
-      </div>
+      <ProposalCard
+        proposal={proposal}
+        busy={busy}
+        onConfirm={onConfirm}
+        onReject={onReject}
+        onEntryQuantityChange={onUpdateEntry}
+      />
     </section>
   );
 }
@@ -434,21 +523,6 @@ function OnboardingScreen({ onCreate }: { onCreate: (draft: OnboardingDraft) => 
       </section>
     </main>
   );
-}
-
-function proposalTotals(proposal: Proposal): string {
-  const totals = proposal.totals;
-  if (!totals) {
-    return "Sem totais nutricionais nesta proposta.";
-  }
-  return [
-    totals.calories_kcal != null ? `${Math.round(totals.calories_kcal)} kcal` : null,
-    totals.protein_g != null ? `${Math.round(totals.protein_g)}g prot` : null,
-    totals.carbs_g != null ? `${Math.round(totals.carbs_g)}g carb` : null,
-    totals.fat_g != null ? `${Math.round(totals.fat_g)}g gord` : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
 }
 
 export default App;

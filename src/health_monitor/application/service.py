@@ -248,6 +248,13 @@ class ParsedMealItem:
 
 
 @dataclass(frozen=True)
+class ParsedMealRemoval:
+    phrase: str
+    quantity_g: float
+    source_text: str
+
+
+@dataclass(frozen=True)
 class ParsedNutritionLabel:
     food_name: str
     brand: str | None
@@ -2049,11 +2056,11 @@ class HealthMonitorService:
         logged_at_local: str,
         text: str,
         agent_settings: dict[str, Any] | None = None,
+        amend_proposal_id: str | None = None,
     ) -> CreateDiaryEntriesProposal:
         settings = self._agent_settings(agent_settings)
         person = self._require_person(person_id)
         logged_at = self._parse_person_datetime(logged_at_local, person)
-        repeated_meal = parse_repeated_meal_reference(text, default_logged_at=logged_at)
         run = AgentRun(
             id=self._next_id("agent_run"),
             person_id=person_id,
@@ -2063,6 +2070,24 @@ class HealthMonitorService:
             **self._run_metadata(settings),
         )
         self.agent_runs[run.id] = run
+
+        amendment_target_id = amend_proposal_id or self._find_open_meal_amendment_target(
+            person_id=person_id,
+            logged_at=logged_at,
+            text=text,
+        )
+        if amendment_target_id is not None:
+            proposal = self._create_amended_text_meal_proposal(
+                proposal_id=amendment_target_id,
+                person_id=person_id,
+                text=text,
+                run=run,
+                logged_at=logged_at,
+            )
+            self._persist()
+            return proposal
+
+        repeated_meal = parse_repeated_meal_reference(text, default_logged_at=logged_at)
         pydantic_proposal = self._try_pydantic_ai_text_meal(
             person_id=person_id,
             logged_at_local=logged_at_local,
@@ -2383,6 +2408,238 @@ class HealthMonitorService:
         )
         self._persist()
         return proposal
+
+    def _find_open_meal_amendment_target(
+        self,
+        *,
+        person_id: str,
+        logged_at: datetime,
+        text: str,
+    ) -> str | None:
+        if not text_looks_like_meal_amendment(text):
+            return None
+        candidates: list[CreateDiaryEntriesProposal] = []
+        for proposal in self.proposals.proposals.values():
+            if proposal.person_id != person_id or proposal.status != "draft" or not proposal.entries:
+                continue
+            if proposal.proposal_type not in {"diary_entries", "diary_entries_with_estimates"}:
+                continue
+            latest_entry_time = max(entry.logged_at for entry in proposal.entries)
+            if latest_entry_time.date() != logged_at.date():
+                continue
+            if abs((logged_at - latest_entry_time).total_seconds()) > 4 * 60 * 60:
+                continue
+            candidates.append(proposal)
+        if not candidates:
+            return None
+        candidates.sort(key=lambda proposal: (proposal.created_at, proposal.id), reverse=True)
+        return candidates[0].id
+
+    def _create_amended_text_meal_proposal(
+        self,
+        *,
+        proposal_id: str,
+        person_id: str,
+        text: str,
+        run: AgentRun,
+        logged_at: datetime,
+    ) -> CreateDiaryEntriesProposal:
+        original = self.proposals.proposals[proposal_id]
+        if original.person_id != person_id:
+            raise ValueError("proposal belongs to a different person")
+        if original.status != "draft":
+            raise ValueError("only draft proposals can be amended")
+        if original.proposal_type not in {"diary_entries", "diary_entries_with_estimates"}:
+            raise ValueError(f"proposal type cannot be amended as a meal: {original.proposal_type}")
+
+        additions_text, removals = parse_text_meal_amendment(text)
+        updated_entries = [
+            DiaryEntry(
+                id=self._next_id("diary_entry"),
+                person_id=entry.person_id,
+                logged_at=entry.logged_at,
+                meal_type=entry.meal_type,
+                food_version_id=entry.food_version_id,
+                quantity_g=entry.quantity_g,
+                source=entry.source,
+                deleted_at=entry.deleted_at,
+            )
+            for entry in original.entries
+        ]
+        evidence = [dict(item) for item in original.evidence]
+        warnings: list[str] = []
+
+        for removal in removals:
+            match_index = next(
+                (
+                    index
+                    for index, entry in enumerate(updated_entries)
+                    if self._proposal_entry_matches_phrase(entry, removal.phrase)
+                ),
+                None,
+            )
+            if match_index is None:
+                warnings.append(f"Could not find an open proposal item matching '{removal.phrase}'.")
+                continue
+            entry = updated_entries[match_index]
+            remaining_quantity = entry.quantity_g - removal.quantity_g
+            if remaining_quantity <= 0:
+                removed = updated_entries.pop(match_index)
+                evidence.append(
+                    {
+                        "source_type": "text_meal_amendment",
+                        "source_text": removal.source_text,
+                        "action": "remove_entry",
+                        "food_version_id": removed.food_version_id,
+                        "quantity_g": removed.quantity_g,
+                        "confidence": 0.85,
+                    }
+                )
+            else:
+                updated_entries[match_index] = DiaryEntry(
+                    id=entry.id,
+                    person_id=entry.person_id,
+                    logged_at=entry.logged_at,
+                    meal_type=entry.meal_type,
+                    food_version_id=entry.food_version_id,
+                    quantity_g=remaining_quantity,
+                    source=entry.source,
+                    deleted_at=entry.deleted_at,
+                )
+                evidence.append(
+                    {
+                        "source_type": "text_meal_amendment",
+                        "source_text": removal.source_text,
+                        "action": "subtract_quantity",
+                        "food_version_id": entry.food_version_id,
+                        "quantity_g": removal.quantity_g,
+                        "remaining_quantity_g": remaining_quantity,
+                        "confidence": 0.85,
+                    }
+                )
+
+        added_items: list[ParsedMealItem] = []
+        if additions_text:
+            try:
+                _, added_items = parse_text_meal_items(additions_text, default_logged_at=logged_at)
+            except ValueError as exc:
+                proposal = self._create_text_meal_clarification_proposal(
+                    person_id=person_id,
+                    text=text,
+                    run=run,
+                    logged_at=logged_at,
+                    unresolved_items=(
+                        ParsedMealItem(
+                            phrase=text.casefold().strip(),
+                            quantity_g=0,
+                            source_text=text,
+                            evidence={
+                                "quantity_basis": "unparseable_amendment",
+                                "parse_error": str(exc),
+                            },
+                        ),
+                    ),
+                    missing_fields=("parseable_food_item",),
+                    summary="Need a clearer food and quantity before amending this meal.",
+                )
+                return proposal
+
+        for item in added_items:
+            if item.evidence.get("quantity_basis") != "grams":
+                proposal = self._create_text_meal_clarification_proposal(
+                    person_id=person_id,
+                    text=text,
+                    run=run,
+                    logged_at=logged_at,
+                    unresolved_items=(item,),
+                    summary="Need grams before amending this meal.",
+                )
+                return proposal
+            resolution = self.resolve_food_reference(
+                household_id=self._require_person(person_id).household_id,
+                person_id=person_id,
+                phrase=item.phrase,
+            )
+            version = self.catalog.get_version(resolution.food_version_id)
+            food = self.catalog.foods[version.food_id]
+            entry = DiaryEntry(
+                id=self._next_id("diary_entry"),
+                person_id=person_id,
+                logged_at=logged_at,
+                meal_type=original.entries[0].meal_type if original.entries else infer_meal_type(logged_at),
+                food_version_id=version.id,
+                quantity_g=item.quantity_g,
+                source="agent_amendment_proposal",
+            )
+            updated_entries.append(entry)
+            evidence.append(
+                {
+                    "source_type": "text_meal_amendment",
+                    "source_text": item.source_text,
+                    "action": "add_entry",
+                    "phrase": item.phrase,
+                    "food_id": food.id,
+                    "food_name": food.name,
+                    "food_version_id": version.id,
+                    "quantity_g": item.quantity_g,
+                    "resolution_reason": resolution.reason,
+                    "confidence": resolution.confidence,
+                    **item.evidence,
+                }
+            )
+            self._record_agent_tool_call(
+                run=run,
+                tool_name="resolve_food_reference",
+                input_summary=f"amend phrase={item.phrase}",
+                output_summary=f"{food.name} / {version.label}; reason={resolution.reason}",
+                source_record_ids=(food.id, version.id),
+            )
+
+        if not updated_entries:
+            raise ValueError("amendment would leave the proposal empty")
+
+        payload = {
+            **original.payload,
+            "amended_from_proposal_id": original.id,
+            "raw_amendment_text": text,
+            "amendment_warnings": warnings,
+        }
+        totals = self._proposal_entries_total(tuple(updated_entries), payload=payload)
+        proposal_type = "diary_entries_with_estimates" if payload.get("estimated_food_versions") else "diary_entries"
+        amended = self.proposals.create(
+            CreateDiaryEntriesProposal(
+                id=self._next_id("proposal"),
+                person_id=person_id,
+                entries=tuple(updated_entries),
+                proposal_type=proposal_type,
+                summary=f"{len(updated_entries)} diary entries drafted after meal amendment",
+                payload=payload,
+                totals=totals,
+                evidence=tuple(evidence),
+                source_agent_run_id=run.id,
+            )
+        )
+        self.proposals.supersede(original.id, superseded_by_proposal_id=amended.id)
+        self.agent_runs[run.id] = replace(
+            run,
+            status="proposal_created",
+            proposal_id=amended.id,
+            tool_loop_count=len(self.agent_tool_calls_for_run(run.id)),
+            fallback_reason=self._current_fallback_reason(run),
+        )
+        return amended
+
+    def _proposal_entry_matches_phrase(self, entry: DiaryEntry, phrase: str) -> bool:
+        normalized = normalize_food_phrase(phrase)
+        version = self.catalog.get_version(entry.food_version_id)
+        food = self.catalog.foods[version.food_id]
+        names = {food.name.casefold(), version.label.casefold()}
+        names.update(
+            alias.phrase.casefold()
+            for alias in self.catalog.aliases.values()
+            if alias.food_id == food.id
+        )
+        return any(normalized in candidate or candidate in normalized for candidate in names)
 
     def _ambiguous_local_food_reference(
         self,
@@ -4393,7 +4650,11 @@ def parse_single_gram_food_reference(text: str) -> tuple[float, str]:
 
 
 def parse_text_meal_items(text: str, *, default_logged_at: datetime) -> tuple[datetime, list[ParsedMealItem]]:
-    fragments = [fragment.strip() for fragment in re.split(r"[,;]\s*", text) if fragment.strip()]
+    fragments = [
+        fragment.strip()
+        for fragment in re.split(r"[,;\n]\s*", strip_meal_heading(text))
+        if fragment.strip()
+    ]
     if not fragments:
         raise ValueError("text meal is empty")
 
@@ -4409,6 +4670,79 @@ def parse_text_meal_items(text: str, *, default_logged_at: datetime) -> tuple[da
     if not items:
         raise ValueError("text meal has no food items")
     return logged_at, items
+
+
+def text_looks_like_meal_amendment(text: str) -> bool:
+    normalized = text.casefold().strip()
+    if not normalized:
+        return False
+    if re.search(r"(^|\n)\s*-+\s*\d", normalized):
+        return True
+    if re.search(r"\b(?:adicione|adiciona|add|esqueci|faltou|inclui|incluir|remove|remova|retira|subtrai)\b", normalized):
+        return True
+    has_quantity = re.search(r"\d+(?:[,.]\d+)?\s*g(?:ramas?)?\s+", normalized) is not None
+    has_explicit_meal_heading = re.match(
+        r"\s*(?:café da manhã|cafe da manha|breakfast|almoço|almoco|lunch|jantar|dinner|lanche|snack)\s*:",
+        normalized,
+    ) is not None
+    return bool(has_quantity and not has_explicit_meal_heading)
+
+
+def parse_text_meal_amendment(text: str) -> tuple[str, list[ParsedMealRemoval]]:
+    additions: list[str] = []
+    removals: list[ParsedMealRemoval] = []
+    fragments = [
+        fragment.strip()
+        for fragment in re.split(r"[,;\n]\s*", strip_meal_heading(text))
+        if fragment.strip()
+    ]
+    for fragment in fragments:
+        cleaned = fragment.strip()
+        removal = parse_text_meal_removal(cleaned)
+        if removal is not None:
+            removals.append(removal)
+            continue
+        addition = re.sub(
+            r"^\s*(?:\+|adicione|adiciona|add|inclui|incluir|faltou|esqueci(?:\s+de)?)(?:\s*:)?\s+",
+            "",
+            cleaned,
+            flags=re.I,
+        ).strip()
+        addition = re.sub(
+            r"^(\d+(?:[,.]\d+)?\s*g(?:ramas?)?)\s+de\s+",
+            r"\1 ",
+            addition,
+            flags=re.I,
+        )
+        if addition:
+            additions.append(addition)
+    return ", ".join(additions), removals
+
+
+def parse_text_meal_removal(fragment: str) -> ParsedMealRemoval | None:
+    patterns = (
+        r"^\s*-\s*(\d+(?:[,.]\d+)?)\s*g(?:ramas?)?\s+(.+)$",
+        r"^\s*(?:remove|remova|retira|retire|subtrai|subtraia)\s+(\d+(?:[,.]\d+)?)\s*g(?:ramas?)?\s+(?:de\s+)?(.+)$",
+    )
+    for pattern in patterns:
+        match = re.fullmatch(pattern, fragment, re.I)
+        if match is None:
+            continue
+        return ParsedMealRemoval(
+            phrase=normalize_food_phrase(match.group(2)),
+            quantity_g=float(match.group(1).replace(",", ".")),
+            source_text=fragment,
+        )
+    return None
+
+
+def strip_meal_heading(text: str) -> str:
+    return re.sub(
+        r"^\s*(?:café da manhã|cafe da manha|breakfast|almoço|almoco|lunch|jantar|dinner|lanche|snack)\s*:\s*",
+        "",
+        text,
+        flags=re.I,
+    )
 
 
 def parse_repeated_meal_reference(
