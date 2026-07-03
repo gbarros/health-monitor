@@ -3,10 +3,14 @@ import { useState } from "react";
 import { loadActiveGoal, loadDaySummary, loadWeightTrend } from "../api";
 import { queryKeys } from "../queryKeys";
 import type { DaySummary, DaySummaryEntry, Nutrients, WeightTrend } from "../types";
+import { EntrySheet, WeightSheet } from "./DayEntrySheet";
 
 type Props = {
   personId: string;
   day: string;
+  onDayChange: (day: string) => void;
+  onToast: (message: string) => void;
+  onEntryDeleted: (entryId: string) => void;
 };
 
 const MEAL_LABELS: Record<string, string> = {
@@ -19,8 +23,10 @@ const MEAL_LABELS: Record<string, string> = {
 
 const MEAL_ORDER = ["breakfast", "lunch", "snack", "dinner", "unknown"];
 
-export function DayCard({ personId, day }: Props) {
+export function DayCard({ personId, day, onDayChange, onToast, onEntryDeleted }: Props) {
   const [collapsed, setCollapsed] = useState(false);
+  const [selectedEntryId, setSelectedEntryId] = useState<string | null>(null);
+  const [weightSheetOpen, setWeightSheetOpen] = useState(false);
 
   const dayQuery = useQuery({
     queryKey: queryKeys.daySummary(personId, day),
@@ -38,13 +44,34 @@ export function DayCard({ personId, day }: Props) {
   const summary = dayQuery.data;
   const target = summary?.target ?? goalQuery.data?.targets ?? null;
   const remaining = summary?.target_delta ? invertNutrients(summary.target_delta) : null;
+  const selectedEntry = selectedEntryId ? findEntry(summary, selectedEntryId) : null;
 
   return (
     <section className="day-card" aria-label="Resumo do dia">
       <header className="day-card-header">
-        <div>
-          <p className="eyebrow">Hoje</p>
-          <h2>{formatDay(day)}</h2>
+        <div className="day-nav">
+          <button type="button" aria-label="Dia anterior" onClick={() => onDayChange(addDays(day, -1))}>
+            ‹
+          </button>
+          <label className="day-date-button">
+            <p className="eyebrow">{isToday(day) ? "Hoje" : "Dia"}</p>
+            <h2>{formatDay(day)}</h2>
+            <input
+              type="date"
+              value={day}
+              max={todayIsoLocal()}
+              aria-label="Escolher outro dia"
+              onChange={(event) => event.target.value && onDayChange(event.target.value)}
+            />
+          </label>
+          <button
+            type="button"
+            aria-label="Próximo dia"
+            onClick={() => onDayChange(addDays(day, 1))}
+            disabled={isToday(day)}
+          >
+            ›
+          </button>
         </div>
         <button
           type="button"
@@ -65,11 +92,34 @@ export function DayCard({ personId, day }: Props) {
           <SummaryStrip summary={summary} target={target} remaining={remaining} />
           {!collapsed ? (
             <>
-              <MealGroups summary={summary} />
-              <WeightStrip trend={weightQuery.data} loading={weightQuery.isLoading} />
+              <MealGroups summary={summary} onEntryClick={(entry) => setSelectedEntryId(entry.id)} />
+              <WeightStrip
+                trend={weightQuery.data}
+                loading={weightQuery.isLoading}
+                onClick={() => setWeightSheetOpen(true)}
+              />
             </>
           ) : null}
         </>
+      ) : null}
+
+      {selectedEntry ? (
+        <EntrySheet
+          entry={selectedEntry}
+          personId={personId}
+          day={day}
+          onClose={() => setSelectedEntryId(null)}
+          onToast={onToast}
+          onDeleted={onEntryDeleted}
+        />
+      ) : null}
+
+      {weightSheetOpen ? (
+        <WeightSheet
+          entries={weightQuery.data?.entries ?? []}
+          onClose={() => setWeightSheetOpen(false)}
+          onToast={onToast}
+        />
       ) : null}
     </section>
   );
@@ -115,7 +165,13 @@ function Macro({ label, value, target }: { label: string; value?: number; target
   );
 }
 
-function MealGroups({ summary }: { summary: DaySummary }) {
+function MealGroups({
+  summary,
+  onEntryClick,
+}: {
+  summary: DaySummary;
+  onEntryClick: (entry: DaySummaryEntry) => void;
+}) {
   const groups = orderedMealEntries(summary.meals);
   if (groups.length === 0) {
     return <p className="empty-copy">Nada registrado ainda. Mande uma mensagem para começar.</p>;
@@ -130,20 +186,28 @@ function MealGroups({ summary }: { summary: DaySummary }) {
           </div>
           <div className="meal-entry-list">
             {entries.map((entry) => (
-              <article key={entry.id} className="meal-entry">
-                <div>
-                  <strong>{entry.food_name}</strong>
-                  <span>
-                    {number(entry.quantity_g)}g · {[entry.brand, entry.food_version_label].filter(Boolean).join(" · ")}
-                  </span>
-                </div>
-                <div className="entry-meta">
-                  <strong>{number(entry.nutrients.calories_kcal)} kcal</strong>
-                  <span className={`confidence-badge confidence-${confidenceKind(entry)}`}>
-                    {confidenceLabel(entry)}
-                  </span>
-                </div>
-              </article>
+              <button
+                key={entry.id}
+                type="button"
+                className="entry-row-button"
+                onClick={() => onEntryClick(entry)}
+              >
+                <article className="meal-entry">
+                  <div>
+                    <strong>{entry.food_name}</strong>
+                    <span>
+                      {number(entry.quantity_g)}g ·{" "}
+                      {[entry.brand, entry.food_version_label].filter(Boolean).join(" · ")}
+                    </span>
+                  </div>
+                  <div className="entry-meta">
+                    <strong>{number(entry.nutrients.calories_kcal)} kcal</strong>
+                    <span className={`confidence-badge confidence-${confidenceKind(entry)}`}>
+                      {confidenceLabel(entry)}
+                    </span>
+                  </div>
+                </article>
+              </button>
             ))}
           </div>
         </section>
@@ -152,19 +216,34 @@ function MealGroups({ summary }: { summary: DaySummary }) {
   );
 }
 
-function WeightStrip({ trend, loading }: { trend?: WeightTrend; loading: boolean }) {
+function WeightStrip({
+  trend,
+  loading,
+  onClick,
+}: {
+  trend?: WeightTrend;
+  loading: boolean;
+  onClick: () => void;
+}) {
   if (loading) {
     return <p className="weight-strip">Peso: carregando...</p>;
   }
-  if (!trend?.latest_kg) {
-    return <p className="weight-strip">Peso: nenhum registro recente.</p>;
-  }
-  const delta = trend.delta_kg;
   return (
-    <p className="weight-strip">
-      Peso: <strong>{formatKg(trend.latest_kg)}</strong>
-      {delta != null ? <span>{delta >= 0 ? "+" : ""}{formatKg(delta)} desde o início</span> : null}
-    </p>
+    <button type="button" className="entry-row-button weight-strip" onClick={onClick}>
+      {!trend?.latest_kg ? (
+        <span>Peso: nenhum registro recente.</span>
+      ) : (
+        <>
+          Peso: <strong>{formatKg(trend.latest_kg)}</strong>
+          {trend.delta_kg != null ? (
+            <span>
+              {trend.delta_kg >= 0 ? "+" : ""}
+              {formatKg(trend.delta_kg)} desde o início
+            </span>
+          ) : null}
+        </>
+      )}
+    </button>
   );
 }
 
@@ -243,4 +322,31 @@ function formatDay(day: string): string {
     day: "2-digit",
     month: "2-digit",
   }).format(new Date(year, month - 1, date));
+}
+
+function findEntry(summary: DaySummary | undefined, entryId: string): DaySummaryEntry | null {
+  if (!summary) {
+    return null;
+  }
+  for (const entries of Object.values(summary.meals)) {
+    const found = entries.find((entry) => entry.id === entryId);
+    if (found) {
+      return found;
+    }
+  }
+  return null;
+}
+
+function isToday(day: string): boolean {
+  return day === todayIsoLocal();
+}
+
+function todayIsoLocal(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function addDays(day: string, delta: number): string {
+  const date = new Date(`${day}T12:00:00`);
+  date.setDate(date.getDate() + delta);
+  return date.toISOString().slice(0, 10);
 }

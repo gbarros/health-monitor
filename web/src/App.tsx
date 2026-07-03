@@ -1,7 +1,7 @@
 import { AssistantRuntimeProvider, useAssistantToolUI, type ThreadMessageLike } from "@assistant-ui/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { FormEvent } from "react";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   confirmProposal,
   createInitialProfile,
@@ -15,6 +15,7 @@ import {
   parseOnboardingMessage,
   rejectProposal,
   repeatMeal,
+  restoreDiaryEntry,
   STORAGE_KEYS,
   todayIsoForTimezone,
   updateProposalEntry,
@@ -51,9 +52,12 @@ function App() {
   const [recipeOpen, setRecipeOpen] = useState(false);
   const [labelOpen, setLabelOpen] = useState(false);
   const [repeatOpen, setRepeatOpen] = useState(false);
-  const [toast, setToast] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ message: string; action?: { label: string; onClick: () => void } } | null>(
+    null,
+  );
   const [pendingReplay, setPendingReplay] = useState<string | null>(null);
   const [inlineProposalIds, setInlineProposalIds] = useState<Set<string>>(() => new Set());
+  const [selectedDay, setSelectedDay] = useState<string>(() => todayIsoForTimezone(undefined));
 
   const peopleQuery = useQuery({
     queryKey: queryKeys.people(householdId),
@@ -64,7 +68,18 @@ function App() {
   const people = peopleQuery.data ?? [];
   const activePerson = people.find((person) => person.id === personId) ?? people[0] ?? null;
   const selectedPersonId = activePerson?.id ?? personId;
-  const selectedDay = todayIsoForTimezone(activePerson?.timezone);
+
+  const lastResetPersonRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (selectedPersonId && lastResetPersonRef.current !== selectedPersonId) {
+      lastResetPersonRef.current = selectedPersonId;
+      setSelectedDay(todayIsoForTimezone(activePerson?.timezone));
+    }
+  }, [activePerson?.timezone, selectedPersonId]);
+
+  useEffect(() => {
+    setToast(null);
+  }, [selectedPersonId, selectedDay]);
 
   const proposalsQuery = useQuery({
     queryKey: queryKeys.proposals(selectedPersonId),
@@ -147,9 +162,11 @@ function App() {
     [markProposalInline, upsertProposal],
   );
 
+  const showToast = useCallback((message: string) => setToast({ message }), []);
+
   const onRuntimeError = useCallback((message: string) => {
-    setToast(message);
-  }, []);
+    showToast(message);
+  }, [showToast]);
 
   const proposalDecision = useMutation({
     mutationFn: ({ proposal, decision }: { proposal: Proposal; decision: "confirm" | "reject" }) =>
@@ -158,7 +175,7 @@ function App() {
       upsertProposal(proposal);
       await invalidateDailyReadModels();
     },
-    onError: (error) => setToast(error instanceof Error ? error.message : "Não foi possível atualizar a proposta."),
+    onError: (error) => showToast(error instanceof Error ? error.message : "Não foi possível atualizar a proposta."),
   });
 
   const proposalEntryUpdate = useMutation({
@@ -168,17 +185,17 @@ function App() {
       upsertProposal(proposal);
       await invalidateDailyReadModels();
     },
-    onError: (error) => setToast(error instanceof Error ? error.message : "Não foi possível editar a proposta."),
+    onError: (error) => showToast(error instanceof Error ? error.message : "Não foi possível editar a proposta."),
   });
 
   const weightCreate = useMutation({
     mutationFn: (weightKg: number) => logWeight({ personId: selectedPersonId ?? "", weightKg }),
     onSuccess: async () => {
       setWeightOpen(false);
-      setToast("Peso registrado.");
+      showToast("Peso registrado.");
       await invalidateDailyReadModels();
     },
-    onError: (error) => setToast(error instanceof Error ? error.message : "Não foi possível registrar o peso."),
+    onError: (error) => showToast(error instanceof Error ? error.message : "Não foi possível registrar o peso."),
   });
 
   const recipeDraft = useMutation({
@@ -191,10 +208,10 @@ function App() {
     onSuccess: async (proposal) => {
       setRecipeOpen(false);
       upsertProposal(proposal);
-      setToast("Receita rascunhada para revisão.");
+      showToast("Receita rascunhada para revisão.");
       await invalidateDailyReadModels();
     },
-    onError: (error) => setToast(error instanceof Error ? error.message : "Não foi possível rascunhar a receita."),
+    onError: (error) => showToast(error instanceof Error ? error.message : "Não foi possível rascunhar a receita."),
   });
 
   const labelDraft = useMutation({
@@ -223,10 +240,10 @@ function App() {
     onSuccess: async (proposal) => {
       setLabelOpen(false);
       upsertProposal(proposal);
-      setToast("Rótulo rascunhado para revisão.");
+      showToast("Rótulo rascunhado para revisão.");
       await invalidateDailyReadModels();
     },
-    onError: (error) => setToast(error instanceof Error ? error.message : "Não foi possível rascunhar o rótulo."),
+    onError: (error) => showToast(error instanceof Error ? error.message : "Não foi possível rascunhar o rótulo."),
   });
 
   const repeatDraft = useMutation({
@@ -243,11 +260,30 @@ function App() {
     onSuccess: async (proposal) => {
       setRepeatOpen(false);
       upsertProposal(proposal);
-      setToast("Refeição repetida como proposta.");
+      showToast("Refeição repetida como proposta.");
       await invalidateDailyReadModels();
     },
-    onError: (error) => setToast(error instanceof Error ? error.message : "Não foi possível repetir a refeição."),
+    onError: (error) => showToast(error instanceof Error ? error.message : "Não foi possível repetir a refeição."),
   });
+
+  const entryRestore = useMutation({
+    mutationFn: (entryId: string) => restoreDiaryEntry(entryId),
+    onSuccess: async () => {
+      showToast("Item restaurado.");
+      await invalidateDailyReadModels();
+    },
+    onError: (error) => showToast(error instanceof Error ? error.message : "Não foi possível desfazer a exclusão."),
+  });
+
+  const onEntryDeleted = useCallback(
+    (entryId: string) => {
+      setToast({
+        message: "Item excluído.",
+        action: { label: "Desfazer", onClick: () => entryRestore.mutate(entryId) },
+      });
+    },
+    [entryRestore],
+  );
 
   const activeDraft = (proposalsQuery.data ?? []).find((proposal) =>
     ["draft", "needs_clarification"].includes(proposal.status),
@@ -315,10 +351,19 @@ function App() {
             onUpdateProposalEntry={(proposal, entry, quantityG) =>
               proposalEntryUpdate.mutate({ proposal, entry, quantityG })
             }
+            onDayChange={setSelectedDay}
+            onToast={showToast}
+            onEntryDeleted={onEntryDeleted}
           />
         ) : (
           <section className="chat-column" aria-label="Conversa">
-            <DayCard personId={selectedPersonId} day={selectedDay} />
+            <DayCard
+              personId={selectedPersonId}
+              day={selectedDay}
+              onDayChange={setSelectedDay}
+              onToast={showToast}
+              onEntryDeleted={onEntryDeleted}
+            />
             <div className="chat-loading" role="status">
               Carregando conversa...
             </div>
@@ -326,7 +371,13 @@ function App() {
         )}
 
         <aside className="desktop-read-column" aria-label="Resumo do dia">
-          <DayCard personId={selectedPersonId} day={selectedDay} />
+          <DayCard
+            personId={selectedPersonId}
+            day={selectedDay}
+            onDayChange={setSelectedDay}
+            onToast={showToast}
+            onEntryDeleted={onEntryDeleted}
+          />
           <WeekCard personId={selectedPersonId} day={selectedDay} />
         </aside>
       </main>
@@ -392,7 +443,19 @@ function App() {
 
       {toast ? (
         <div className="toast" role="status" aria-live="polite">
-          <span>{toast}</span>
+          <span>{toast.message}</span>
+          {toast.action ? (
+            <button
+              type="button"
+              className="primary-action"
+              onClick={() => {
+                toast.action?.onClick();
+                setToast(null);
+              }}
+            >
+              {toast.action.label}
+            </button>
+          ) : null}
           <button type="button" onClick={() => setToast(null)}>
             Fechar
           </button>
@@ -424,6 +487,9 @@ function ChatWorkspace({
   onConfirmProposal,
   onRejectProposal,
   onUpdateProposalEntry,
+  onDayChange,
+  onToast,
+  onEntryDeleted,
 }: {
   householdId: string | null;
   personId: string;
@@ -446,6 +512,9 @@ function ChatWorkspace({
   onConfirmProposal: (proposal: Proposal) => void;
   onRejectProposal: (proposal: Proposal) => void;
   onUpdateProposalEntry: (proposal: Proposal, entry: ProposalEntry, quantityG: number) => void;
+  onDayChange: (day: string) => void;
+  onToast: (message: string) => void;
+  onEntryDeleted: (entryId: string) => void;
 }) {
   const runtime = useAgentRuntime({
     householdId,
@@ -469,7 +538,13 @@ function ChatWorkspace({
         onUpdateEntry={onUpdateProposalEntry}
       />
       <section className="chat-column" aria-label="Conversa">
-        <DayCard personId={personId} day={today} />
+        <DayCard
+          personId={personId}
+          day={today}
+          onDayChange={onDayChange}
+          onToast={onToast}
+          onEntryDeleted={onEntryDeleted}
+        />
         <QuickActionRow
           onRepeatClick={onRepeatClick}
           onWeightClick={onWeightClick}

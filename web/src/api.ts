@@ -163,6 +163,51 @@ export async function logWeight(input: {
   });
 }
 
+export async function updateDiaryEntry(input: {
+  entryId: string;
+  quantityG?: number;
+  mealType?: string;
+  loggedAtLocal?: string;
+}): Promise<{ id: string }> {
+  const response = await fetch(`/api/diary/${encodeURIComponent(input.entryId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      quantity_g: input.quantityG,
+      meal_type: input.mealType,
+      logged_at_local: input.loggedAtLocal,
+    }),
+  });
+  return decodeResponse<{ id: string }>(response);
+}
+
+export async function deleteDiaryEntry(entryId: string): Promise<{ id: string }> {
+  const response = await fetch(`/api/diary/${encodeURIComponent(entryId)}`, { method: "DELETE" });
+  return decodeResponse<{ id: string }>(response);
+}
+
+export async function restoreDiaryEntry(entryId: string): Promise<{ id: string }> {
+  return apiPost<{ id: string }>(`/api/diary/${encodeURIComponent(entryId)}/restore`, {});
+}
+
+export async function updateWeightEntry(input: {
+  entryId: string;
+  weightKg?: number;
+  measuredAtLocal?: string;
+  note?: string;
+}): Promise<unknown> {
+  const response = await fetch(`/api/weights/${encodeURIComponent(input.entryId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      weight_kg: input.weightKg,
+      measured_at_local: input.measuredAtLocal,
+      note: input.note,
+    }),
+  });
+  return decodeResponse(response);
+}
+
 export async function repeatMeal(input: {
   personId: string;
   sourceDay: string;
