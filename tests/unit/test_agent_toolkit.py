@@ -121,6 +121,33 @@ class NutritionAgentToolsTest(unittest.TestCase):
         self.assertEqual(service.day_summary(deps.person_id, date(2026, 7, 2)).totals, Nutrients())
         self.assertEqual(service.review_notes_for_person(deps.person_id), ())
 
+    def test_onboarding_tool_creates_profile_setup_proposal(self) -> None:
+        service = HealthMonitorService()
+        deps = AgentDeps(
+            service=service,
+            person_id="onboarding:session-1",
+            household_id="onboarding-household:session-1",
+            today=date(2026, 7, 2),
+            settings={"agent_runtime": "pydantic-ai", "model_name": "qwen3"},
+            source_config={},
+        )
+
+        result = NutritionAgentTools().draft_onboarding_proposal(
+            deps,
+            session_id="session-1",
+            household_name="Casa",
+            person={"name": "Gabriel", "timezone": "America/Sao_Paulo"},
+            targets={"calories_kcal": 2000, "protein_g": 150},
+            notes="Setup inicial",
+            source_text="conversa de onboarding",
+        )
+
+        proposal = service.get_proposal(result["proposal_id"])
+        self.assertEqual(result["proposal_status"], "draft")
+        self.assertEqual(result["proposal_type"], "profile_setup")
+        self.assertEqual(proposal.payload["person"]["name"], "Gabriel")
+        self.assertEqual(proposal.payload["targets"]["calories_kcal"], 2000)
+
     def test_ocr_tool_extracts_label_text_from_attachment(self) -> None:
         service = HealthMonitorService(
             label_text_extractor=StaticLabelTextExtractor(

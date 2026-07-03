@@ -333,6 +333,23 @@ class PydanticAINutritionAgent:
         )
         return normalize_agent_runtime_output(result.output)
 
+    def onboarding(self, *, deps: AgentDeps, message: str, session_id: str) -> AgentRuntimeResponse:
+        result = self._run(
+            deps=deps,
+            message=(
+                f"Onboarding session id: {session_id}\n"
+                f"User message: {message}"
+            ),
+            task_instructions=(
+                "You are onboarding a new household member. Ask concise follow-up questions "
+                "until household name or household id, person name, timezone, and initial targets "
+                "are clear. When enough information is available, call draft_onboarding_proposal "
+                "with structured person and target fields. Return JSON with output_type='answer' "
+                "for questions or output_type='proposal_draft' and proposal_id after drafting."
+            ),
+        )
+        return normalize_agent_runtime_output(result.output)
+
     def draft_text_meal(
         self,
         *,
@@ -639,6 +656,29 @@ class PydanticAINutritionAgent:
                 fat_g=fat_g,
                 fiber_g=fiber_g,
                 sodium_mg=sodium_mg,
+                notes=notes,
+                source_text=source_text,
+            )
+
+        @agent.tool
+        async def draft_onboarding_proposal(
+            ctx,
+            session_id: str,
+            person: dict[str, Any],
+            targets: dict[str, Any],
+            household_name: str | None = None,
+            household_id: str | None = None,
+            notes: str | None = None,
+            source_text: str = "",
+        ) -> dict[str, Any]:
+            """Draft the initial household/person/goal setup proposal for onboarding."""
+            return tools.draft_onboarding_proposal(
+                ctx.deps,
+                session_id=session_id,
+                household_name=household_name,
+                household_id=household_id,
+                person=person,
+                targets=targets,
                 notes=notes,
                 source_text=source_text,
             )

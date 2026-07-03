@@ -535,6 +535,29 @@ class NutritionAgentTools:
         )
         return self._proposal_payload(proposal)
 
+    def draft_onboarding_proposal(
+        self,
+        deps: AgentDeps,
+        *,
+        session_id: str,
+        household_name: str | None = None,
+        household_id: str | None = None,
+        person: dict[str, Any],
+        targets: dict[str, Any],
+        notes: str | None = None,
+        source_text: str = "",
+    ) -> dict[str, Any]:
+        proposal = deps.service.draft_onboarding_proposal(
+            session_id=session_id,
+            household_name=household_name,
+            household_id=household_id,
+            person=person,
+            targets=targets,
+            notes=notes,
+            source_text=source_text,
+        )
+        return self._proposal_payload(proposal)
+
     def _proposal_payload(self, proposal: Any) -> dict[str, Any]:
         return {
             "proposal_id": proposal.id,

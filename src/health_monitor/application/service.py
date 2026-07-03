@@ -4195,17 +4195,53 @@ class HealthMonitorService:
         settings = self._agent_settings(agent_settings)
         self._ensure_model_available(settings, replay_message=message)
         if household_id is not None:
-            self._require_household(household_id)
+            household = self._require_household(household_id)
+            resolved_household_id = household.id
+        else:
+            resolved_household_id = f"onboarding-household:{session_id}"
         assistant_message = (
             "Vou configurar o diário por conversa. Diga seu nome, fuso horário, "
             "objetivo e qualquer meta inicial que você já queira propor."
         )
+        proposal_id: str | None = None
+        if settings.get("agent_runtime") == "pydantic-ai":
+            metadata = self._run_metadata(settings)
+            agent = PydanticAINutritionAgent(
+                model_name=metadata["model_name"],
+                ollama_base_url=self.ollama_base_url,
+            )
+            try:
+                response = agent.onboarding(
+                    deps=AgentDeps(
+                        service=self,
+                        person_id=f"onboarding:{session_id}",
+                        household_id=resolved_household_id,
+                        today=date.today(),
+                        settings=settings,
+                        source_config={
+                            "openfoodfacts_enabled": self.food_lookup_provider is not None,
+                            "research_lookup_enabled": self.research_lookup_provider is not None,
+                            "ocr_enabled": self.label_text_extractor is not None,
+                        },
+                    ),
+                    message=message,
+                    session_id=session_id,
+                )
+                assistant_message = response.message
+                proposal_id = response.proposal_id
+            except PydanticAIUnavailable as exc:
+                if self.require_model:
+                    raise ModelUnavailableError(str(exc), replay_message=message) from exc
+            except Exception as exc:
+                if self.require_model:
+                    raise ModelUnavailableError(f"pydantic_ai failed: {exc}", replay_message=message) from exc
         turn = OnboardingTurn(
             id=self._next_id("onboarding_turn"),
             session_id=session_id,
             household_id=household_id,
             user_message=message,
             assistant_message=assistant_message,
+            proposal_id=proposal_id,
         )
         self.onboarding_turns[turn.id] = turn
         self._persist()

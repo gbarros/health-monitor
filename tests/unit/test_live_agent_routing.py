@@ -36,6 +36,28 @@ class FailingAgent:
         raise PydanticAIUnavailable("missing dependency")
 
 
+class FakeOnboardingAgent:
+    def __init__(self, *, model_name: str, ollama_base_url: str) -> None:
+        self.model_name = model_name
+        self.ollama_base_url = ollama_base_url
+
+    def onboarding(self, *, deps, message: str, session_id: str) -> AgentRuntimeResponse:
+        proposal = deps.service.draft_onboarding_proposal(
+            session_id=session_id,
+            household_name="Casa",
+            household_id=None,
+            person={"name": "Gabriel", "timezone": "America/Sao_Paulo"},
+            targets={"calories_kcal": 2000, "protein_g": 150},
+            source_text=message,
+        )
+        return AgentRuntimeResponse(
+            message="Revisei seus dados e deixei uma proposta inicial pronta.",
+            behavior_label="proposal_draft",
+            proposal_id=proposal.id,
+            output_type="proposal_draft",
+        )
+
+
 class LiveAgentRoutingTest(unittest.TestCase):
     def make_service(self, *, require_model: bool = True) -> tuple[HealthMonitorService, str]:
         service = HealthMonitorService(
@@ -97,6 +119,27 @@ class LiveAgentRoutingTest(unittest.TestCase):
         self.assertEqual(run.status, "proposal_created")
         self.assertIn("pydantic_ai unavailable", run.fallback_reason or "")
         self.assertEqual(run.tool_loop_count, 2)
+
+    def test_pydantic_onboarding_chat_can_create_profile_setup_proposal(self) -> None:
+        service = HealthMonitorService(
+            agent_runtime="pydantic-ai",
+            agent_model="ornith:9b",
+            require_model=True,
+            model_health_checker=lambda: True,
+        )
+
+        with patch("health_monitor.application.service.PydanticAINutritionAgent", FakeOnboardingAgent):
+            turn = service.onboarding_chat(
+                session_id="session-1",
+                message="Oi, sou Gabriel. Quero 2000 kcal e 150g de proteína.",
+            )
+
+        self.assertEqual(turn.proposal_id, "proposal_1")
+        self.assertEqual(turn.assistant_message, "Revisei seus dados e deixei uma proposta inicial pronta.")
+        proposal = service.get_proposal(turn.proposal_id or "")
+        self.assertEqual(proposal.proposal_type, "profile_setup")
+        self.assertEqual(proposal.payload["person"]["timezone"], "America/Sao_Paulo")
+        self.assertEqual(service.onboarding_turns_for_session("session-1"), (turn,))
 
 
 if __name__ == "__main__":
