@@ -33,12 +33,12 @@
     {
       "type": "correction_request",
       "day": "2026-07-10",
-      "message": "Na verdade, corrigir o queijo para 50g."
+      "message": "Change semanaqueijo on 2026-07-06 to 50g"
     },
     {
       "type": "review_note_request",
       "day": "2026-07-11",
-      "message": "Create a review note about weekly consistency."
+      "message": "Save review note for 2026-07-06 to 2026-07-12: Weekly consistency was affected by social meals."
     },
     { "type": "switch_profile", "day": "2026-07-11", "profile": "Person B" },
     { "type": "text_meal", "day": "2026-07-11", "text": "8am 170g iogurte proteico" },

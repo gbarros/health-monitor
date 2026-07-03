@@ -157,13 +157,20 @@ async function runWeekAction(page: Page, scenario: WeekScenario, action: WeekAct
   }
   if (action.type === "chat_question" || action.type === "correction_request" || action.type === "review_note_request") {
     await goToPage(page, "Log");
-    await sendLogMessage(page, "Chat", action.message ?? "", "Send");
-    await expect(page.getByText("Agent chat queued for the worker.")).toBeVisible();
-    await goToPage(page, "Work");
-    await page.locator(".job-process").first().click();
-    await expect(page.getByText("Job succeeded.")).toBeVisible();
-    await page.locator(".job-open-chat").first().click();
-    await expect(page.getByText("Loaded job chat answer.")).toBeVisible();
+    const mode =
+      action.type === "correction_request"
+        ? "Correction"
+        : action.type === "review_note_request"
+          ? "Review note"
+          : "Chat";
+    const doneMessage =
+      action.type === "correction_request"
+        ? "Correction drafted a proposal. Review before applying."
+        : action.type === "review_note_request"
+          ? "Review note drafted a proposal. Review before applying."
+          : "Agent chat answered from app data.";
+    await sendLogMessage(page, mode, action.message ?? "", "Send");
+    await expect(page.getByText(doneMessage)).toBeVisible();
     return;
   }
   if (action.type === "weight_entry") {
@@ -197,11 +204,10 @@ async function setupHousehold(
   profiles = ["Person A", "Person B"]
 ): Promise<void> {
   await page.goto("/");
-  await page.locator("#setup-form input[name='household']").fill(household);
-  await page.locator("#setup-form input[name='name']").fill(profiles[0]);
-  await page.locator("#setup-form input[name='target_calories_kcal']").fill("2000");
-  await page.locator("#setup-form input[name='target_protein_g']").fill("150");
-  await page.locator("#setup-form button[type='submit']").click();
+  await page.locator("#onboarding-message-form textarea[name='message']").fill(
+    `Household: ${household}\nName: ${profiles[0]}\nTimezone: America/Sao_Paulo\nTargets: 2000 kcal, 150g protein`
+  );
+  await page.locator("#onboarding-message-form button[type='submit']").click();
   await expect(page.getByText("Profile created.")).toBeVisible();
 
   if (profiles[1]) {

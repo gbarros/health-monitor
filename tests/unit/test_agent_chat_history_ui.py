@@ -16,10 +16,12 @@ class AgentChatHistoryUiTest(unittest.TestCase):
 
         self.assertIn("type AgentChatTurn", source)
         self.assertIn("chatHistory: AgentChatTurn[];", source)
-        self.assertIn("renderChatHistory()", source)
+        self.assertIn("function workAgentMessages()", source)
+        self.assertIn('<agent-chat id="work-agent-chat"></agent-chat>', source)
+        self.assertIn("workAgentChat.data = workAgentState()", source)
         self.assertIn("/api/agent/chat-history?person_id=", source)
         self.assertIn("state.chatHistory = await apiGet<AgentChatTurn[]>", source)
-        self.assertIn(".chat-history", styles)
+        self.assertIn(".chat-answer", styles)
 
 
 if __name__ == "__main__":

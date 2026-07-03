@@ -88,6 +88,16 @@ make dev-web
 
 Run `make dev-api` in another terminal so Vite can proxy `/api/*`.
 
+The chat surface is a private local custom-element package consumed by the Vite app:
+
+```bash
+make agent-chat-ui-typecheck
+make e2e-agent-chat-ui
+make web-build
+```
+
+`make e2e-agent-chat-ui` runs UI-only Playwright checks against the package demo harness. The app-level E2E suite only verifies the health-monitor adapter wiring.
+
 ## Browser E2E
 
 The v1 browser workflow uses Playwright against the real Vite app and Python API:

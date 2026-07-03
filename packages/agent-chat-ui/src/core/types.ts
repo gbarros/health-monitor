@@ -13,6 +13,14 @@ export type AgentChatAttachmentStatus = "local" | "uploading" | "uploaded" | "fa
 export type AgentChatDraftCardKind = "meal" | "label" | "recipe" | "correction" | "review_note" | "generic";
 export type AgentChatDraftCardStatus = "draft" | "confirmed" | "rejected" | "needs_review";
 export type AgentChatToolCallStatus = "pending" | "running" | "succeeded" | "failed";
+export type AgentChatMetadata = Record<string, unknown>;
+
+export interface AgentChatComposerAction {
+  id: string;
+  label: string;
+  disabled?: boolean;
+  title?: string;
+}
 
 export interface AgentChatComposerConfig {
   label?: string;
@@ -25,6 +33,7 @@ export interface AgentChatComposerConfig {
   inspectPromptLabel?: string;
   showInspectPrompt?: boolean;
   allowAttachments?: boolean;
+  actions?: AgentChatComposerAction[];
 }
 
 export interface AgentChatAttachment {
@@ -53,6 +62,7 @@ export interface AgentChatDraftCard {
   summary: string;
   status: AgentChatDraftCardStatus;
   details?: string;
+  metadata?: AgentChatMetadata;
 }
 
 export interface AgentChatMessage {
@@ -65,6 +75,7 @@ export interface AgentChatMessage {
   toolCalls?: AgentChatToolCall[];
   draftCards?: AgentChatDraftCard[];
   error?: string;
+  metadata?: AgentChatMetadata;
 }
 
 export interface AgentChatMode {
@@ -97,6 +108,11 @@ export interface AgentChatDraftActionPayload {
 
 export interface AgentChatAttachmentActionPayload {
   attachmentId: string;
+}
+
+export interface AgentChatComposerActionPayload {
+  actionId: string;
+  modeId: string;
 }
 
 export interface AgentChatRuntime {

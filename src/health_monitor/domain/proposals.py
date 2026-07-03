@@ -25,6 +25,8 @@ ProposalType = Literal[
     "diary_entry_update",
     "food_version_from_lookup",
     "review_note",
+    "profile_update",
+    "goal_profile",
 ]
 
 

@@ -354,6 +354,35 @@ class HealthMonitorService:
         people.sort(key=lambda person: person.created_at)
         return tuple(people)
 
+    def update_person(
+        self,
+        *,
+        person_id: str,
+        name: str | None = None,
+        timezone: str | None = None,
+        birth_date: date | None = None,
+        sex: str | None = None,
+        height_cm: float | None = None,
+        activity_level: str | None = None,
+    ) -> Person:
+        person = self._require_person(person_id)
+        next_timezone = timezone if timezone is not None else person.timezone
+        ZoneInfo(next_timezone)
+        updated = Person(
+            id=person.id,
+            household_id=person.household_id,
+            name=name if name is not None else person.name,
+            timezone=next_timezone,
+            birth_date=birth_date if birth_date is not None else person.birth_date,
+            sex=sex if sex is not None else person.sex,
+            height_cm=float(height_cm) if height_cm is not None else person.height_cm,
+            activity_level=activity_level if activity_level is not None else person.activity_level,
+            created_at=person.created_at,
+        )
+        self.people[person_id] = updated
+        self._persist()
+        return updated
+
     def create_goal_profile(
         self,
         *,
@@ -410,6 +439,80 @@ class HealthMonitorService:
             return None
         candidates.sort(key=lambda profile: profile.starts_on, reverse=True)
         return candidates[0]
+
+    def propose_profile_update(
+        self,
+        *,
+        person_id: str,
+        changes: dict[str, Any],
+        source_text: str,
+        source_agent_run_id: str | None = None,
+    ) -> CreateDiaryEntriesProposal:
+        person = self._require_person(person_id)
+        allowed = {"name", "timezone", "birth_date", "sex", "height_cm", "activity_level"}
+        payload = {key: value for key, value in changes.items() if key in allowed and value not in (None, "")}
+        if "timezone" in payload:
+            ZoneInfo(str(payload["timezone"]))
+        if "birth_date" in payload:
+            date.fromisoformat(str(payload["birth_date"]))
+        if "height_cm" in payload:
+            payload["height_cm"] = float(payload["height_cm"])
+        if not payload:
+            raise ValueError("profile update proposal has no supported changes")
+        proposal = CreateDiaryEntriesProposal(
+            id=self._next_id("proposal"),
+            person_id=person_id,
+            entries=(),
+            proposal_type="profile_update",
+            summary=f"Update profile for {person.name}",
+            payload=payload,
+            evidence=(
+                {
+                    "source_type": "agent_chat",
+                    "raw_text": source_text,
+                },
+            ),
+            source_agent_run_id=source_agent_run_id,
+        )
+        self.proposals.create(proposal)
+        self._persist()
+        return proposal
+
+    def propose_goal_profile_update(
+        self,
+        *,
+        person_id: str,
+        starts_on: date,
+        targets: Nutrients,
+        notes: str | None,
+        source_text: str,
+        source_agent_run_id: str | None = None,
+    ) -> CreateDiaryEntriesProposal:
+        self._require_person(person_id)
+        if targets.calories_kcal <= 0:
+            raise ValueError("daily calorie target must be positive")
+        proposal = CreateDiaryEntriesProposal(
+            id=self._next_id("proposal"),
+            person_id=person_id,
+            entries=(),
+            proposal_type="goal_profile",
+            summary=f"Create goal profile starting {starts_on.isoformat()}",
+            payload={
+                "starts_on": starts_on.isoformat(),
+                "targets": nutrients_to_snapshot(targets),
+                "notes": notes,
+            },
+            evidence=(
+                {
+                    "source_type": "agent_chat",
+                    "raw_text": source_text,
+                },
+            ),
+            source_agent_run_id=source_agent_run_id,
+        )
+        self.proposals.create(proposal)
+        self._persist()
+        return proposal
 
     def create_attachment(
         self,
@@ -1852,6 +1955,16 @@ class HealthMonitorService:
             )
             return finish(response)
 
+        profile_goal_update = parse_chat_profile_goal_update(message, today=today)
+        if profile_goal_update is not None:
+            response = self._chat_draft_profile_goal_update(
+                person_id=person_id,
+                message=message,
+                run=run,
+                parsed=profile_goal_update,
+            )
+            return finish(response)
+
         version_use_phrase = parse_chat_food_version_use_question(message)
         if version_use_phrase is not None:
             response = self._chat_explain_food_version_use(
@@ -2889,6 +3002,53 @@ class HealthMonitorService:
             proposal_id=proposal.id,
         )
 
+    def _chat_draft_profile_goal_update(
+        self,
+        *,
+        person_id: str,
+        message: str,
+        run: AgentRun,
+        parsed: dict[str, object],
+    ) -> AgentChatResponse:
+        proposal_type = str(parsed["proposal_type"])
+        proposal = self.proposals.create(
+            CreateDiaryEntriesProposal(
+                id=self._next_id("proposal"),
+                person_id=person_id,
+                entries=(),
+                proposal_type=proposal_type,  # type: ignore[arg-type]
+                summary=str(parsed["summary"]),
+                payload=dict(parsed["payload"]),
+                evidence=(
+                    {
+                        "source_type": "agent_chat",
+                        "raw_text": message,
+                    },
+                ),
+                source_agent_run_id=run.id,
+            )
+        )
+        self._record_agent_tool_call(
+            run=run,
+            tool_name=f"draft_{proposal_type}",
+            input_summary=str(parsed["summary"]),
+            output_summary=f"proposal_id={proposal.id}; type={proposal_type}",
+            source_record_ids=(proposal.id,),
+        )
+        self.agent_runs[run.id] = replace(
+            run,
+            status="proposal_created",
+            proposal_id=proposal.id,
+            tool_loop_count=len(self.agent_tool_calls_for_run(run.id)),
+        )
+        return AgentChatResponse(
+            run_id=run.id,
+            person_id=person_id,
+            message=f"I drafted a {proposal_type.replace('_', ' ')} proposal. Confirm it before anything changes.",
+            behavior_label=f"draft_{proposal_type}",
+            proposal_id=proposal.id,
+        )
+
     def _chat_draft_diary_correction(
         self,
         *,
@@ -3567,6 +3727,16 @@ class HealthMonitorService:
             self.proposals.proposals[proposal_id] = applied
             self._persist()
             return applied
+        if proposal.proposal_type == "profile_update":
+            applied = self._apply_profile_update_proposal(proposal)
+            self.proposals.proposals[proposal_id] = applied
+            self._persist()
+            return applied
+        if proposal.proposal_type == "goal_profile":
+            applied = self._apply_goal_profile_proposal(proposal)
+            self.proposals.proposals[proposal_id] = applied
+            self._persist()
+            return applied
         proposal = self.proposals.confirm_and_apply(proposal_id)
         self._persist()
         return proposal
@@ -3960,6 +4130,72 @@ class HealthMonitorService:
             evidence=proposal.evidence,
             source_agent_run_id=proposal.source_agent_run_id,
             applied_record_ids=(note.id,),
+            created_at=proposal.created_at,
+            confirmed_at=proposal.confirmed_at or datetime.now(timezone.utc),
+            rejected_at=proposal.rejected_at,
+        )
+
+    def _apply_profile_update_proposal(
+        self,
+        proposal: CreateDiaryEntriesProposal,
+    ) -> CreateDiaryEntriesProposal:
+        if proposal.status == "rejected":
+            raise ValueError("cannot apply rejected proposal")
+        payload = proposal.payload
+        birth_date = date.fromisoformat(str(payload["birth_date"])) if payload.get("birth_date") else None
+        person = self.update_person(
+            person_id=proposal.person_id,
+            name=str(payload["name"]) if payload.get("name") else None,
+            timezone=str(payload["timezone"]) if payload.get("timezone") else None,
+            birth_date=birth_date,
+            sex=str(payload["sex"]) if payload.get("sex") else None,
+            height_cm=float(payload["height_cm"]) if payload.get("height_cm") is not None else None,
+            activity_level=str(payload["activity_level"]) if payload.get("activity_level") else None,
+        )
+        return CreateDiaryEntriesProposal(
+            id=proposal.id,
+            person_id=proposal.person_id,
+            entries=proposal.entries,
+            proposal_type=proposal.proposal_type,
+            status="applied",
+            summary=proposal.summary,
+            payload=proposal.payload,
+            totals=proposal.totals,
+            evidence=proposal.evidence,
+            source_agent_run_id=proposal.source_agent_run_id,
+            applied_record_ids=(person.id,),
+            created_at=proposal.created_at,
+            confirmed_at=proposal.confirmed_at or datetime.now(timezone.utc),
+            rejected_at=proposal.rejected_at,
+        )
+
+    def _apply_goal_profile_proposal(
+        self,
+        proposal: CreateDiaryEntriesProposal,
+    ) -> CreateDiaryEntriesProposal:
+        if proposal.status == "rejected":
+            raise ValueError("cannot apply rejected proposal")
+        payload = proposal.payload
+        targets = nutrients_from_mapping(payload["targets"])
+        starts_on = date.fromisoformat(str(payload["starts_on"]))
+        goal = self.create_goal_profile(
+            person_id=proposal.person_id,
+            starts_on=starts_on,
+            targets=targets,
+            notes=str(payload["notes"]) if payload.get("notes") else "Agent-drafted target update",
+        )
+        return CreateDiaryEntriesProposal(
+            id=proposal.id,
+            person_id=proposal.person_id,
+            entries=proposal.entries,
+            proposal_type=proposal.proposal_type,
+            status="applied",
+            summary=proposal.summary,
+            payload=proposal.payload,
+            totals=proposal.totals,
+            evidence=proposal.evidence,
+            source_agent_run_id=proposal.source_agent_run_id,
+            applied_record_ids=(goal.id,),
             created_at=proposal.created_at,
             confirmed_at=proposal.confirmed_at or datetime.now(timezone.utc),
             rejected_at=proposal.rejected_at,
@@ -4364,6 +4600,65 @@ def parse_chat_review_note(message: str) -> dict[str, object] | None:
     }
 
 
+def parse_chat_profile_goal_update(message: str, *, today: date) -> dict[str, object] | None:
+    lowered = message.casefold()
+    if not any(marker in lowered for marker in ("goal", "target", "meta", "perfil", "profile", "altura", "height")):
+        return None
+
+    target_patterns = {
+        "calories_kcal": r"(?:calories|calorias|kcal)\s*(?:to|para|=|:)?\s*(\d+(?:[,.]\d+)?)",
+        "protein_g": r"(?:protein|proteina|proteína)\s*(?:to|para|=|:)?\s*(\d+(?:[,.]\d+)?)\s*g?",
+        "carbs_g": r"(?:carbs|carboidratos?)\s*(?:to|para|=|:)?\s*(\d+(?:[,.]\d+)?)\s*g?",
+        "fat_g": r"(?:fat|gordura)\s*(?:to|para|=|:)?\s*(\d+(?:[,.]\d+)?)\s*g?",
+        "fiber_g": r"(?:fiber|fibra)\s*(?:to|para|=|:)?\s*(\d+(?:[,.]\d+)?)\s*g?",
+        "sodium_mg": r"(?:sodium|sodio|sódio)\s*(?:to|para|=|:)?\s*(\d+(?:[,.]\d+)?)\s*mg?",
+    }
+    targets: dict[str, float] = {}
+    for key, pattern in target_patterns.items():
+        match = re.search(pattern, message, re.I)
+        if match is not None:
+            targets[key] = float(match.group(1).replace(",", "."))
+    if targets:
+        defaults = {
+            "calories_kcal": 2000.0,
+            "protein_g": 150.0,
+            "carbs_g": 180.0,
+            "fat_g": 70.0,
+            "fiber_g": 30.0,
+            "sodium_mg": 2300.0,
+        }
+        defaults.update(targets)
+        starts_on_match = re.search(r"\b(?:starting|from|a partir de|desde)\s+(\d{4}-\d{2}-\d{2})\b", message, re.I)
+        starts_on = date.fromisoformat(starts_on_match.group(1)) if starts_on_match else today
+        return {
+            "proposal_type": "goal_profile",
+            "summary": f"Create goal profile starting {starts_on.isoformat()}",
+            "payload": {
+                "starts_on": starts_on.isoformat(),
+                "targets": defaults,
+                "notes": "Agent-drafted target update",
+            },
+        }
+
+    changes: dict[str, object] = {}
+    height_match = re.search(r"(?:height|altura)\s*(?:to|para|=|:)?\s*(\d+(?:[,.]\d+)?)\s*cm?", message, re.I)
+    if height_match is not None:
+        changes["height_cm"] = float(height_match.group(1).replace(",", "."))
+    activity_match = re.search(r"(?:activity|atividade)\s*(?:to|para|=|:)\s*([a-zA-ZÀ-ÿ _-]+)", message, re.I)
+    if activity_match is not None:
+        changes["activity_level"] = activity_match.group(1).strip(" .")
+    timezone_match = re.search(r"(?:timezone|fuso)\s*(?:to|para|=|:)\s*([A-Za-z_/-]+)", message, re.I)
+    if timezone_match is not None:
+        changes["timezone"] = timezone_match.group(1).strip()
+    if changes:
+        return {
+            "proposal_type": "profile_update",
+            "summary": "Update profile fields",
+            "payload": changes,
+        }
+    return None
+
+
 def parse_nutrition_label_text(text: str) -> ParsedNutritionLabel:
     fields = parse_label_fields(text)
     food_name = (
@@ -4670,6 +4965,19 @@ def nutrients_to_snapshot(nutrients: Nutrients) -> dict[str, float]:
 
 
 def nutrients_from_snapshot(value: dict[str, Any]) -> Nutrients:
+    return Nutrients(
+        calories_kcal=float(value.get("calories_kcal", 0)),
+        protein_g=float(value.get("protein_g", 0)),
+        carbs_g=float(value.get("carbs_g", 0)),
+        fat_g=float(value.get("fat_g", 0)),
+        fiber_g=float(value.get("fiber_g", 0)),
+        sodium_mg=float(value.get("sodium_mg", 0)),
+    )
+
+
+def nutrients_from_mapping(value: Any) -> Nutrients:
+    if not isinstance(value, dict):
+        raise ValueError("nutrient targets must be an object")
     return Nutrients(
         calories_kcal=float(value.get("calories_kcal", 0)),
         protein_g=float(value.get("protein_g", 0)),

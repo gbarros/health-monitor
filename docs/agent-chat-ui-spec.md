@@ -48,7 +48,13 @@ import "@health-monitor/agent-chat-ui/styles.css";
 defineAgentChatElement();
 ```
 
-This is deliberately not wired into the app yet. The next pass should add workspace/build integration after the component contract is stable enough.
+The health-monitor web app consumes the package as a private local dependency:
+
+```json
+"@health-monitor/agent-chat-ui": "file:../packages/agent-chat-ui"
+```
+
+The package is wired into the Log and Work pages. The app adapter maps domain workflows to generic modes and events.
 
 ## Design Principles
 
@@ -136,12 +142,16 @@ Cards display title, summary, status, and actions. The health app can later prov
 
 Types exported now:
 
+- `defineAgentChatElement`
+- `AgentChatElement`
 - `AgentChatMessage`
 - `AgentChatAttachment`
 - `AgentChatToolCall`
 - `AgentChatDraftCard`
 - `AgentChatMode`
+- `AgentChatComposerAction`
 - `AgentChatSendPayload`
+- `AgentChatComposerActionPayload`
 - `AgentChatThreadState`
 
 Custom element state:
@@ -151,7 +161,11 @@ element.data = {
   messages,
   modes,
   activeModeId,
-  status
+  status,
+  composer: {
+    allowAttachments,
+    actions
+  }
 };
 ```
 
@@ -165,8 +179,30 @@ Events:
 - `agent-chat:reject-draft`
 - `agent-chat:inspect-prompt`
 - `agent-chat:remove-attachment`
+- `agent-chat:composer-action`
 
-The implemented custom element emits the full event set above. The health-monitor app currently consumes `send`, `mode-change`, `confirm-draft`, `reject-draft`, `inspect-prompt`, and `retry` on the Log page.
+The implemented custom element emits the full event set above. The health-monitor app currently consumes `send`, `mode-change`, `confirm-draft`, `reject-draft`, `inspect-prompt`, `retry`, and `composer-action`.
+
+Messages and draft cards support optional `metadata: Record<string, unknown>` for host-side correlation. The component treats metadata as opaque and does not render or interpret it.
+
+## Host Adapter Contract
+
+The component owns:
+
+- Rendering the thread, modes, composer, attachments, status, tool-call rows, and generic draft cards.
+- Managing local composer text and selected local files before `send`.
+- Emitting generic events with typed payloads.
+- Preserving generic UI states such as offline, queued, replaying, failed, retry, and cancel.
+
+The health-monitor app owns:
+
+- API calls, background jobs, model settings, IndexedDB outbox replay, and attachment upload.
+- Nutrition-specific modes, prompt templates, barcode scanning, OCR orchestration, and proposal semantics.
+- Mapping `agent-chat:composer-action` ids to host actions such as Product Label `scan-code`.
+- Confirm/reject API calls for proposals and any durable writes.
+- Persisted app state, route state, household/profile selection, and audit trails.
+
+The component must not know about foods, calories, barcodes, diary entries, model providers, or app endpoints.
 
 ## UX Requirements
 
@@ -183,9 +219,9 @@ The implemented custom element emits the full event set above. The health-monito
 ## Integration Plan
 
 1. Keep the package private and local.
-2. Use Vite aliases from the app until a root workspace is justified.
+2. Consume it from the web app through the local `file:../packages/agent-chat-ui` dependency.
 3. Maintain the static demo page without adding Storybook.
-4. Keep the current Log page chat area backed by `<agent-chat>`.
+4. Keep the Log and Work chat areas backed by `<agent-chat>`.
 5. Map host app state to `AgentChatMessage[]`.
 6. Map mode sends to existing background jobs and proposal APIs:
    - Chat -> chat job

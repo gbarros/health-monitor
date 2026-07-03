@@ -125,7 +125,14 @@ let state: AgentChatElementState = {
   composer: {
     allowAttachments: true,
     helperText: "Press Ctrl+Enter or Cmd+Enter to send. Enter inserts a new line.",
-    showInspectPrompt: true
+    showInspectPrompt: true,
+    actions: [
+      {
+        id: "sample-action",
+        label: "Sample action",
+        title: "Emits a generic composer action"
+      }
+    ]
   },
   attachments: []
 };
@@ -201,7 +208,8 @@ element.addEventListener("agent-chat:send", (event) => {
   "agent-chat:confirm-draft",
   "agent-chat:reject-draft",
   "agent-chat:inspect-prompt",
-  "agent-chat:remove-attachment"
+  "agent-chat:remove-attachment",
+  "agent-chat:composer-action"
 ].forEach((eventName) => {
   element.addEventListener(eventName, (event) => recordEvent(eventName, (event as CustomEvent).detail));
 });

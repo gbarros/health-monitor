@@ -9,11 +9,11 @@ MAIN_TS = ROOT / "web" / "src" / "main.ts"
 
 
 class AgentSettingsUiTest(unittest.TestCase):
-    def test_chat_form_and_log_adapter_enable_research_lookup(self) -> None:
+    def test_component_backed_agent_paths_enable_research_lookup(self) -> None:
         source = MAIN_TS.read_text(encoding="utf-8")
 
-        self.assertIn('input name="research_lookup" type="checkbox" checked', source)
-        self.assertIn('research_lookup: form.get("research_lookup") === "on"', source)
+        self.assertIn("function submitAgentChatFromComponent", source)
+        self.assertIn("workAgentChat.data = workAgentState()", source)
         self.assertGreaterEqual(source.count("research_lookup: true"), 2)
 
 

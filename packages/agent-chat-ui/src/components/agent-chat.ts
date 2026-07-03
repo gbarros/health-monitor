@@ -1,6 +1,7 @@
 import type {
   AgentChatAttachment,
   AgentChatAttachmentActionPayload,
+  AgentChatComposerActionPayload,
   AgentChatComposerConfig,
   AgentChatDraftActionPayload,
   AgentChatMessage,
@@ -10,6 +11,7 @@ import type {
   AgentChatSendPayload,
   AgentChatStatus
 } from "../core/types";
+import { createSendPayload, removeAttachmentById } from "../core/payloads";
 
 export interface AgentChatElementState {
   messages: AgentChatMessage[];
@@ -39,10 +41,12 @@ const defaultComposer: Required<AgentChatComposerConfig> = {
   cancelLabel: "Cancel",
   inspectPromptLabel: "Inspect prompt",
   showInspectPrompt: false,
-  allowAttachments: true
+  allowAttachments: true,
+  actions: []
 };
 
 export class AgentChatElement extends HTMLElement {
+  private composerText = "";
   private state: AgentChatElementState = {
     messages: [],
     modes: defaultModes,
@@ -112,7 +116,7 @@ export class AgentChatElement extends HTMLElement {
             placeholder="${this.escapeAttribute(activeMode.placeholder)}"
             ${disabled ? "disabled" : ""}
             aria-describedby="agent-chat-composer-help"
-          ></textarea>
+          >${this.escapeHtml(this.composerText)}</textarea>
           <p id="agent-chat-composer-help" class="agent-chat__help">${this.escapeHtml(composer.helperText)}</p>
           ${composer.allowAttachments ? this.renderComposerAttachments() : ""}
           <div class="agent-chat__actions">
@@ -132,6 +136,7 @@ export class AgentChatElement extends HTMLElement {
                 : "<span></span>"
             }
             <div class="agent-chat__action-group">
+              ${this.renderComposerActions()}
               ${
                 this.isBusy
                   ? `<button class="agent-chat__secondary-button" type="button" data-agent-chat-cancel>${this.escapeHtml(composer.cancelLabel)}</button>`
@@ -161,7 +166,11 @@ export class AgentChatElement extends HTMLElement {
       this.submit();
     });
 
-    this.querySelector<HTMLTextAreaElement>("textarea[name='message']")?.addEventListener("keydown", (event) => {
+    const textarea = this.querySelector<HTMLTextAreaElement>("textarea[name='message']");
+    textarea?.addEventListener("input", (event) => {
+      this.composerText = (event.currentTarget as HTMLTextAreaElement).value;
+    });
+    textarea?.addEventListener("keydown", (event) => {
       if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
         event.preventDefault();
         this.submit();
@@ -182,6 +191,10 @@ export class AgentChatElement extends HTMLElement {
 
     this.querySelector<HTMLButtonElement>("[data-agent-chat-inspect-prompt]")?.addEventListener("click", () => {
       this.dispatchEvent(new CustomEvent("agent-chat:inspect-prompt", { bubbles: true, detail: {} }));
+    });
+
+    this.querySelectorAll<HTMLButtonElement>("[data-agent-chat-composer-action]").forEach((button) => {
+      button.addEventListener("click", () => this.emitComposerAction(button.dataset.agentChatComposerAction ?? ""));
     });
 
     this.querySelectorAll<HTMLButtonElement>("[data-agent-chat-confirm-draft]").forEach((button) => {
@@ -272,6 +285,20 @@ export class AgentChatElement extends HTMLElement {
       return `<div class="agent-chat__attachment-empty">No files attached.</div>`;
     }
     return this.renderAttachments(this.state.attachments, true);
+  }
+
+  private renderComposerActions(): string {
+    return this.composer.actions.map((action) => `
+      <button
+        class="agent-chat__secondary-button"
+        type="button"
+        data-agent-chat-composer-action="${this.escapeAttribute(action.id)}"
+        ${action.title ? `title="${this.escapeAttribute(action.title)}"` : ""}
+        ${action.disabled || this.isDisabled ? "disabled" : ""}
+      >
+        ${this.escapeHtml(action.label)}
+      </button>
+    `).join("");
   }
 
   private renderAttachments(attachments: AgentChatAttachment[], removable: boolean): string {
@@ -391,7 +418,7 @@ export class AgentChatElement extends HTMLElement {
     if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
     this.state = {
       ...this.state,
-      attachments: this.state.attachments.filter((candidate) => candidate.id !== attachmentId)
+      attachments: removeAttachmentById(this.state.attachments, attachmentId)
     };
     this.dispatchEvent(new CustomEvent<AgentChatAttachmentActionPayload>("agent-chat:remove-attachment", {
       bubbles: true,
@@ -403,23 +430,23 @@ export class AgentChatElement extends HTMLElement {
   private submit(): void {
     if (this.isDisabled) return;
     const textarea = this.querySelector<HTMLTextAreaElement>("textarea[name='message']");
-    const text = textarea?.value.trim() ?? "";
+    const text = (textarea?.value ?? this.composerText).trim();
     if (!text && this.state.attachments.length === 0) {
       return;
     }
 
-    const payload: AgentChatSendPayload = {
-      modeId: this.state.activeModeId,
+    const payload: AgentChatSendPayload = createSendPayload(
+      this.state.activeModeId,
       text,
-      attachments: this.state.attachments,
-      clientRequestId: crypto.randomUUID()
-    };
+      this.state.attachments
+    );
 
     this.dispatchEvent(new CustomEvent<AgentChatSendPayload>("agent-chat:send", {
       bubbles: true,
       detail: payload
     }));
 
+    this.composerText = "";
     if (textarea) textarea.value = "";
     this.state = { ...this.state, attachments: [] };
     this.render();
@@ -436,6 +463,16 @@ export class AgentChatElement extends HTMLElement {
     this.dispatchEvent(new CustomEvent<AgentChatDraftActionPayload>(eventName, {
       bubbles: true,
       detail: { draftId }
+    }));
+  }
+
+  private emitComposerAction(actionId: string): void {
+    this.dispatchEvent(new CustomEvent<AgentChatComposerActionPayload>("agent-chat:composer-action", {
+      bubbles: true,
+      detail: {
+        actionId,
+        modeId: this.state.activeModeId
+      }
     }));
   }
 

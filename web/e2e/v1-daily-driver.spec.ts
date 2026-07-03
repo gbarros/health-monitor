@@ -4,11 +4,10 @@ import { Buffer } from "node:buffer";
 test("v1 daily driver workflow", async ({ page }) => {
   await page.goto("/");
 
-  await page.locator("#setup-form input[name='household']").fill("Casa E2E");
-  await page.locator("#setup-form input[name='name']").fill("Gabriel");
-  await page.locator("#setup-form input[name='target_calories_kcal']").fill("2000");
-  await page.locator("#setup-form input[name='target_protein_g']").fill("150");
-  await page.locator("#setup-form button[type='submit']").click();
+  await page.locator("#onboarding-message-form textarea[name='message']").fill(
+    "Household: Casa E2E\nName: Gabriel\nTimezone: America/Sao_Paulo\nTargets: 2000 kcal, 150g protein"
+  );
+  await page.locator("#onboarding-message-form button[type='submit']").click();
   await expect(page.getByText("Profile created.")).toBeVisible();
   await expect(page.locator(".profile-select").first()).toContainText("Gabriel");
 
@@ -21,6 +20,13 @@ test("v1 daily driver workflow", async ({ page }) => {
 
   await page.locator(".profile-select").first().selectOption({ label: "Gabriel" });
   await expect(page.getByText("Switched to Gabriel.")).toBeVisible();
+
+  await goToPage(page, "Log");
+  await agentChat(page).getByRole("textbox", { name: "Message" }).fill("Still typing\n- do not erase");
+  await goToPage(page, "Work");
+  await goToPage(page, "Log");
+  await expect(agentChat(page).getByRole("textbox", { name: "Message" })).toHaveValue("Still typing\n- do not erase");
+  await agentChat(page).getByRole("textbox", { name: "Message" }).clear();
 
   await goToPage(page, "Library");
   await page.locator("#food-form input[name='name']").fill("Queijo Minas");
@@ -51,6 +57,24 @@ test("v1 daily driver workflow", async ({ page }) => {
 
   await goToPage(page, "Log");
   await selectLogMode(page, "Product label");
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        getUserMedia: async () => new MediaStream()
+      }
+    });
+    window.HTMLMediaElement.prototype.play = async () => undefined;
+    class MockBarcodeDetector {
+      async detect() {
+        return [{ rawValue: "7891000000999" }];
+      }
+    }
+    Object.defineProperty(window, "BarcodeDetector", { configurable: true, value: MockBarcodeDetector });
+  });
+  await agentChat(page).getByRole("button", { name: "Scan code" }).click();
+  await expect(agentChat(page).getByRole("textbox", { name: "Message" })).toHaveValue("Barcode: 7891000000999");
+  await agentChat(page).getByRole("textbox", { name: "Message" }).clear();
   await agentChat(page).getByLabel("Add files").setInputFiles({
     name: "label.png",
     mimeType: "image/png",
@@ -104,16 +128,33 @@ Log grams: 100 g`,
 
   await goToPage(page, "Log");
   await sendLogMessage(page, "Chat", "Why was 2026-07-02 high in calories?", "Send");
-  await expect(page.getByText("Agent chat queued for the worker.")).toBeVisible();
-  await goToPage(page, "Work");
-  await page.locator(".job-process").first().click();
-  await expect(page.getByText("Job succeeded.")).toBeVisible();
-  await page.locator(".job-open-chat").first().click();
-  await expect(page.getByText("Loaded job chat answer.")).toBeVisible();
-  await expect(page.locator(".chat-answer")).toContainText("explain_day");
+  await expect(page.getByText("Agent chat answered from app data.")).toBeVisible();
+  await expect(agentChat(page)).toContainText("explain_day");
+  await sendLogMessage(page, "Chat", "What was my protein total on 2026-07-02?", "Send");
+  await expect(page.getByText("Agent chat answered from app data.")).toBeVisible();
+  await page.getByRole("button", { name: /Why was 2026-07-02 high in calories/ }).click();
+  await expect(page.getByText("Loaded previous chat turn.")).toBeVisible();
+  await expect(agentChat(page)).toContainText("Why was 2026-07-02 high in calories?");
+
+  await goToPage(page, "Log");
+  await sendLogMessage(page, "Correction", "Change queijo on 2026-07-02 to 60g", "Send");
+  await expect(page.getByText("Correction drafted a proposal. Review before applying.")).toBeVisible();
+  await expect(page.locator(".proposal").getByText("Update")).toBeVisible();
+  await expect(agentChat(page)).toContainText("draft_diary_correction");
+
+  await goToPage(page, "Log");
+  await sendLogMessage(
+    page,
+    "Review note",
+    "Save review note for 2026-07-01 to 2026-07-07: Social dinners made adherence harder.",
+    "Send"
+  );
+  await expect(page.getByText("Review note drafted a proposal. Review before applying.")).toBeVisible();
+  await expect(page.locator(".proposal").getByText("Draft Review Note", { exact: true })).toBeVisible();
+  await expect(agentChat(page)).toContainText("draft_review_note");
 
   await page.locator(".profile-select").first().selectOption({ label: "Ana" });
-  await expect(page.getByText("Switched to Ana.")).toBeVisible();
+  await expect(page.locator(".topbar-subtitle")).toContainText("Ana");
   await goToPage(page, "Diary");
   await expect(page.getByText("No diary entries for this day yet.").first()).toBeVisible();
 

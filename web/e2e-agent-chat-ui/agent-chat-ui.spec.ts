@@ -65,6 +65,16 @@ test("removes attachments and emits the generic remove event", async ({ page }) 
   expect(event.detail.attachmentId).toMatch(/^local_/);
 });
 
+test("preserves draft text across host data refreshes", async ({ page }) => {
+  await page.goto("/");
+  const textbox = page.getByRole("textbox", { name: "Message" });
+  await textbox.fill("Still typing\n- item");
+
+  await page.getByRole("button", { name: "Queued" }).click();
+
+  await expect(textbox).toHaveValue("Still typing\n- item");
+});
+
 test("shows statuses, tool calls, draft actions, retry, cancel, and inspect events", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByText("Read context")).toBeVisible();
@@ -90,6 +100,13 @@ test("shows statuses, tool calls, draft actions, retry, cancel, and inspect even
 
   await page.getByRole("button", { name: "Inspect prompt" }).click();
   await expect(page.locator("#last-event")).toContainText("agent-chat:inspect-prompt");
+
+  await page.getByRole("button", { name: "Idle" }).click();
+  await page.getByRole("button", { name: "Sample action" }).click();
+  const actionEvent = await lastEvent(page);
+  expect(actionEvent.name).toBe("agent-chat:composer-action");
+  expect(actionEvent.detail.actionId).toBe("sample-action");
+  expect(actionEvent.detail.modeId).toBe("chat");
 });
 
 test("keeps keyboard order and mobile layout usable", async ({ page }) => {
@@ -108,6 +125,16 @@ test("keeps keyboard order and mobile layout usable", async ({ page }) => {
   await page.getByRole("textbox", { name: "Message" }).fill("Keyboard path\n- line");
   await page.keyboard.press(process.platform === "darwin" ? "Meta+Enter" : "Control+Enter");
   await expect(page.locator("#last-event")).toContainText("agent-chat:send");
+});
+
+test("captures desktop and mobile screenshot smoke samples", async ({ page }) => {
+  await page.goto("/");
+  const desktop = await page.locator("agent-chat").screenshot();
+  expect(desktop.length).toBeGreaterThan(10_000);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  const mobile = await page.locator("agent-chat").screenshot();
+  expect(mobile.length).toBeGreaterThan(10_000);
 });
 
 async function lastEvent(page: import("@playwright/test").Page): Promise<{

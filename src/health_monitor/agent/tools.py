@@ -4,6 +4,7 @@ from datetime import date
 from typing import Any
 
 from health_monitor.agent.runtime import AgentDeps
+from health_monitor.domain.nutrients import Nutrients
 
 
 def nutrients_payload(value: Any) -> dict[str, float]:
@@ -307,6 +308,50 @@ class NutritionAgentTools:
                 "mutation_applied": False,
             }
         return self._proposal_payload(deps.service.get_proposal(response.proposal_id))
+
+    def draft_profile_update_proposal(
+        self,
+        deps: AgentDeps,
+        *,
+        changes: dict[str, Any],
+        source_text: str,
+    ) -> dict[str, Any]:
+        proposal = deps.service.propose_profile_update(
+            person_id=deps.person_id,
+            changes=changes,
+            source_text=source_text,
+        )
+        return self._proposal_payload(proposal)
+
+    def draft_goal_profile_proposal(
+        self,
+        deps: AgentDeps,
+        *,
+        starts_on: str,
+        calories_kcal: float,
+        protein_g: float,
+        carbs_g: float,
+        fat_g: float,
+        fiber_g: float,
+        sodium_mg: float,
+        notes: str | None,
+        source_text: str,
+    ) -> dict[str, Any]:
+        proposal = deps.service.propose_goal_profile_update(
+            person_id=deps.person_id,
+            starts_on=date.fromisoformat(starts_on),
+            targets=Nutrients(
+                calories_kcal=calories_kcal,
+                protein_g=protein_g,
+                carbs_g=carbs_g,
+                fat_g=fat_g,
+                fiber_g=fiber_g,
+                sodium_mg=sodium_mg,
+            ),
+            notes=notes,
+            source_text=source_text,
+        )
+        return self._proposal_payload(proposal)
 
     def _proposal_payload(self, proposal: Any) -> dict[str, Any]:
         return {

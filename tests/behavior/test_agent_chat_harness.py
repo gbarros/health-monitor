@@ -235,6 +235,57 @@ class AgentChatHarnessTest(unittest.TestCase):
         )
         self.assertEqual(tool_calls[0].source_record_ids, (entry_id,))
 
+    def test_chat_can_draft_goal_profile_update_without_immediate_mutation(self) -> None:
+        service, person_id, _ = self.make_service_with_entry()
+        service.create_goal_profile(
+            person_id=person_id,
+            starts_on=date(2026, 7, 1),
+            targets=Nutrients(2000, 150, 180, 70, 30, 2300),
+            notes="initial",
+        )
+
+        response = service.chat(
+            person_id=person_id,
+            message="Change my goal calories to 1800, protein to 160g, carbs to 140g, fat to 60g, fiber to 35g, sodium to 2100mg starting 2026-07-10",
+            today=date(2026, 7, 2),
+        )
+
+        self.assertEqual(response.behavior_label, "draft_goal_profile")
+        self.assertIsNotNone(response.proposal_id)
+        proposal = service.get_proposal(response.proposal_id or "")
+        self.assertEqual(proposal.proposal_type, "goal_profile")
+        self.assertEqual(proposal.status, "draft")
+        self.assertEqual(
+            service.active_goal_profile(person_id=person_id, day=date(2026, 7, 10)).targets.calories_kcal,
+            2000,
+        )
+
+        service.confirm_proposal(proposal.id)
+
+        updated = service.active_goal_profile(person_id=person_id, day=date(2026, 7, 10))
+        self.assertIsNotNone(updated)
+        self.assertEqual(updated.targets.rounded(), Nutrients(1800, 160, 140, 60, 35, 2100))
+
+    def test_chat_can_draft_profile_update_without_immediate_mutation(self) -> None:
+        service, person_id, _ = self.make_service_with_entry()
+
+        response = service.chat(
+            person_id=person_id,
+            message="Update my profile height to 181 cm",
+            today=date(2026, 7, 2),
+        )
+
+        self.assertEqual(response.behavior_label, "draft_profile_update")
+        self.assertIsNotNone(response.proposal_id)
+        proposal = service.get_proposal(response.proposal_id or "")
+        self.assertEqual(proposal.proposal_type, "profile_update")
+        self.assertEqual(proposal.payload["height_cm"], 181)
+        self.assertIsNone(service.people[person_id].height_cm)
+
+        service.confirm_proposal(proposal.id)
+
+        self.assertEqual(service.people[person_id].height_cm, 181)
+
     def test_chat_answers_whether_new_food_label_is_default_and_used(self) -> None:
         service = HealthMonitorService()
         household = service.create_household(name="Casa")

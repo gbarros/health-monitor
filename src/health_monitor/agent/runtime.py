@@ -72,6 +72,28 @@ class HealthMonitorServiceProtocol(Protocol):
     def extract_label_text_from_attachment(self, *, attachment_id: str) -> dict[str, Any]:
         pass
 
+    def propose_profile_update(
+        self,
+        *,
+        person_id: str,
+        changes: dict[str, Any],
+        source_text: str,
+        source_agent_run_id: str | None = None,
+    ) -> Any:
+        pass
+
+    def propose_goal_profile_update(
+        self,
+        *,
+        person_id: str,
+        starts_on: date,
+        targets: Any,
+        notes: str | None,
+        source_text: str,
+        source_agent_run_id: str | None = None,
+    ) -> Any:
+        pass
+
 
 @dataclass(frozen=True)
 class AgentDeps:
@@ -344,8 +366,9 @@ class PydanticAINutritionAgent:
                 "weight trend, food resolution, lookup candidates, and food version "
                 "history, and can run targeted OCR on attachment ids when image text "
                 "is needed. Draft tools may create proposals, but they must not claim "
-                "that diary entries or review notes were applied. If asked to change "
-                "data, draft a proposal and explain that the user must confirm it. "
+                "that diary entries, profile fields, goal targets, or review notes were "
+                "applied. If asked to change data, draft a proposal and explain that "
+                "the user must confirm it. "
                 "Keep answers concise and cite uncertainty. "
                 f"{task_instructions}"
             ),
@@ -426,6 +449,46 @@ class PydanticAINutritionAgent:
         ) -> dict[str, Any]:
             """Draft a review note proposal without saving a review note."""
             return tools.draft_review_note_proposal(ctx.deps, message=message)
+
+        @agent.tool
+        async def draft_profile_update_proposal(
+            ctx,
+            changes: dict[str, Any],
+            source_text: str,
+        ) -> dict[str, Any]:
+            """Draft a profile update proposal without changing the profile."""
+            return tools.draft_profile_update_proposal(
+                ctx.deps,
+                changes=changes,
+                source_text=source_text,
+            )
+
+        @agent.tool
+        async def draft_goal_profile_proposal(
+            ctx,
+            starts_on: str,
+            calories_kcal: float,
+            protein_g: float,
+            carbs_g: float,
+            fat_g: float,
+            fiber_g: float,
+            sodium_mg: float,
+            notes: str | None = None,
+            source_text: str = "",
+        ) -> dict[str, Any]:
+            """Draft a dated macro target proposal without changing active targets."""
+            return tools.draft_goal_profile_proposal(
+                ctx.deps,
+                starts_on=starts_on,
+                calories_kcal=calories_kcal,
+                protein_g=protein_g,
+                carbs_g=carbs_g,
+                fat_g=fat_g,
+                fiber_g=fiber_g,
+                sodium_mg=sodium_mg,
+                notes=notes,
+                source_text=source_text,
+            )
 
         prompt = (
             f"Today is {deps.today.isoformat()}. Active person id is {deps.person_id}. "

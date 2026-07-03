@@ -5,6 +5,8 @@ export type {
   AgentChatAttachmentActionPayload,
   AgentChatAttachmentKind,
   AgentChatAttachmentStatus,
+  AgentChatComposerAction,
+  AgentChatComposerActionPayload,
   AgentChatComposerConfig,
   AgentChatDraftCard,
   AgentChatDraftActionPayload,
@@ -12,6 +14,7 @@ export type {
   AgentChatDraftCardStatus,
   AgentChatMessage,
   AgentChatMessageActionPayload,
+  AgentChatMetadata,
   AgentChatMode,
   AgentChatModeChangePayload,
   AgentChatRole,
@@ -21,6 +24,10 @@ export type {
   AgentChatToolCall,
   AgentChatToolCallStatus
 } from "./core/types";
+export {
+  createSendPayload,
+  removeAttachmentById
+} from "./core/payloads";
 export {
   appendMessage,
   createThreadState,

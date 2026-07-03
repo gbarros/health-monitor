@@ -98,7 +98,6 @@ textarea:disabled {
 .primary-action,
 #text-meal-form button[type="submit"],
 #label-scan-form button[type="submit"],
-#agent-chat-form button[type="submit"],
 #recipe-form button[type="submit"] {
   background: var(--color-primary);
   border-color: var(--color-primary);
@@ -108,7 +107,6 @@ textarea:disabled {
 .primary-action:hover:not(:disabled),
 #text-meal-form button[type="submit"]:hover:not(:disabled),
 #label-scan-form button[type="submit"]:hover:not(:disabled),
-#agent-chat-form button[type="submit"]:hover:not(:disabled),
 #recipe-form button[type="submit"]:hover:not(:disabled) {
   background: var(--color-primary-strong);
   border-color: var(--color-primary-strong);
@@ -417,8 +415,84 @@ h3 {
 }
 
 .capture-zone {
+  display: grid;
+  gap: var(--space-3);
   min-width: 0;
   scroll-margin-top: 84px;
+}
+
+.chat-session-strip {
+  align-items: start;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-panel);
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: minmax(220px, 1fr) auto minmax(240px, 0.9fr);
+  min-width: 0;
+  padding: var(--space-3);
+}
+
+.chat-session-strip h2 {
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.chat-session-strip span {
+  color: var(--color-muted);
+  font-size: 13px;
+}
+
+.chat-session-strip ol {
+  display: grid;
+  gap: var(--space-1);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.chat-session-strip li {
+  border-left: 3px solid #5aa7bd;
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.chat-session-strip li.active {
+  border-left-color: var(--color-primary);
+}
+
+.chat-session-open {
+  align-items: start;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: inherit;
+  cursor: pointer;
+  display: grid;
+  gap: 2px;
+  min-height: 44px;
+  min-width: 0;
+  padding: var(--space-1) var(--space-2);
+  text-align: left;
+}
+
+.chat-session-open:hover,
+.chat-session-open:focus-visible,
+.chat-session-strip li.active .chat-session-open {
+  background: var(--color-surface-subtle);
+}
+
+.chat-session-open strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-session-strip .empty {
+  margin: 0;
+  padding: 0;
 }
 
 .today,
@@ -553,8 +627,7 @@ h3 {
   line-height: 1.55;
 }
 
-.chat-message pre,
-.template-preview pre {
+.chat-message pre {
   margin: 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -588,7 +661,6 @@ h3 {
 }
 
 .chat-composer textarea[name="text"],
-#agent-chat-form textarea,
 #recipe-form textarea,
 #label-scan-form textarea {
   min-height: 180px;
@@ -597,48 +669,6 @@ h3 {
 #text-meal-form textarea[name="text"] {
   min-height: 220px;
   font-size: 16px;
-}
-
-.template-preview {
-  display: grid;
-  gap: var(--space-2);
-  border: 1px solid var(--color-border-soft);
-  border-radius: var(--radius-sm);
-  background: #f8fcfb;
-  padding: 10px 12px;
-}
-
-.template-preview > div {
-  display: grid;
-  gap: 2px;
-}
-
-.template-preview h3 {
-  font-size: 14px;
-}
-
-.advanced-settings {
-  border: 1px solid var(--color-border-soft);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface-subtle);
-}
-
-.advanced-settings summary {
-  min-height: 44px;
-  display: flex;
-  align-items: center;
-  color: #29413f;
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 750;
-  padding: 0 12px;
-}
-
-.advanced-settings-body {
-  display: grid;
-  gap: var(--space-2);
-  border-top: 1px solid var(--color-border-soft);
-  padding: var(--space-3);
 }
 
 .field-hint {
@@ -1040,10 +1070,6 @@ textarea {
   line-height: 1.45;
 }
 
-#agent-chat-form textarea {
-  min-height: 118px;
-}
-
 .payload-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1186,45 +1212,25 @@ textarea {
   font-size: 13px;
 }
 
-.chat-history {
+.onboarding-chat {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.onboarding-chat details {
   border-top: 1px solid var(--color-border-soft);
-  margin-top: var(--space-3);
   padding-top: var(--space-3);
 }
 
-.chat-history h3 {
-  font-size: 15px;
-  margin-bottom: var(--space-2);
+.onboarding-chat summary {
+  cursor: pointer;
+  font-weight: 700;
+  margin-bottom: var(--space-3);
 }
 
-.chat-history ol {
+.onboarding-chat form {
   display: grid;
-  gap: var(--space-2);
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.chat-history li {
-  display: grid;
-  gap: 4px;
-  border-left: 3px solid #5aa7bd;
-  padding-left: 9px;
-}
-
-.chat-history strong {
-  font-size: 13px;
-}
-
-.chat-history p {
-  color: #29413f;
-  font-size: 13px;
-  line-height: 1.45;
-}
-
-.chat-history span {
-  color: var(--color-muted);
-  font-size: 12px;
+  gap: var(--space-3);
 }
 
 .target-strip {
@@ -1380,6 +1386,10 @@ textarea {
   }
 
   .chat-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .chat-session-strip {
     grid-template-columns: 1fr;
   }
 
