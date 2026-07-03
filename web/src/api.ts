@@ -413,73 +413,6 @@ export async function sendAgentChat(input: {
 
 export type AgentChatIntent = "log_food" | "recipe" | "label_scan" | "weight" | "repeat_meal" | "review";
 
-export async function draftTextMeal(input: {
-  personId: string;
-  text: string;
-  settings: AgentSettings;
-  amendProposalId?: string;
-  signal?: AbortSignal;
-}): Promise<Proposal> {
-  const response = await fetch("/api/agent/text-meal", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      person_id: input.personId,
-      logged_at_local: localDateTimeForApi(),
-      text: input.text,
-      agent_settings: input.settings,
-      amend_proposal_id: input.amendProposalId,
-    }),
-    signal: input.signal,
-  });
-  return decodeResponse<Proposal>(response);
-}
-
-export async function draftRecipe(input: {
-  householdId: string;
-  personId: string;
-  text: string;
-  quantityG?: number;
-  signal?: AbortSignal;
-}): Promise<Proposal> {
-  const response = await fetch("/api/agent/recipe", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      household_id: input.householdId,
-      person_id: input.personId,
-      recipe_text: input.text,
-      logged_at_local: input.quantityG != null ? localDateTimeForApi() : undefined,
-      quantity_g: input.quantityG,
-    }),
-    signal: input.signal,
-  });
-  return decodeResponse<Proposal>(response);
-}
-
-export async function draftLabelScan(input: {
-  householdId: string;
-  personId: string;
-  text: string;
-  attachmentIds: string[];
-  signal?: AbortSignal;
-}): Promise<Proposal> {
-  const response = await fetch("/api/agent/label-scan", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      household_id: input.householdId,
-      person_id: input.personId,
-      table_text: input.text || undefined,
-      barcode: extractBarcode(input.text) ?? undefined,
-      attachment_ids: input.attachmentIds.length ? input.attachmentIds : undefined,
-      set_as_default: true,
-    }),
-    signal: input.signal,
-  });
-  return decodeResponse<Proposal>(response);
-}
-
 export async function uploadDataUrlAttachment(input: {
   householdId: string;
   personId: string;
@@ -605,11 +538,6 @@ function extractNaturalActivity(text: string): string | null {
   if (value === "moderada" || value === "moderate") return "moderate";
   if (value === "alta" || value === "high") return "high";
   return value;
-}
-
-function extractBarcode(text: string): string | null {
-  const match = text.match(/\b\d{8,14}\b/);
-  return match?.[0] ?? null;
 }
 
 function parseDataUrl(dataUrl: string): { mimeType: string; contentBase64: string } {
