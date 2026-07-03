@@ -115,6 +115,18 @@ class WeekSummary:
 
 
 @dataclass(frozen=True)
+class RollingSummary:
+    person_id: str
+    start: date
+    end: date
+    days: int
+    days_with_data: int
+    daily: dict[date, Nutrients]
+    averages: Nutrients
+    stddev: Nutrients
+
+
+@dataclass(frozen=True)
 class AgentRun:
     id: str
     person_id: str
@@ -252,6 +264,19 @@ class ParsedMealRemoval:
     phrase: str
     quantity_g: float
     source_text: str
+
+
+@dataclass(frozen=True)
+class ResolvedMealFood:
+    food_version_id: str
+    version: FoodVersion
+    food_name: str
+    source: str
+    resolution_reason: str
+    confidence: float
+    evidence_source_type: str
+    evidence_source_details: dict[str, object]
+    pending_version: dict[str, object] | None
 
 
 @dataclass(frozen=True)
@@ -1676,6 +1701,46 @@ class HealthMonitorService:
             weight_delta_kg=trend.delta_kg,
         )
 
+    def rolling_summary(self, *, person_id: str, end: date, days: int = 7) -> RollingSummary:
+        self._require_person(person_id)
+        if days < 1:
+            raise ValueError("days must be at least 1")
+        start = end - timedelta(days=days - 1)
+        daily: dict[date, Nutrients] = {}
+        current = start
+        while current <= end:
+            summary = self.day_summary(person_id, current)
+            if any(entries for entries in summary.meals.values()):
+                daily[current] = summary.totals
+            current += timedelta(days=1)
+
+        # Mean and population standard deviation over days that have entries —
+        # empty days would drag averages toward zero and hide the real pattern.
+        values = list(daily.values())
+        nutrient_fields = ("calories_kcal", "protein_g", "carbs_g", "fat_g", "fiber_g", "sodium_mg")
+        means: dict[str, float] = {}
+        deviations: dict[str, float] = {}
+        for field_name in nutrient_fields:
+            data = [float(getattr(nutrients, field_name) or 0) for nutrients in values]
+            if data:
+                mean = sum(data) / len(data)
+                variance = sum((value - mean) ** 2 for value in data) / len(data)
+            else:
+                mean = 0.0
+                variance = 0.0
+            means[field_name] = round(mean, 1)
+            deviations[field_name] = round(variance ** 0.5, 1)
+        return RollingSummary(
+            person_id=person_id,
+            start=start,
+            end=end,
+            days=days,
+            days_with_data=len(values),
+            daily=daily,
+            averages=Nutrients(**means),
+            stddev=Nutrients(**deviations),
+        )
+
     def _agent_settings(self, agent_settings: dict[str, Any] | None) -> dict[str, Any]:
         settings = dict(agent_settings or {})
         settings.setdefault("agent_runtime", self.agent_runtime)
@@ -1983,6 +2048,8 @@ class HealthMonitorService:
             )
 
         parsed_weight = parse_chat_weight_entry(message)
+        weight_note: str | None = None
+        routed_message = message
         if parsed_weight is not None:
             measured_at = datetime.combine(today, datetime.min.time()).replace(hour=8)
             entry = self.log_weight(
@@ -1999,27 +2066,36 @@ class HealthMonitorService:
                 output_summary=f"weight_entry_id={entry.id}",
                 source_record_ids=(entry.id,),
             )
-            self.agent_runs[run.id] = replace(
-                run,
-                status="answered",
-                tool_loop_count=len(self.agent_tool_calls_for_run(run.id)),
-                fallback_reason=self._current_fallback_reason(run),
-            )
-            return finish(
-                AgentChatResponse(
-                    run_id=run.id,
-                    person_id=person_id,
-                    message=f"Registrei o peso de {entry.weight_kg:g} kg para hoje.",
-                    behavior_label="log_weight",
-                    citations=({"record_type": "weight_entry", "record_id": entry.id},),
+            weight_note = f"Registrei o peso de {entry.weight_kg:g} kg para hoje."
+            # One message can carry a weigh-in AND a meal ("Bom dia! 96.4kg / Café: ...").
+            remainder = remove_chat_weight_lines(message)
+            if remainder and (
+                text_looks_like_chat_meal_log(remainder)
+                or parse_chat_kcal_range_estimate(remainder) is not None
+            ):
+                routed_message = remainder
+            else:
+                self.agent_runs[run.id] = replace(
+                    run,
+                    status="answered",
+                    tool_loop_count=len(self.agent_tool_calls_for_run(run.id)),
+                    fallback_reason=self._current_fallback_reason(run),
                 )
-            )
+                return finish(
+                    AgentChatResponse(
+                        run_id=run.id,
+                        person_id=person_id,
+                        message=weight_note,
+                        behavior_label="log_weight",
+                        citations=({"record_type": "weight_entry", "record_id": entry.id},),
+                    )
+                )
 
-        range_estimate = parse_chat_kcal_range_estimate(message)
+        range_estimate = parse_chat_kcal_range_estimate(routed_message)
         if range_estimate is not None:
             proposal = self._create_range_estimate_proposal(
                 person_id=person_id,
-                message=message,
+                message=routed_message,
                 today=today,
                 run=run,
                 range_estimate=range_estimate,
@@ -2045,20 +2121,21 @@ class HealthMonitorService:
                 AgentChatResponse(
                     run_id=run.id,
                     person_id=person_id,
-                    message=(
+                    message=_with_weight_note(
+                        weight_note,
                         "Rascunhei essa refeição como faixa de calorias. "
-                        "Vou usar o ponto médio até você refinar."
+                        "Vou usar o ponto médio até você refinar.",
                     ),
                     behavior_label="draft_range_estimate",
                     proposal_id=proposal.id,
                 )
             )
 
-        if text_looks_like_chat_meal_log(message):
+        if text_looks_like_chat_meal_log(routed_message):
             proposal = self.propose_text_meal(
                 person_id=person_id,
-                logged_at_local=chat_default_logged_at(message, today=today).isoformat(),
-                text=message,
+                logged_at_local=chat_default_logged_at(routed_message, today=today).isoformat(),
+                text=routed_message,
                 agent_settings=settings,
             )
             self._record_agent_tool_call(
@@ -2079,7 +2156,10 @@ class HealthMonitorService:
                 AgentChatResponse(
                     run_id=run.id,
                     person_id=person_id,
-                    message="Rascunhei a refeição. Revise os itens e confirme para gravar no diário.",
+                    message=_with_weight_note(
+                        weight_note,
+                        "Rascunhei a refeição. Revise os itens e confirme para gravar no diário.",
+                    ),
                     behavior_label="draft_text_meal",
                     proposal_id=proposal.id,
                 )
@@ -2345,6 +2425,7 @@ class HealthMonitorService:
                 text=text,
                 run=run,
                 logged_at=logged_at,
+                settings=settings,
             )
             self._persist()
             return proposal
@@ -2441,175 +2522,21 @@ class HealthMonitorService:
                 )
                 self._persist()
                 return proposal
-            resolution: FoodResolution | None = None
-            estimate: NutritionEstimate | None = None
-            evidence_source_type = "local_food"
-            evidence_source_details: dict[str, object] = {}
-            try:
-                resolution = self.resolve_food_reference(
-                    household_id=person.household_id,
-                    person_id=person.id,
-                    phrase=item.phrase,
-                )
-                version = self.catalog.get_version(resolution.food_version_id)
-                food = self.catalog.foods[version.food_id]
-                self._record_agent_tool_call(
-                    run=run,
-                    tool_name="resolve_food_reference",
-                    input_summary=f"phrase={item.phrase}",
-                    output_summary=(
-                        f"{food.name} / {version.label}; reason={resolution.reason}; "
-                        f"confidence={resolution.confidence}"
-                    ),
-                    source_record_ids=(version.food_id, version.id),
-                )
-                food_version_id = resolution.food_version_id
-                source = "agent_proposal"
-                resolution_reason = resolution.reason
-                confidence = resolution.confidence
-            except ValueError as exc:
-                self._record_agent_tool_call(
-                    run=run,
-                    tool_name="resolve_food_reference",
-                    input_summary=f"phrase={item.phrase}",
-                    output_summary="no local match",
-                    status="failed",
-                    error=str(exc),
-                )
-                if not settings.get("external_lookup", True):
-                    raise
-                lookup_candidate = self._lookup_first_external_food_candidate(item.phrase)
-                if lookup_candidate is not None:
-                    self._record_agent_tool_call(
-                        run=run,
-                        tool_name="lookup_external_food",
-                        input_summary=f"phrase={item.phrase}",
-                        output_summary=(
-                            f"{lookup_candidate.product_name}; source={lookup_candidate.source_name}; "
-                            f"confidence={lookup_candidate.confidence}"
-                        ),
-                        source_record_ids=(lookup_candidate.source_id,),
-                    )
-                    (
-                        food_id,
-                        food_version_id,
-                        version,
-                        pending_lookup_version,
-                        evidence_source_details,
-                    ) = self._prepare_lookup_candidate_food_version(
-                        household_id=person.household_id,
-                        phrase=item.phrase,
-                        candidate=lookup_candidate,
-                        source="external_lookup",
-                        resolution_reason="external_lookup",
-                    )
-                    estimated_food_versions.append(pending_lookup_version)
-                    source = "agent_lookup_proposal"
-                    resolution_reason = "external_lookup"
-                    confidence = lookup_candidate.confidence
-                    evidence_source_type = lookup_candidate.source_type
-                else:
-                    self._record_agent_tool_call(
-                        run=run,
-                        tool_name="lookup_external_food",
-                        input_summary=f"phrase={item.phrase}",
-                        output_summary="no external candidates",
-                    )
-                    research_candidate = (
-                        self._lookup_first_research_food_candidate(item.phrase)
-                        if settings.get("research_lookup", True)
-                        else None
-                    )
-                    if research_candidate is not None:
-                        self._record_agent_tool_call(
-                            run=run,
-                            tool_name="lookup_research_food",
-                            input_summary=f"phrase={item.phrase}",
-                            output_summary=(
-                                f"{research_candidate.product_name}; source={research_candidate.source_name}; "
-                                f"confidence={research_candidate.confidence}"
-                            ),
-                            source_record_ids=(research_candidate.source_id,),
-                        )
-                        (
-                            food_id,
-                            food_version_id,
-                            version,
-                            pending_lookup_version,
-                            evidence_source_details,
-                        ) = self._prepare_lookup_candidate_food_version(
-                            household_id=person.household_id,
-                            phrase=item.phrase,
-                            candidate=research_candidate,
-                            source="research_lookup",
-                            resolution_reason="research_lookup",
-                        )
-                        estimated_food_versions.append(pending_lookup_version)
-                        source = "agent_research_lookup_proposal"
-                        resolution_reason = "research_lookup"
-                        confidence = research_candidate.confidence
-                        evidence_source_type = research_candidate.source_type
-                    else:
-                        if self.research_lookup_provider is not None and settings.get("research_lookup", True):
-                            self._record_agent_tool_call(
-                                run=run,
-                                tool_name="lookup_research_food",
-                                input_summary=f"phrase={item.phrase}",
-                                output_summary="no research candidates",
-                            )
-                        if self.estimator is None:
-                            raise ValueError(f"food reference could not be resolved or estimated: {item.phrase}")
-                        estimate = self.estimator.estimate(item.phrase)
-                        if estimate is None:
-                            self._record_agent_tool_call(
-                                run=run,
-                                tool_name="estimate_food",
-                                input_summary=f"phrase={item.phrase}",
-                                output_summary="no model estimate",
-                                status="failed",
-                                error="estimator returned no result",
-                            )
-                            raise ValueError(f"food reference could not be resolved or estimated: {item.phrase}")
-                        self._record_agent_tool_call(
-                            run=run,
-                            tool_name="estimate_food",
-                            input_summary=f"phrase={item.phrase}",
-                            output_summary=(
-                                f"{estimate.food_name}; source={estimate.source}; "
-                                f"confidence={estimate.confidence}"
-                            ),
-                        )
-                        food_id = self._next_id("food")
-                        food_version_id = self._next_id("food_version")
-                        version = FoodVersion(
-                            id=food_version_id,
-                            food_id=food_id,
-                            label="model estimate",
-                            nutrients_per_100g=estimate.nutrients_per_100g,
-                            source=estimate.source,
-                            confidence=estimate.confidence,
-                        )
-                        estimated_food_versions.append(
-                            {
-                                "food_id": food_id,
-                                "food_version_id": food_version_id,
-                                "household_id": person.household_id,
-                                "food_name": estimate.food_name,
-                                "brand": None,
-                                "phrase": item.phrase,
-                                "version_label": "model estimate",
-                                "nutrients_per_100g": nutrients_to_snapshot(
-                                    estimate.nutrients_per_100g.rounded()
-                                ),
-                                "source": estimate.source,
-                                "confidence": estimate.confidence,
-                                "notes": estimate.notes,
-                            }
-                        )
-                        source = "agent_estimate_proposal"
-                        resolution_reason = "model_estimate"
-                        confidence = estimate.confidence
-                        evidence_source_type = "model_estimate"
+            resolved = self._resolve_meal_item_food(
+                person=person,
+                run=run,
+                phrase=item.phrase,
+                settings=settings,
+            )
+            if resolved.pending_version is not None:
+                estimated_food_versions.append(resolved.pending_version)
+            version = resolved.version
+            food_version_id = resolved.food_version_id
+            source = resolved.source
+            resolution_reason = resolved.resolution_reason
+            confidence = resolved.confidence
+            evidence_source_type = resolved.evidence_source_type
+            evidence_source_details = resolved.evidence_source_details
             quantity_g = item.quantity_g
             if item.evidence.get("quantity_basis") == "serving_count":
                 if version.serving_size_g is None:
@@ -2671,6 +2598,204 @@ class HealthMonitorService:
         self._persist()
         return proposal
 
+    def _resolve_meal_item_food(
+        self,
+        *,
+        person: Person,
+        run: AgentRun,
+        phrase: str,
+        settings: dict[str, Any],
+    ) -> ResolvedMealFood:
+        try:
+            resolution = self.resolve_food_reference(
+                household_id=person.household_id,
+                person_id=person.id,
+                phrase=phrase,
+            )
+            version = self.catalog.get_version(resolution.food_version_id)
+            food = self.catalog.foods[version.food_id]
+            self._record_agent_tool_call(
+                run=run,
+                tool_name="resolve_food_reference",
+                input_summary=f"phrase={phrase}",
+                output_summary=(
+                    f"{food.name} / {version.label}; reason={resolution.reason}; "
+                    f"confidence={resolution.confidence}"
+                ),
+                source_record_ids=(version.food_id, version.id),
+            )
+            return ResolvedMealFood(
+                food_version_id=resolution.food_version_id,
+                version=version,
+                food_name=food.name,
+                source="agent_proposal",
+                resolution_reason=resolution.reason,
+                confidence=resolution.confidence,
+                evidence_source_type="local_food",
+                evidence_source_details={},
+                pending_version=None,
+            )
+        except ValueError as exc:
+            self._record_agent_tool_call(
+                run=run,
+                tool_name="resolve_food_reference",
+                input_summary=f"phrase={phrase}",
+                output_summary="no local match",
+                status="failed",
+                error=str(exc),
+            )
+            if not settings.get("external_lookup", True):
+                raise
+
+        lookup_candidate = self._lookup_first_external_food_candidate(phrase)
+        if lookup_candidate is not None:
+            self._record_agent_tool_call(
+                run=run,
+                tool_name="lookup_external_food",
+                input_summary=f"phrase={phrase}",
+                output_summary=(
+                    f"{lookup_candidate.product_name}; source={lookup_candidate.source_name}; "
+                    f"confidence={lookup_candidate.confidence}"
+                ),
+                source_record_ids=(lookup_candidate.source_id,),
+            )
+            (
+                _food_id,
+                food_version_id,
+                version,
+                pending_lookup_version,
+                evidence_source_details,
+            ) = self._prepare_lookup_candidate_food_version(
+                household_id=person.household_id,
+                phrase=phrase,
+                candidate=lookup_candidate,
+                source="external_lookup",
+                resolution_reason="external_lookup",
+            )
+            return ResolvedMealFood(
+                food_version_id=food_version_id,
+                version=version,
+                food_name=str(pending_lookup_version.get("food_name", lookup_candidate.product_name)),
+                source="agent_lookup_proposal",
+                resolution_reason="external_lookup",
+                confidence=lookup_candidate.confidence,
+                evidence_source_type=lookup_candidate.source_type,
+                evidence_source_details=evidence_source_details,
+                pending_version=pending_lookup_version,
+            )
+        self._record_agent_tool_call(
+            run=run,
+            tool_name="lookup_external_food",
+            input_summary=f"phrase={phrase}",
+            output_summary="no external candidates",
+        )
+
+        research_candidate = (
+            self._lookup_first_research_food_candidate(phrase)
+            if settings.get("research_lookup", True)
+            else None
+        )
+        if research_candidate is not None:
+            self._record_agent_tool_call(
+                run=run,
+                tool_name="lookup_research_food",
+                input_summary=f"phrase={phrase}",
+                output_summary=(
+                    f"{research_candidate.product_name}; source={research_candidate.source_name}; "
+                    f"confidence={research_candidate.confidence}"
+                ),
+                source_record_ids=(research_candidate.source_id,),
+            )
+            (
+                _food_id,
+                food_version_id,
+                version,
+                pending_lookup_version,
+                evidence_source_details,
+            ) = self._prepare_lookup_candidate_food_version(
+                household_id=person.household_id,
+                phrase=phrase,
+                candidate=research_candidate,
+                source="research_lookup",
+                resolution_reason="research_lookup",
+            )
+            return ResolvedMealFood(
+                food_version_id=food_version_id,
+                version=version,
+                food_name=str(pending_lookup_version.get("food_name", research_candidate.product_name)),
+                source="agent_research_lookup_proposal",
+                resolution_reason="research_lookup",
+                confidence=research_candidate.confidence,
+                evidence_source_type=research_candidate.source_type,
+                evidence_source_details=evidence_source_details,
+                pending_version=pending_lookup_version,
+            )
+        if self.research_lookup_provider is not None and settings.get("research_lookup", True):
+            self._record_agent_tool_call(
+                run=run,
+                tool_name="lookup_research_food",
+                input_summary=f"phrase={phrase}",
+                output_summary="no research candidates",
+            )
+
+        if self.estimator is None:
+            raise ValueError(f"food reference could not be resolved or estimated: {phrase}")
+        estimate = self.estimator.estimate(phrase)
+        if estimate is None:
+            self._record_agent_tool_call(
+                run=run,
+                tool_name="estimate_food",
+                input_summary=f"phrase={phrase}",
+                output_summary="no model estimate",
+                status="failed",
+                error="estimator returned no result",
+            )
+            raise ValueError(f"food reference could not be resolved or estimated: {phrase}")
+        self._record_agent_tool_call(
+            run=run,
+            tool_name="estimate_food",
+            input_summary=f"phrase={phrase}",
+            output_summary=(
+                f"{estimate.food_name}; source={estimate.source}; "
+                f"confidence={estimate.confidence}"
+            ),
+        )
+        food_id = self._next_id("food")
+        food_version_id = self._next_id("food_version")
+        version = FoodVersion(
+            id=food_version_id,
+            food_id=food_id,
+            label="model estimate",
+            nutrients_per_100g=estimate.nutrients_per_100g,
+            source=estimate.source,
+            confidence=estimate.confidence,
+        )
+        return ResolvedMealFood(
+            food_version_id=food_version_id,
+            version=version,
+            food_name=estimate.food_name,
+            source="agent_estimate_proposal",
+            resolution_reason="model_estimate",
+            confidence=estimate.confidence,
+            evidence_source_type="model_estimate",
+            evidence_source_details={},
+            pending_version={
+                "food_id": food_id,
+                "food_version_id": food_version_id,
+                "household_id": person.household_id,
+                "food_name": estimate.food_name,
+                "brand": None,
+                "phrase": phrase,
+                "version_label": "model estimate",
+                "nutrients_per_100g": nutrients_to_snapshot(
+                    estimate.nutrients_per_100g.rounded()
+                ),
+                "source": estimate.source,
+                "confidence": estimate.confidence,
+                "notes": estimate.notes,
+            },
+        )
+
     def _find_open_meal_amendment_target(
         self,
         *,
@@ -2705,8 +2830,14 @@ class HealthMonitorService:
         text: str,
         run: AgentRun,
         logged_at: datetime,
+        settings: dict[str, Any] | None = None,
     ) -> CreateDiaryEntriesProposal:
+        settings = self._agent_settings(settings)
         original = self.proposals.proposals[proposal_id]
+        pending_versions = {
+            str(item["food_version_id"]): dict(item)
+            for item in original.payload.get("estimated_food_versions", [])
+        }
         if original.person_id != person_id:
             raise ValueError("proposal belongs to a different person")
         if original.status != "draft":
@@ -2736,7 +2867,9 @@ class HealthMonitorService:
                 (
                     index
                     for index, entry in enumerate(updated_entries)
-                    if self._proposal_entry_matches_phrase(entry, removal.phrase)
+                    if self._proposal_entry_matches_phrase(
+                        entry, removal.phrase, pending_versions=pending_versions
+                    )
                 ),
                 None,
             )
@@ -2806,6 +2939,8 @@ class HealthMonitorService:
                 )
                 return proposal
 
+        person = self._require_person(person_id)
+        new_pending_versions: list[dict[str, object]] = []
         for item in added_items:
             if item.evidence.get("quantity_basis") != "grams":
                 proposal = self._create_text_meal_clarification_proposal(
@@ -2817,19 +2952,37 @@ class HealthMonitorService:
                     summary="Need grams before amending this meal.",
                 )
                 return proposal
-            resolution = self.resolve_food_reference(
-                household_id=self._require_person(person_id).household_id,
+            ambiguity = self._ambiguous_local_food_reference(
+                household_id=person.household_id,
                 person_id=person_id,
                 phrase=item.phrase,
             )
-            version = self.catalog.get_version(resolution.food_version_id)
-            food = self.catalog.foods[version.food_id]
+            if ambiguity is not None:
+                proposal = self._create_text_meal_clarification_proposal(
+                    person_id=person_id,
+                    text=text,
+                    run=run,
+                    logged_at=logged_at,
+                    unresolved_items=(item,),
+                    missing_fields=("food_version_id",),
+                    summary="Need to know which food to use before amending this meal.",
+                    candidate_overrides={item.phrase: ambiguity.candidates},
+                )
+                return proposal
+            resolved = self._resolve_meal_item_food(
+                person=person,
+                run=run,
+                phrase=item.phrase,
+                settings=settings,
+            )
+            if resolved.pending_version is not None:
+                new_pending_versions.append(resolved.pending_version)
             entry = DiaryEntry(
                 id=self._next_id("diary_entry"),
                 person_id=person_id,
                 logged_at=logged_at,
                 meal_type=original.entries[0].meal_type if original.entries else infer_meal_type(logged_at),
-                food_version_id=version.id,
+                food_version_id=resolved.food_version_id,
                 quantity_g=item.quantity_g,
                 source="agent_amendment_proposal",
             )
@@ -2840,28 +2993,30 @@ class HealthMonitorService:
                     "source_text": item.source_text,
                     "action": "add_entry",
                     "phrase": item.phrase,
-                    "food_id": food.id,
-                    "food_name": food.name,
-                    "food_version_id": version.id,
+                    "food_id": resolved.version.food_id,
+                    "food_name": resolved.food_name,
+                    "food_version_id": resolved.food_version_id,
                     "quantity_g": item.quantity_g,
-                    "resolution_reason": resolution.reason,
-                    "confidence": resolution.confidence,
+                    "resolution_reason": resolved.resolution_reason,
+                    "confidence": resolved.confidence,
                     **item.evidence,
                 }
-            )
-            self._record_agent_tool_call(
-                run=run,
-                tool_name="resolve_food_reference",
-                input_summary=f"amend phrase={item.phrase}",
-                output_summary=f"{food.name} / {version.label}; reason={resolution.reason}",
-                source_record_ids=(food.id, version.id),
             )
 
         if not updated_entries:
             raise ValueError("amendment would leave the proposal empty")
 
+        referenced_version_ids = {entry.food_version_id for entry in updated_entries}
         payload = {
             **original.payload,
+            "estimated_food_versions": [
+                pending
+                for pending in (
+                    *original.payload.get("estimated_food_versions", []),
+                    *new_pending_versions,
+                )
+                if str(pending["food_version_id"]) in referenced_version_ids
+            ],
             "amended_from_proposal_id": original.id,
             "raw_amendment_text": text,
             "amendment_warnings": warnings,
@@ -2891,16 +3046,31 @@ class HealthMonitorService:
         )
         return amended
 
-    def _proposal_entry_matches_phrase(self, entry: DiaryEntry, phrase: str) -> bool:
+    def _proposal_entry_matches_phrase(
+        self,
+        entry: DiaryEntry,
+        phrase: str,
+        *,
+        pending_versions: dict[str, dict[str, Any]] | None = None,
+    ) -> bool:
         normalized = normalize_food_phrase(phrase)
-        version = self.catalog.get_version(entry.food_version_id)
-        food = self.catalog.foods[version.food_id]
-        names = {food.name.casefold(), version.label.casefold()}
-        names.update(
-            alias.phrase.casefold()
-            for alias in self.catalog.aliases.values()
-            if alias.food_id == food.id
-        )
+        pending = (pending_versions or {}).get(entry.food_version_id)
+        if pending is not None:
+            names = {
+                str(pending.get("food_name") or "").casefold(),
+                str(pending.get("phrase") or "").casefold(),
+                str(pending.get("version_label") or "").casefold(),
+            }
+            names.discard("")
+        else:
+            version = self.catalog.get_version(entry.food_version_id)
+            food = self.catalog.foods[version.food_id]
+            names = {food.name.casefold(), version.label.casefold()}
+            names.update(
+                alias.phrase.casefold()
+                for alias in self.catalog.aliases.values()
+                if alias.food_id == food.id
+            )
         return any(normalized in candidate or candidate in normalized for candidate in names)
 
     def _ambiguous_local_food_reference(
@@ -3903,6 +4073,7 @@ class HealthMonitorService:
             source_day=source_day,
             meal_type=normalize_meal_type(meal_type),
         )
+        self._persist()
         return proposal
 
     def propose_recipe(
@@ -4943,7 +5114,7 @@ def parse_single_gram_food_reference(text: str) -> tuple[float, str]:
 def parse_text_meal_items(text: str, *, default_logged_at: datetime) -> tuple[datetime, list[ParsedMealItem]]:
     fragments = [
         fragment.strip()
-        for fragment in re.split(r"[,;\n]\s*", strip_meal_heading(text))
+        for fragment in re.split(r"[,;\n]\s*|\s+/\s+", strip_meal_heading(text))
         if fragment.strip()
     ]
     if not fragments:
@@ -4957,26 +5128,55 @@ def parse_text_meal_items(text: str, *, default_logged_at: datetime) -> tuple[da
 
     items: list[ParsedMealItem] = []
     for fragment in fragments:
+        removal = parse_text_meal_removal(fragment)
+        if removal is not None:
+            # A "-33g ossos e pele" line discounts waste from the item just listed.
+            if not items or items[-1].evidence.get("quantity_basis") != "grams":
+                raise ValueError(f"quantity discount without a weighable preceding item: {fragment}")
+            last = items[-1]
+            remaining = last.quantity_g - removal.quantity_g
+            if remaining <= 0:
+                raise ValueError(f"quantity discount removes the whole preceding item: {fragment}")
+            items[-1] = ParsedMealItem(
+                phrase=last.phrase,
+                quantity_g=remaining,
+                source_text=f"{last.source_text} ({fragment})",
+                evidence={
+                    **last.evidence,
+                    "quantity_discount_g": removal.quantity_g,
+                    "quantity_discount_phrase": removal.phrase,
+                    "quantity_discount_source_text": fragment,
+                },
+            )
+            continue
         items.append(parse_text_meal_item(fragment))
     if not items:
         raise ValueError("text meal has no food items")
     return logged_at, items
 
 
+_MEAL_HEADING = (
+    r"\s*(?:café da manhã|cafe da manha|café|cafe|breakfast|almoço|almoco|lunch|jantar|janta|dinner|lanche|snack)\s*:"
+)
+
+
 def text_looks_like_meal_amendment(text: str) -> bool:
     normalized = text.casefold().strip()
     if not normalized:
         return False
+    # An explicit meal heading always starts a new meal, never an amendment —
+    # even when the body contains removal ("-33g ossos") or addition lines.
+    if re.match(_MEAL_HEADING, normalized):
+        return False
     if re.search(r"(^|\n)\s*-+\s*\d", normalized):
         return True
-    if re.search(r"\b(?:adicione|adiciona|add|esqueci|faltou|inclui|incluir|remove|remova|retira|subtrai)\b", normalized):
-        return True
-    has_quantity = re.search(r"\d+(?:[,.]\d+)?\s*g(?:ramas?)?\s+", normalized) is not None
-    has_explicit_meal_heading = re.match(
-        r"\s*(?:café da manhã|cafe da manha|café|cafe|breakfast|almoço|almoco|lunch|jantar|dinner|lanche|snack)\s*:",
+    if re.search(
+        r"\b(?:adicione|adiciona|acrescenta|acrescente|add|esqueci|esquecido|esqueceu|faltou"
+        r"|inclui|incluir|inclua|coloca|colocar|bota|botar|remove|remova|retira|subtrai)\b",
         normalized,
-    ) is not None
-    return bool(has_quantity and not has_explicit_meal_heading)
+    ):
+        return True
+    return re.search(r"\d+(?:[,.]\d+)?\s*g(?:ramas?)?\s+", normalized) is not None
 
 
 def text_looks_like_chat_meal_log(text: str) -> bool:
@@ -4985,10 +5185,7 @@ def text_looks_like_chat_meal_log(text: str) -> bool:
         return False
     if text_looks_like_meal_amendment(text):
         return True
-    if re.match(
-        r"\s*(?:café da manhã|cafe da manha|café|cafe|breakfast|almoço|almoco|lunch|jantar|dinner|lanche|snack)\s*:",
-        normalized,
-    ):
+    if re.match(_MEAL_HEADING, normalized):
         return re.search(r"\d+(?:[,.]\d+)?\s*g(?:ramas?)?\s+", normalized) is not None
     try:
         _, items = parse_text_meal_items(text, default_logged_at=datetime(2026, 1, 1, 12, 0))
@@ -5051,17 +5248,37 @@ def parse_chat_kcal_range_estimate(text: str) -> ParsedRangeEstimate | None:
     )
 
 
+_WEIGHT_NUMBER = r"(?<![\d.,])(\d{2,3}(?:[,.]\d{1,2})?)"
+
+
+def _with_weight_note(weight_note: str | None, message: str) -> str:
+    return f"{weight_note} {message}" if weight_note else message
+
+
 def parse_chat_weight_entry(text: str) -> float | None:
     normalized = text.casefold()
-    if not re.search(r"\b(?:kg|kgs|quilo|quilos|peso|pesei|amanheci)\b", normalized):
+    # Questions about weight are never weigh-ins.
+    if "?" in normalized:
         return None
-    match = re.search(r"(\d{2,3}(?:[,.]\d{1,2})?)\s*(?:kg|kgs|quilo|quilos)?\b", normalized)
+    match = re.search(_WEIGHT_NUMBER + r"\s*(?:kg|kgs|quilos?)\b", normalized)
+    if match is None:
+        weigh_in_verb = (
+            r"(?:pesei(?:\s+hoje)?|amanheci(?:\s+hoje)?\s+com|"
+            r"novo\s+peso\s*:?|peso\s+de\s+hoje\s*:?|"
+            r"meu\s+peso(?:\s+hoje)?\s*(?:é|eh|está|esta|:|=))"
+        )
+        match = re.search(weigh_in_verb + r"\s*" + _WEIGHT_NUMBER + r"\b", normalized)
     if match is None:
         return None
     weight = float(match.group(1).replace(",", "."))
     if not 25 <= weight <= 350:
         return None
     return weight
+
+
+def remove_chat_weight_lines(text: str) -> str:
+    kept = [line for line in text.splitlines() if parse_chat_weight_entry(line) is None]
+    return "\n".join(kept).strip()
 
 
 def chat_default_logged_at(text: str, *, today: date) -> datetime:
@@ -5071,7 +5288,7 @@ def chat_default_logged_at(text: str, *, today: date) -> datetime:
         hour = 8
     elif re.match(r"\s*(?:lanche|snack)\s*:", normalized):
         hour = 16
-    elif re.match(r"\s*(?:jantar|dinner)\s*:", normalized):
+    elif re.match(r"\s*(?:jantar|janta|dinner)\s*:", normalized):
         hour = 20
     return datetime.combine(today, datetime.min.time()).replace(hour=hour)
 
@@ -5081,17 +5298,27 @@ def parse_text_meal_amendment(text: str) -> tuple[str, list[ParsedMealRemoval]]:
     removals: list[ParsedMealRemoval] = []
     fragments = [
         fragment.strip()
-        for fragment in re.split(r"[,;\n]\s*", strip_meal_heading(text))
+        for fragment in re.split(r"[,;\n]\s*|\s+/\s+", strip_meal_heading(text))
         if fragment.strip()
     ]
     for fragment in fragments:
         cleaned = fragment.strip()
+        if re.fullmatch(
+            r"(?:ah|opa|oi|ok|blz|beleza|valeu|obrigad[oa]|obg|ent[aã]o|tamb[eé]m|foi mal|desculpa)[!.…]*",
+            cleaned,
+            re.I,
+        ):
+            continue
         removal = parse_text_meal_removal(cleaned)
         if removal is not None:
             removals.append(removal)
             continue
         addition = re.sub(
-            r"^\s*(?:\+|adicione|adiciona|add|inclui|incluir|faltou|esqueci(?:\s+de)?)(?:\s*:)?\s+",
+            r"^\s*(?:ah[,!]?\s+|opa[,!]?\s+|tamb[eé]m\s+)?"
+            r"(?:\+|adicione|adiciona|acrescenta|acrescente|add|inclui|incluir|inclua"
+            r"|coloca(?:r)?|bota(?:r)?|faltou|(?:tinha\s+|tava\s+)?esquec(?:i|ido|eu)(?:\s+de)?)"
+            r"(?:\s+(?:incluir|adicionar|acrescentar|colocar|botar|por|pôr|registrar|anotar))?"
+            r"(?:\s*:)?\s+",
             "",
             cleaned,
             flags=re.I,
@@ -5125,12 +5352,7 @@ def parse_text_meal_removal(fragment: str) -> ParsedMealRemoval | None:
 
 
 def strip_meal_heading(text: str) -> str:
-    return re.sub(
-        r"^\s*(?:café da manhã|cafe da manha|café|cafe|breakfast|almoço|almoco|lunch|jantar|dinner|lanche|snack)\s*:\s*",
-        "",
-        text,
-        flags=re.I,
-    )
+    return re.sub(f"^{_MEAL_HEADING}\\s*", "", text, flags=re.I)
 
 
 def parse_repeated_meal_reference(
@@ -5236,7 +5458,9 @@ def parse_text_meal_item(fragment: str) -> ParsedMealItem:
 
 
 def normalize_food_phrase(value: str) -> str:
-    return value.strip().casefold()
+    normalized = value.strip().casefold()
+    # "139g de feijão" and "139g feijão" must resolve to the same food.
+    return re.sub(r"^(?:de|do|da|dos|das)\s+", "", normalized)
 
 
 def parse_chat_day_reference(message: str, *, today: date) -> date | None:

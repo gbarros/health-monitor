@@ -299,7 +299,6 @@ function App() {
             proposal={fallbackDraft}
             proposals={proposalsQuery.data ?? []}
             proposalBusy={proposalDecision.isPending || proposalEntryUpdate.isPending}
-            onToast={setToast}
             onRepeatClick={() => setRepeatOpen(true)}
             onWeightClick={() => setWeightOpen(true)}
             onRecipeClick={() => setRecipeOpen(true)}
@@ -408,7 +407,6 @@ function ChatWorkspace({
   proposal,
   proposals,
   proposalBusy,
-  onToast,
   onRepeatClick,
   onWeightClick,
   onRecipeClick,
@@ -428,7 +426,6 @@ function ChatWorkspace({
   proposal?: Proposal;
   proposals: Proposal[];
   proposalBusy: boolean;
-  onToast: (message: string) => void;
   onRepeatClick: () => void;
   onWeightClick: () => void;
   onRecipeClick: () => void;
@@ -463,7 +460,6 @@ function ChatWorkspace({
       <section className="chat-column" aria-label="Conversa">
         <DayCard personId={personId} day={today} />
         <QuickActionRow
-          onToast={onToast}
           onRepeatClick={onRepeatClick}
           onWeightClick={onWeightClick}
           onRecipeClick={onRecipeClick}

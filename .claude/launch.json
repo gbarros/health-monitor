@@ -1,0 +1,20 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "api",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "PYTHONPATH=src python3 -m health_monitor api --host 127.0.0.1 --port 8765"
+      ],
+      "port": 8765
+    },
+    {
+      "name": "web",
+      "runtimeExecutable": "make",
+      "runtimeArgs": ["dev-web"],
+      "port": 5173
+    }
+  ]
+}

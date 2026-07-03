@@ -32,12 +32,14 @@ export function ProposalCard({
 
       {entries.length ? (
         <div className="proposal-entry-list">
-          {entries.map((entry, index) => (
+          {entries.map((entry) => (
             <ProposalEntryRow
               key={entry.id}
               proposal={proposal}
               entry={entry}
-              evidence={proposal.evidence?.[index]}
+              evidence={proposal.evidence?.find(
+                (item) => item.food_version_id === entry.food_version_id,
+              )}
               busy={busy || !canConfirm}
               onEntryQuantityChange={onEntryQuantityChange}
             />

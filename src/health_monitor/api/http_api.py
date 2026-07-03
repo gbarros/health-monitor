@@ -19,6 +19,7 @@ from health_monitor.application.service import (
     Household,
     Person,
     ReviewNote,
+    RollingSummary,
     WeekSummary,
     WeightEntry,
     WeightTrend,
@@ -481,6 +482,14 @@ class HttpApi:
             )
             return HttpResponse(200, week_summary_to_dict(summary))
 
+        if method == "GET" and path == "/api/summaries/rolling":
+            summary = self.service.rolling_summary(
+                person_id=query["person_id"],
+                end=date.fromisoformat(query["end"]),
+                days=int(query.get("days", "7")),
+            )
+            return HttpResponse(200, rolling_summary_to_dict(summary))
+
         if method == "POST" and path == "/api/diary/repeat":
             proposal = self.service.repeat_meal(
                 person_id=body["person_id"],
@@ -922,6 +931,22 @@ def week_summary_to_dict(summary: WeekSummary) -> dict[str, Any]:
         "totals": nutrients_to_dict(summary.totals.rounded()),
         "averages": nutrients_to_dict(summary.averages.rounded()),
         "weight_delta_kg": summary.weight_delta_kg,
+    }
+
+
+def rolling_summary_to_dict(summary: RollingSummary) -> dict[str, Any]:
+    return {
+        "person_id": summary.person_id,
+        "start": summary.start.isoformat(),
+        "end": summary.end.isoformat(),
+        "days": summary.days,
+        "days_with_data": summary.days_with_data,
+        "daily": {
+            day.isoformat(): nutrients_to_dict(nutrients.rounded())
+            for day, nutrients in summary.daily.items()
+        },
+        "averages": nutrients_to_dict(summary.averages),
+        "stddev": nutrients_to_dict(summary.stddev),
     }
 
 
