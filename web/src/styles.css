@@ -969,21 +969,87 @@ h3 {
 }
 
 .week-bar-track {
+  position: relative;
   height: 9px;
-  overflow: hidden;
+  overflow: visible;
   border-radius: 999px;
   background: #eef2f2;
 }
 
 .week-bar-fill {
   height: 100%;
+  overflow: hidden;
   border-radius: inherit;
   background: #2f6fed;
+}
+
+.week-bar-target {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  background: var(--text);
+  transform: translateX(-1px);
 }
 
 .week-card__summary {
   color: var(--muted);
   font-size: 13px;
+}
+
+.weight-sparkline {
+  display: grid;
+  gap: 4px;
+  color: #2f6fed;
+}
+
+.weight-sparkline span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.table-scroll {
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.weekly-table {
+  border-collapse: collapse;
+  width: 100%;
+  min-width: 480px;
+  font-size: 12px;
+}
+
+.weekly-table th,
+.weekly-table td {
+  padding: 6px 8px;
+  text-align: right;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.weekly-table th:first-child,
+.weekly-table td:first-child {
+  text-align: left;
+}
+
+.review-note-list {
+  display: grid;
+  gap: 10px;
+}
+
+.review-note {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  display: grid;
+  gap: 4px;
+}
+
+.review-note p {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 0;
 }
 
 .chat-loading {

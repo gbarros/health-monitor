@@ -200,6 +200,29 @@ export type AgentSettings = {
   research_lookup: boolean;
 };
 
+export type RollingSummary = {
+  person_id: string;
+  start: string;
+  end: string;
+  days: number;
+  days_with_data: number;
+  daily: Record<string, Nutrients>;
+  averages: Nutrients;
+  stddev: Nutrients;
+};
+
+export type ReviewNote = {
+  id: string;
+  person_id: string;
+  note_type: string;
+  title: string;
+  body: string;
+  starts_on?: string | null;
+  ends_on?: string | null;
+  source: string;
+  created_at: string;
+};
+
 export type Food = {
   id: string;
   household_id: string;

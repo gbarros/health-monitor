@@ -27,7 +27,7 @@ import {
 import { ChatInterface } from "./components/ChatInterface";
 import { DayCard } from "./components/DayCard";
 import { FoodLibraryDrawer } from "./components/FoodLibraryDrawer";
-import { ContextPanel } from "./components/ManualInputs";
+import { ContextPanel, DataPortabilityPanel } from "./components/ManualInputs";
 import { QuickActionRow, ReplayBanner } from "./components/ModesAndTemplates";
 import { ProposalCard } from "./components/ProposalCard";
 import { ProposalInbox } from "./components/ProposalInbox";
@@ -555,6 +555,7 @@ function App() {
               onPersonChange={changePerson}
               onSettingsChange={setSettings}
             />
+            <DataPortabilityPanel onToast={showToast} />
           </div>
         </div>
       ) : null}

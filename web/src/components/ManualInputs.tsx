@@ -1,3 +1,5 @@
+import { useState } from "react";
+import { exportFullData, importFullData } from "../api";
 import type { AgentSettings, Person } from "../types";
 
 type Props = {
@@ -103,5 +105,86 @@ export function ContextPanel({
         </label>
       </details>
     </section>
+  );
+}
+
+export function DataPortabilityPanel({ onToast }: { onToast: (message: string) => void }) {
+  const [importText, setImportText] = useState("");
+  const [confirmingImport, setConfirmingImport] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const exportData = async () => {
+    setBusy(true);
+    try {
+      const data = await exportFullData();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `health-monitor-export-${new Date().toISOString().slice(0, 10)}.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      onToast(error instanceof Error ? error.message : "Não foi possível exportar os dados.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const importData = async () => {
+    if (!confirmingImport) {
+      setConfirmingImport(true);
+      return;
+    }
+    setBusy(true);
+    try {
+      const parsed = JSON.parse(importText);
+      await importFullData(parsed);
+      onToast("Dados importados.");
+      setImportText("");
+      setConfirmingImport(false);
+    } catch (error) {
+      onToast(error instanceof Error ? error.message : "Não foi possível importar os dados.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <details className="settings-disclosure">
+      <summary>Exportar/Importar dados</summary>
+      <button type="button" onClick={exportData} disabled={busy}>
+        Exportar dados
+      </button>
+      <label className="field">
+        <span>Colar JSON exportado</span>
+        <textarea
+          rows={4}
+          value={importText}
+          onChange={(event) => {
+            setImportText(event.target.value);
+            setConfirmingImport(false);
+          }}
+        />
+      </label>
+      <label className="field">
+        <span>Ou escolher arquivo</span>
+        <input
+          type="file"
+          accept="application/json"
+          onChange={async (event) => {
+            const file = event.target.files?.[0];
+            if (!file) {
+              return;
+            }
+            setImportText(await file.text());
+            setConfirmingImport(false);
+          }}
+        />
+      </label>
+      <button type="button" className="primary-action" onClick={importData} disabled={busy || !importText.trim()}>
+        {confirmingImport ? "Confirmar importação (substitui dados)" : "Importar"}
+      </button>
+    </details>
   );
 }

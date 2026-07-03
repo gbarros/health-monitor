@@ -12,6 +12,8 @@ import type {
   OnboardingDraft,
   Person,
   Proposal,
+  ReviewNote,
+  RollingSummary,
   WeightTrend,
   WeekSummary,
 } from "./types";
@@ -208,6 +210,28 @@ export async function deleteDiaryEntry(entryId: string): Promise<{ id: string }>
 
 export async function restoreDiaryEntry(entryId: string): Promise<{ id: string }> {
   return apiPost<{ id: string }>(`/api/diary/${encodeURIComponent(entryId)}/restore`, {});
+}
+
+export async function loadRollingSummary(input: {
+  personId: string;
+  end: string;
+  days?: number;
+}): Promise<RollingSummary> {
+  return apiGet<RollingSummary>(
+    `/api/summaries/rolling?person_id=${encodeURIComponent(input.personId)}&end=${encodeURIComponent(input.end)}&days=${input.days ?? 7}`,
+  );
+}
+
+export async function loadReviewNotes(personId: string): Promise<ReviewNote[]> {
+  return apiGet<ReviewNote[]>(`/api/review-notes?person_id=${encodeURIComponent(personId)}`);
+}
+
+export async function exportFullData(): Promise<unknown> {
+  return apiGet<unknown>("/api/exports/full");
+}
+
+export async function importFullData(data: unknown): Promise<{ imported: unknown }> {
+  return apiPost<{ imported: unknown }>("/api/imports/full", data);
 }
 
 export async function loadFoods(input: { householdId: string; personId?: string }): Promise<FoodResponse[]> {
