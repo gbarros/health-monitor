@@ -71,6 +71,26 @@ Tests: rewrite the chat-harness behavior tests to drive the agent with pydantic-
 - `GET/POST /api/agent/chat/stream`: SSE events `text_delta`, `tool_call` (name + status), `final` (full AgentChatResponse JSON). ThreadingHTTPServer holds the connection per request — acceptable at LAN scale.
 - Local models are slow; visible token streaming + "consultando rótulos…" tool progress is what makes the chat feel alive. Non-stream endpoint stays for jobs/tests.
 
+### Phase A5 — Conversational onboarding (first user and every new household member)
+
+The current onboarding is the anti-goal in miniature: a static textarea whose content is regex-parsed (`parseOnboardingMessage` in `web/src/api.ts`) into household/name/targets, hoping the user hit the right keywords. Replace it with a conversation.
+
+Backend:
+- **Bootstrap problem**: chat requires a `person_id`, but during onboarding no person exists. Add `POST /api/agent/onboarding-chat` `{ session_id, message, household_id?, hints: { timezone, today, locale } }`:
+  - `session_id` is client-generated (UUID in localStorage); the server stores onboarding turns keyed by it (in the snapshot, like chat turns) so the conversation survives reloads.
+  - `household_id` present ⇒ "new member joining" flow: the agent knows the household name and existing members, and only needs the new person.
+  - Runs the same pydantic-ai agent with an onboarding system block: greet, then steer to lock the essentials — household name (or confirm joining), person name, timezone (offer the browser-hint as default), optional birth date/height/sex/activity, and goals. For goals the agent may *suggest* targets from the stated profile and objective (kcal deficit, g/kg protein — it can reason; the numbers land in a proposal, not directly in the DB). None of the questions are blocking — the user can say "define você" and the agent picks sensible values to propose.
+  - Tools available in this mode: `draft_onboarding_proposal(household_name?|household_id, person: {name, timezone, ...}, targets: {...}, notes)` → a `profile_setup` proposal summarizing everything, plus read tools (existing household/people) for the joining flow. **Creation happens only on confirm** — same gate as everything else; confirming applies household+person+goal and returns their ids.
+  - On confirm, migrate the onboarding session turns into the new person's chat history so the first conversation is a normal part of the thread.
+- REQUIRE_MODEL applies: onboarding needs the model; if it's down the screen says so (503 + retry), no regex fallback.
+
+Frontend (with Phase B):
+- The onboarding screen becomes the same stock Thread UI, agent speaking first ("Oi! Vou configurar o diário. Como você se chama, e essa casa já existe aqui?"). The proposal card at the end shows the full profile + goals with Confirmar; confirming boots the app into the normal chat with the same thread.
+- "Adicionar pessoa" (person switcher → +) opens the same conversational flow with `household_id` set.
+- Delete `parseOnboardingMessage` and the static-textarea screen.
+
+Acceptance: a brand-new user completes setup answering in free-form pt-BR across several turns, receives a profile+goals proposal card, confirms, and lands in chat with that conversation visible in history; a second household member onboards via "+" without re-stating the household; with the model stopped, onboarding refuses with a clear error instead of guessing.
+
 ### 2.4 The one deterministic exception
 The **Peso** modal keeps calling `POST /api/weights` directly (a number field needs no LLM). In chat, "amanheci com 96,3kg" goes through the agent, which calls the `log_weight` tool. Nothing else earns this exception without Gabriel saying so.
 
@@ -115,11 +135,12 @@ One shared mechanic: modal → compose → send to the same thread → agent han
 
 ```
 A1 tools ──► A2 router deletion ──► A3 intents ──► D modals ──► cleanup F
+                        └─► A5 conversational onboarding (needs A1 agent + B thread)
 B stock chat UI (independent — do first for immediate relief)
 C data pages   (independent of A — needs only existing read APIs)
 A4 streaming   (after A2; before or after D)
 ```
-Suggested sequence for one implementer: **B → C → A1 → A2 → A3+D → A4 → F**. B and C are pure-frontend quick wins that make the app feel right while the backend inversion (A1/A2, the largest chunk) proceeds. F = delete dead code (router functions, mode endpoints, obsolete unit tests), update `architecture-design.md` to describe the agent-first flow, and mark superseded sections in the older plan docs.
+Suggested sequence for one implementer: **B → C → A1 → A2 → A3+D → A5 → A4 → F**. B and C are pure-frontend quick wins that make the app feel right while the backend inversion (A1/A2, the largest chunk) proceeds. F = delete dead code (router functions, mode endpoints, obsolete unit tests), update `architecture-design.md` to describe the agent-first flow, and mark superseded sections in the older plan docs.
 
 ## 5. Acceptance (the Gabriel test)
 
@@ -128,6 +149,7 @@ Suggested sequence for one implementer: **B → C → A1 → A2 → A3+D → A4 
 3. **Modes**: tapping "Registrar alimento", filling only a photo, sending → agent OCRs, asks whatever's missing, drafts a food version. No form validation ever blocks a send.
 4. **Data**: any diary row from any past day is findable, readable (with evidence/confidence), editable, and exportable from Dados; Painel shows kcal-vs-target and weight trend without asking the agent anything.
 5. **Chat look**: side-by-side with assistant-ui's demo, the thread is recognizably the same component family (markdown, bubbles, streaming) — not a bespoke square.
+6. **Onboarding**: a new user (or new household member) is set up entirely through conversation ending in a confirmable profile+goals proposal — no static form, no keyword guessing.
 
 ## 6. Verification protocol
 Per phase, as established (`ux-redesign-plan.md` §5): `make test` + `bun run build`; live walkthrough at 375×812 **and** desktop width against a scratch DB; live-model eval run (`make test-live-model`) after A2 since routing correctness now lives in the model+tools; adversarial diff review with special attention to anti-goals §0 (any new regex on user text is a finding); REQUIRE_MODEL regression (503 + persisted replay) after every backend phase.
