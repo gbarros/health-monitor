@@ -1854,6 +1854,118 @@ class HealthMonitorService:
         current = self.agent_runs.get(run.id)
         return current.fallback_reason if current is not None else run.fallback_reason
 
+    def _build_agent_context(self, person_id: str, today: date) -> dict[str, Any]:
+        person = self._require_person(person_id)
+        active_goal = self.active_goal_profile(person_id=person_id, day=today)
+        recent_turns = self.chat_turns_for_person(person_id)[-10:]
+        open_proposals = [
+            proposal
+            for proposal in self.list_proposals(person_id=person_id)
+            if proposal.status in {"draft", "needs_clarification"}
+        ][:10]
+        day_summaries: list[dict[str, Any]] = []
+        first_day = today - timedelta(days=13)
+        current = first_day
+        full_days_start = today - timedelta(days=4)
+        while current <= today:
+            summary = self.day_summary(person_id, current)
+            entries = [entry for meal_entries in summary.meals.values() for entry in meal_entries]
+            base: dict[str, Any] = {
+                "day": current.isoformat(),
+                "totals": self._nutrients_context(summary.totals.rounded()),
+                "target": self._nutrients_context(summary.target) if summary.target is not None else None,
+                "entries_count": len(entries),
+            }
+            if current >= full_days_start:
+                base["meals"] = {
+                    meal_type: [
+                        {
+                            "logged_at": entry.logged_at.isoformat(),
+                            "meal_type": entry.meal_type,
+                            "food_name": entry.food_name,
+                            "brand": entry.brand,
+                            "food_version_label": entry.food_version_label,
+                            "quantity_g": entry.quantity_g,
+                            "nutrients": self._nutrients_context(entry.nutrients.rounded()),
+                            "source": entry.source,
+                            "evidence_status": entry.evidence_status,
+                            "confidence": entry.confidence,
+                        }
+                        for entry in meal_entries
+                    ]
+                    for meal_type, meal_entries in summary.meals.items()
+                }
+            else:
+                base["foods"] = sorted({entry.food_name for entry in entries})[:8]
+            day_summaries.append(base)
+            current += timedelta(days=1)
+
+        return {
+            "today": today.isoformat(),
+            "person": {
+                "id": person.id,
+                "household_id": person.household_id,
+                "name": person.name,
+                "timezone": person.timezone,
+                "birth_date": person.birth_date.isoformat() if person.birth_date is not None else None,
+                "sex": person.sex,
+                "height_cm": person.height_cm,
+                "activity_level": person.activity_level,
+            },
+            "active_goal": {
+                "id": active_goal.id,
+                "starts_on": active_goal.starts_on.isoformat(),
+                "ends_on": active_goal.ends_on.isoformat() if active_goal.ends_on is not None else None,
+                "targets": self._nutrients_context(active_goal.targets),
+                "notes": active_goal.notes,
+            }
+            if active_goal is not None
+            else None,
+            "recent_chat_turns": [
+                {
+                    "created_at": turn.created_at.isoformat(),
+                    "user": turn.user_message,
+                    "assistant": turn.assistant_message,
+                    "behavior_label": turn.behavior_label,
+                    "proposal_id": turn.proposal_id,
+                }
+                for turn in recent_turns
+            ],
+            "open_proposals": [
+                {
+                    "id": proposal.id,
+                    "status": proposal.status,
+                    "proposal_type": proposal.proposal_type,
+                    "summary": proposal.summary,
+                    "created_at": proposal.created_at.isoformat(),
+                    "entries_count": len(proposal.entries),
+                    "totals": self._nutrients_context(proposal.totals.rounded()),
+                }
+                for proposal in open_proposals
+            ],
+            "day_summaries": day_summaries,
+        }
+
+    def _agent_context_message(self, person_id: str, today: date, message: str) -> str:
+        context = self._build_agent_context(person_id, today)
+        return (
+            "Agent context JSON:\n"
+            f"{json.dumps(context, ensure_ascii=False, sort_keys=True)}\n\n"
+            "User message:\n"
+            f"{message}"
+        )
+
+    def _nutrients_context(self, nutrients: Nutrients) -> dict[str, float]:
+        rounded = nutrients.rounded()
+        return {
+            "calories_kcal": rounded.calories_kcal,
+            "protein_g": rounded.protein_g,
+            "carbs_g": rounded.carbs_g,
+            "fat_g": rounded.fat_g,
+            "fiber_g": rounded.fiber_g,
+            "sodium_mg": rounded.sodium_mg,
+        }
+
     def _try_pydantic_ai_chat(
         self,
         *,
@@ -2115,14 +2227,15 @@ class HealthMonitorService:
             return response
 
         intent_block = AGENT_INTENT_TEMPLATES.get(str(intent)) if intent is not None else None
-        agent_message = f"Intent context: {intent_block}\n\nUser message: {message}" if intent_block else message
+        user_payload = message
         if attachment_ids:
-            agent_message = (
+            user_payload = (
                 f"{message}\n\nAttachment ids available to inspect: "
                 f"{', '.join(str(item) for item in attachment_ids)}"
             ).strip()
-            if intent_block:
-                agent_message = f"Intent context: {intent_block}\n\n{agent_message}"
+        if intent_block:
+            user_payload = f"Intent context: {intent_block}\n\nUser message: {user_payload}"
+        agent_message = self._agent_context_message(person_id, today, user_payload)
 
         pydantic_response = self._try_pydantic_ai_chat(
             person_id=person_id,
