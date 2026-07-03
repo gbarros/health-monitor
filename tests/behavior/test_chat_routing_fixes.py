@@ -44,50 +44,52 @@ def build_service(**kwargs: object) -> tuple[HealthMonitorService, str, str]:
 
 
 class WeightRoutingFixTest(unittest.TestCase):
-    def test_weight_question_does_not_create_a_weight_entry(self) -> None:
+    def test_model_backed_weight_question_does_not_create_a_weight_entry_when_model_down(self) -> None:
         service, _, person_id = build_service()
-        response = service.chat(
-            person_id=person_id,
-            message="qual era meu peso em 2025?",
-            today=TODAY,
-        )
-        self.assertNotEqual(response.behavior_label, "log_weight")
+        with self.assertRaises(ModelUnavailableError):
+            service.chat(
+                person_id=person_id,
+                message="qual era meu peso em 2025?",
+                today=TODAY,
+                agent_settings=RequireModelFlagTest.PYDANTIC_SETTINGS,
+            )
         trend = service.weight_trend(person_id=person_id)
         self.assertEqual(trend.entries, ())
 
-    def test_combined_weigh_in_and_meal_message_handles_both(self) -> None:
+    def test_weight_modal_exception_still_logs_directly(self) -> None:
         service, _, person_id = build_service()
-        response = service.chat(
+        entry = service.log_weight(
             person_id=person_id,
-            message="Bom dia! amanheci com 96,4kg\nCafé da manhã:\n100g de ovos mexidos",
-            today=TODAY,
+            measured_at_local="2026-07-03T08:00:00",
+            weight_kg=96.4,
+            note="manual modal",
+            source="manual_ui",
         )
         trend = service.weight_trend(person_id=person_id)
         self.assertEqual(trend.latest_kg, 96.4)
-        self.assertEqual(response.behavior_label, "draft_text_meal")
-        self.assertIn("Registrei o peso", response.message)
-        proposal = service.proposals.proposals[response.proposal_id]
-        self.assertEqual(len(proposal.entries), 1)
-        self.assertEqual(proposal.entries[0].meal_type, "breakfast")
+        self.assertEqual(trend.entries[0].id, entry.id)
 
 
 class EstimateProposalAmendmentTest(unittest.TestCase):
     def test_amending_estimate_backed_proposal_adds_and_subtracts(self) -> None:
         service, _, person_id = build_service()
-        first = service.chat(
+        original = service.draft_structured_meal_proposal(
             person_id=person_id,
-            message="Almoço: 100g de arroz",
-            today=TODAY,
+            day=TODAY,
+            meal_type="lunch",
+            items=[{"phrase": "arroz", "quantity_g": 100}],
+            agent_settings={"research_lookup": True},
+            source_text="model extracted rice",
         )
-        original = service.proposals.proposals[first.proposal_id]
         self.assertEqual(original.proposal_type, "diary_entries_with_estimates")
 
-        amended_response = service.chat(
+        amended = service.amend_structured_meal_proposal(
+            proposal_id=original.id,
             person_id=person_id,
-            message="Ah, esqueci de incluir 100g de manga",
-            today=TODAY,
+            add=[{"phrase": "manga", "quantity_g": 100}],
+            agent_settings={"research_lookup": True},
+            source_text="model extracted manga amendment",
         )
-        amended = service.proposals.proposals[amended_response.proposal_id]
         self.assertEqual(len(amended.entries), 2)
         self.assertEqual(
             service.proposals.proposals[original.id].status, "superseded"
@@ -98,12 +100,13 @@ class EstimateProposalAmendmentTest(unittest.TestCase):
         self.assertEqual(pending_names, {"Arroz", "Manga"})
         self.assertEqual(amended.totals.rounded().calories_kcal, 190)
 
-        subtract_response = service.chat(
+        final = service.amend_structured_meal_proposal(
+            proposal_id=amended.id,
             person_id=person_id,
-            message="subtrai 30g de arroz",
-            today=TODAY,
+            remove=[{"phrase": "arroz", "quantity_g": 30}],
+            agent_settings={"research_lookup": True},
+            source_text="model extracted rice subtraction",
         )
-        final = service.proposals.proposals[subtract_response.proposal_id]
         arroz_entries = [entry for entry in final.entries if entry.quantity_g == 70.0]
         self.assertEqual(len(arroz_entries), 1)
 
@@ -114,24 +117,31 @@ class EstimateProposalAmendmentTest(unittest.TestCase):
 
     def test_meal_heading_creates_new_meal_even_with_open_draft(self) -> None:
         service, _, person_id = build_service()
-        breakfast = service.chat(
+        breakfast = service.draft_structured_meal_proposal(
             person_id=person_id,
-            message="Café da manhã: 100g de ovos mexidos",
-            today=TODAY,
+            day=TODAY,
+            meal_type="breakfast",
+            items=[{"phrase": "ovos mexidos", "quantity_g": 100}],
+            agent_settings={"research_lookup": True},
+            source_text="model extracted breakfast",
         )
-        lunch = service.chat(
+        lunch = service.draft_structured_meal_proposal(
             person_id=person_id,
-            message="Almoço:\n74g arroz\n113g sobrecoxa\n-33g ossos e pele",
-            today=TODAY,
+            day=TODAY,
+            meal_type="lunch",
+            items=[
+                {"phrase": "arroz", "quantity_g": 74},
+                {"phrase": "sobrecoxa", "quantity_g": 80},
+            ],
+            agent_settings={"research_lookup": True},
+            source_text="model extracted lunch after subtracting bones",
         )
-        breakfast_proposal = service.proposals.proposals[breakfast.proposal_id]
-        lunch_proposal = service.proposals.proposals[lunch.proposal_id]
-        self.assertEqual(breakfast_proposal.status, "draft")
-        self.assertNotEqual(breakfast.proposal_id, lunch.proposal_id)
+        self.assertEqual(breakfast.status, "draft")
+        self.assertNotEqual(breakfast.id, lunch.id)
         self.assertEqual(
-            {entry.meal_type for entry in lunch_proposal.entries}, {"lunch"}
+            {entry.meal_type for entry in lunch.entries}, {"lunch"}
         )
-        quantities = sorted(entry.quantity_g for entry in lunch_proposal.entries)
+        quantities = sorted(entry.quantity_g for entry in lunch.entries)
         self.assertEqual(quantities, [74.0, 80.0])
 
 
@@ -238,7 +248,7 @@ class RequireModelFlagTest(unittest.TestCase):
             )
         self.assertEqual(service.weight_trend(person_id=person_id).entries, ())
 
-    def test_flag_disabled_restores_deterministic_fallback(self) -> None:
+    def test_flag_disabled_does_not_restore_hidden_deterministic_fallback(self) -> None:
         service, _, person_id = build_service(
             require_model=False, model_health_checker=lambda: False
         )
@@ -248,17 +258,20 @@ class RequireModelFlagTest(unittest.TestCase):
             today=TODAY,
             agent_settings=self.PYDANTIC_SETTINGS,
         )
-        self.assertEqual(response.behavior_label, "draft_text_meal")
-        self.assertIsNotNone(response.proposal_id)
+        self.assertEqual(response.behavior_label, "answer_question")
+        self.assertIsNone(response.proposal_id)
+        self.assertEqual(service.proposals.proposals, {})
 
-    def test_deterministic_runtime_is_never_gated(self) -> None:
+    def test_default_runtime_no_longer_interprets_chat_text_deterministically(self) -> None:
         service, _, person_id = build_service(model_health_checker=lambda: False)
         response = service.chat(
             person_id=person_id,
             message="Almoço: 100g de arroz",
             today=TODAY,
         )
-        self.assertEqual(response.behavior_label, "draft_text_meal")
+        self.assertEqual(response.behavior_label, "answer_question")
+        self.assertIsNone(response.proposal_id)
+        self.assertEqual(service.proposals.proposals, {})
 
     def test_http_api_maps_model_unavailable_to_503(self) -> None:
         service, _, person_id = build_service(model_health_checker=lambda: False)

@@ -168,25 +168,9 @@ class ExportImportTest(unittest.TestCase):
             name="Gabriel",
             timezone="America/Sao_Paulo",
         )
-        _, version = source.create_food_with_version(
-            household_id=household.id,
-            name="Queijo Minas",
-            brand=None,
-            version_label="current",
-            nutrients_per_100g=Nutrients(315, 23, 2.6, 23.5),
-            source="label_scan",
-            aliases=["queijo"],
-        )
-        entry = source.log_diary_entry(
-            person_id=person.id,
-            logged_at_local="2026-07-01T10:00:00",
-            food_version_id=version.id,
-            quantity_g=100,
-            source="manual",
-        )
         response = source.chat(
             person_id=person.id,
-            message="Why was 2026-07-01 high in calories?",
+            message="Pode explicar meu diário?",
             today=date(2026, 7, 2),
         )
 
@@ -199,11 +183,9 @@ class ExportImportTest(unittest.TestCase):
         self.assertEqual(imported["agent_chat_turns"], 1)
         self.assertEqual(len(restored_turns), 1)
         self.assertEqual(restored_turns[0].agent_run_id, response.run_id)
+        self.assertEqual(restored_turns[0].user_message, "Pode explicar meu diário?")
         self.assertEqual(restored_turns[0].assistant_message, response.message)
-        self.assertIn(
-            {"record_type": "diary_entry", "record_id": entry.id},
-            restored_turns[0].citations,
-        )
+        self.assertEqual(restored_turns[0].behavior_label, response.behavior_label)
 
     def test_export_import_preserves_recipe_version_metadata(self) -> None:
         source, _, recipe_food_version_id = self.build_service_with_recipe()

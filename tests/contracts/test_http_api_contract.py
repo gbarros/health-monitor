@@ -825,10 +825,10 @@ class HttpApiContractTest(unittest.TestCase):
         ).body
 
         self.assertEqual(processed["status"], "succeeded")
-        self.assertEqual(processed["result"]["behavior_label"], "explain_day")
+        self.assertEqual(processed["result"]["behavior_label"], "answer_question")
         self.assertEqual(processed["result"]["chat_turn_id"], history[0]["id"])
         self.assertEqual(processed["result"]["run_id"], history[0]["agent_run_id"])
-        self.assertIn("315", history[0]["assistant_message"])
+        self.assertEqual(history[0]["user_message"], "Why was 2026-07-01 high in calories?")
 
     def test_text_meal_can_copy_same_breakfast_as_yesterday_through_http_contract(self) -> None:
         api = HttpApi(HealthMonitorService())
@@ -2438,7 +2438,7 @@ class HttpApiContractTest(unittest.TestCase):
             ],
         )
 
-    def test_agent_chat_answer_and_correction_proposal_through_http_contract(self) -> None:
+    def test_agent_chat_no_longer_drafts_correction_deterministically_through_http_contract(self) -> None:
         api = HttpApi(HealthMonitorService())
         household = api.handle("POST", "/api/households", {"name": "Casa"}).body
         person = api.handle(
@@ -2480,52 +2480,27 @@ class HttpApiContractTest(unittest.TestCase):
             },
         )
 
-        answer = api.handle(
-            "POST",
-            "/api/agent/chat",
-            {
-                "person_id": person["id"],
-                "message": "Why was 2026-07-01 high in calories?",
-                "today": "2026-07-02",
-                "agent_settings": {"model_profile": "deterministic-test"},
-            },
-        ).body
-        correction = api.handle(
+        response = api.handle(
             "POST",
             "/api/agent/chat",
             {
                 "person_id": person["id"],
                 "message": "Change queijo on 2026-07-01 to 50g",
                 "today": "2026-07-02",
+                "agent_settings": {"model_profile": "deterministic-test"},
             },
-        ).body
-        applied = api.handle(
-            "POST",
-            f"/api/proposals/{correction['proposal']['id']}/confirm",
-            None,
-        ).body
+        )
         summary = api.handle(
             "GET",
             f"/api/diary/day?person_id={person['id']}&day=2026-07-01",
             None,
         ).body
 
-        self.assertEqual(answer["behavior_label"], "explain_day")
-        self.assertIn("Queijo Minas", answer["message"])
-        self.assertEqual(correction["behavior_label"], "draft_diary_correction")
-        self.assertEqual(correction["proposal"]["proposal_type"], "diary_entry_update")
-        self.assertEqual(
-            [
-                (call["tool_name"], call["status"])
-                for call in correction["proposal"]["agent_run"]["tool_calls"]
-            ],
-            [
-                ("find_diary_entries", "completed"),
-                ("draft_diary_correction", "completed"),
-            ],
-        )
-        self.assertEqual(applied["status"], "applied")
-        self.assertEqual(summary["totals"]["calories_kcal"], 157.5)
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.body["behavior_label"], "answer_question")
+        self.assertIsNone(response.body["proposal_id"])
+        self.assertEqual(response.body["proposal"], None)
+        self.assertEqual(summary["totals"]["calories_kcal"], 315)
 
     def test_agent_chat_history_can_be_read_through_http_contract(self) -> None:
         api = HttpApi(HealthMonitorService())
@@ -2588,13 +2563,10 @@ class HttpApiContractTest(unittest.TestCase):
         self.assertEqual(history[0]["agent_run_id"], response["run_id"])
         self.assertEqual(history[0]["user_message"], "Why was 2026-07-01 high in calories?")
         self.assertEqual(history[0]["assistant_message"], response["message"])
-        self.assertEqual(history[0]["behavior_label"], "explain_day")
-        self.assertIn(
-            {"record_type": "diary_entry", "record_id": entry["id"]},
-            history[0]["citations"],
-        )
+        self.assertEqual(history[0]["behavior_label"], "answer_question")
+        self.assertEqual(history[0]["citations"], [])
 
-    def test_agent_chat_review_note_proposal_and_read_model_through_http_contract(self) -> None:
+    def test_agent_chat_review_note_text_does_not_create_proposal_without_model_tool_call(self) -> None:
         api = HttpApi(HealthMonitorService())
         household = api.handle("POST", "/api/households", {"name": "Casa"}).body
         person = api.handle(
@@ -2618,37 +2590,17 @@ class HttpApiContractTest(unittest.TestCase):
                 ),
                 "today": "2026-07-08",
             },
-        ).body
+        )
         empty_notes = api.handle(
             "GET",
             f"/api/review-notes?person_id={person['id']}",
             None,
         ).body
-        applied = api.handle(
-            "POST",
-            f"/api/proposals/{response['proposal']['id']}/confirm",
-            None,
-        ).body
-        notes = api.handle(
-            "GET",
-            f"/api/review-notes?person_id={person['id']}",
-            None,
-        ).body
 
-        self.assertEqual(response["behavior_label"], "draft_review_note")
-        self.assertEqual(response["proposal"]["proposal_type"], "review_note")
-        self.assertEqual(
-            [
-                (call["tool_name"], call["status"])
-                for call in response["proposal"]["agent_run"]["tool_calls"]
-            ],
-            [("draft_review_note", "completed")],
-        )
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.body["behavior_label"], "answer_question")
+        self.assertIsNone(response.body["proposal_id"])
         self.assertEqual(empty_notes, [])
-        self.assertEqual(applied["status"], "applied")
-        self.assertEqual(len(notes), 1)
-        self.assertEqual(notes[0]["starts_on"], "2026-07-01")
-        self.assertIn("Social dinners", notes[0]["body"])
 
     def test_agent_chat_food_version_usage_answer_through_http_contract(self) -> None:
         api = HttpApi(HealthMonitorService())
@@ -2734,25 +2686,9 @@ class HttpApiContractTest(unittest.TestCase):
             },
         ).body
 
-        self.assertEqual(response["behavior_label"], "explain_food_version_use")
-        self.assertIn("current default", response["message"].casefold())
-        self.assertIn("2026-07-02", response["message"])
-        self.assertIn(
-            {"record_type": "food_version", "record_id": old_food["version"]["id"]},
-            response["citations"],
-        )
-        self.assertIn(
-            {"record_type": "food_version", "record_id": applied["applied_record_ids"][1]},
-            response["citations"],
-        )
-        self.assertIn(
-            {"record_type": "diary_entry", "record_id": old_entry["id"]},
-            response["citations"],
-        )
-        self.assertIn(
-            {"record_type": "diary_entry", "record_id": new_entry["id"]},
-            response["citations"],
-        )
+        self.assertEqual(response["behavior_label"], "answer_question")
+        self.assertIsNone(response["proposal_id"])
+        self.assertEqual(response["citations"], [])
 
     def test_agent_chat_week_explanation_through_http_contract(self) -> None:
         api = HttpApi(HealthMonitorService())
@@ -2817,9 +2753,9 @@ class HttpApiContractTest(unittest.TestCase):
             },
         ).body
 
-        self.assertEqual(response["behavior_label"], "explain_week")
-        self.assertIn("472.5 kcal", response["message"])
-        self.assertGreaterEqual(len(response["citations"]), 2)
+        self.assertEqual(response["behavior_label"], "answer_question")
+        self.assertIsNone(response["proposal_id"])
+        self.assertEqual(response["citations"], [])
 
     def test_agent_chat_micronutrient_side_quest_through_http_contract(self) -> None:
         api = HttpApi(HealthMonitorService())
@@ -2875,9 +2811,9 @@ class HttpApiContractTest(unittest.TestCase):
             },
         ).body
 
-        self.assertEqual(response["behavior_label"], "micronutrient_analysis")
-        self.assertIn("vitamins and minerals are not stored", response["message"].casefold())
-        self.assertGreaterEqual(len(response["citations"]), 1)
+        self.assertEqual(response["behavior_label"], "answer_question")
+        self.assertIsNone(response["proposal_id"])
+        self.assertEqual(response["citations"], [])
 
     def test_weight_trend_and_week_summary_through_http_contract(self) -> None:
         api = HttpApi(HealthMonitorService())

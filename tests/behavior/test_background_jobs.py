@@ -169,7 +169,7 @@ class BackgroundJobsTest(unittest.TestCase):
             job_type="agent_chat",
             payload={
                 "person_id": person.id,
-                "message": "Why was 2026-07-01 high in calories?",
+                "message": "Pode explicar meu diário?",
                 "today": "2026-07-01",
             },
         )
@@ -180,10 +180,10 @@ class BackgroundJobsTest(unittest.TestCase):
         self.assertIsNotNone(processed)
         assert processed is not None
         self.assertEqual(processed.status, "succeeded")
-        self.assertEqual(processed.result["behavior_label"], "explain_day")
+        self.assertEqual(processed.result["behavior_label"], "answer_question")
         self.assertEqual(processed.result["chat_turn_id"], turns[0].id)
         self.assertEqual(processed.result["run_id"], turns[0].agent_run_id)
-        self.assertIn("315", turns[0].assistant_message)
+        self.assertEqual(turns[0].user_message, "Pode explicar meu diário?")
 
 
 if __name__ == "__main__":
