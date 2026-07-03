@@ -1,21 +1,22 @@
 from __future__ import annotations
 
 import unittest
-from pathlib import Path
 
-
-ROOT = Path(__file__).resolve().parents[2]
-MAIN_TS = ROOT / "web" / "src" / "main.ts"
+from tests.unit.frontend_helpers import read_web_file
 
 
 class ProposalFoodMatchUiTest(unittest.TestCase):
-    def test_draft_proposal_entry_can_select_food_version(self) -> None:
-        source = MAIN_TS.read_text(encoding="utf-8")
+    def test_confirming_or_rejecting_proposals_invalidates_day_card_read_models(self) -> None:
+        app = read_web_file("App.tsx")
+        query_keys = read_web_file("queryKeys.ts")
 
-        self.assertIn("function proposalFoodOptions", source)
-        self.assertIn('name="food_version_id"', source)
-        self.assertIn("proposalFoodOptions(entry)", source)
-        self.assertIn('food_version_id: requiredText(form, "food_version_id")', source)
+        self.assertIn("invalidateDailyReadModels", app)
+        self.assertIn("queryKeys.daySummary(selectedPersonId, selectedDay)", app)
+        self.assertIn("queryKeys.activeGoal(selectedPersonId, selectedDay)", app)
+        self.assertIn("queryKeys.weightTrend(selectedPersonId)", app)
+        self.assertIn("daySummary", query_keys)
+        self.assertIn("activeGoal", query_keys)
+        self.assertIn("weightTrend", query_keys)
 
 
 if __name__ == "__main__":

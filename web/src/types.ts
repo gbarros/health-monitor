@@ -31,6 +31,57 @@ export type Nutrients = {
   sodium_mg?: number;
 };
 
+export type GoalProfile = {
+  id: string;
+  person_id: string;
+  starts_on: string;
+  ends_on?: string | null;
+  targets: Nutrients;
+  notes?: string | null;
+  created_at: string;
+};
+
+export type DaySummaryEntry = {
+  id: string;
+  logged_at: string;
+  meal_type: string;
+  food_id: string;
+  food_name: string;
+  brand?: string | null;
+  food_version_id: string;
+  food_version_label: string;
+  quantity_g: number;
+  nutrients: Nutrients;
+  source: string;
+  evidence_status: string;
+  confidence: number;
+};
+
+export type DaySummary = {
+  person_id: string;
+  day: string;
+  totals: Nutrients;
+  target?: Nutrients | null;
+  target_delta?: Nutrients | null;
+  meals: Record<string, DaySummaryEntry[]>;
+};
+
+export type WeightEntry = {
+  id: string;
+  person_id: string;
+  measured_at: string;
+  weight_kg: number;
+  note?: string | null;
+  source: string;
+};
+
+export type WeightTrend = {
+  person_id: string;
+  entries: WeightEntry[];
+  latest_kg?: number | null;
+  delta_kg?: number | null;
+};
+
 export type Proposal = {
   id: string;
   person_id: string;

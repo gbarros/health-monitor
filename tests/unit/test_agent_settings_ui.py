@@ -1,20 +1,24 @@
 from __future__ import annotations
 
 import unittest
-from pathlib import Path
 
-
-ROOT = Path(__file__).resolve().parents[2]
-MAIN_TS = ROOT / "web" / "src" / "main.ts"
+from tests.unit.frontend_helpers import read_web_file
 
 
 class AgentSettingsUiTest(unittest.TestCase):
-    def test_component_backed_agent_paths_enable_research_lookup(self) -> None:
-        source = MAIN_TS.read_text(encoding="utf-8")
+    def test_agent_settings_are_kept_in_a_drawer_with_live_model_defaults(self) -> None:
+        app = read_web_file("App.tsx")
+        manual_inputs = read_web_file("components/ManualInputs.tsx")
+        api = read_web_file("api.ts")
 
-        self.assertIn("function submitAgentChatFromComponent", source)
-        self.assertIn("workAgentChat.data = workAgentState()", source)
-        self.assertGreaterEqual(source.count("research_lookup: true"), 2)
+        self.assertIn("settingsOpen", app)
+        self.assertIn('aria-label="Ajustes do agente"', app)
+        self.assertIn("<ContextPanel", app)
+        self.assertIn("agent_runtime", manual_inputs)
+        self.assertIn("model_profile", manual_inputs)
+        self.assertIn('agent_runtime: "pydantic-ai"', api)
+        self.assertIn('model_profile: "qwen3.6:latest"', api)
+        self.assertIn("research_lookup: true", api)
 
 
 if __name__ == "__main__":

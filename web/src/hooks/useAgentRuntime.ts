@@ -8,6 +8,7 @@ import type {
   ChatModelAdapter,
   ChatModelRunOptions,
   ChatModelRunResult,
+  ThreadMessageLike,
   ThreadUserMessagePart,
 } from "@assistant-ui/react";
 import { useMemo } from "react";
@@ -24,10 +25,13 @@ type RuntimeContext = {
   householdId: string | null;
   personId: string | null;
   activeMode: ModeId;
+  today: string;
   settings: AgentSettings;
+  initialMessages: readonly ThreadMessageLike[];
   onAgentResponse: (response: AgentChatResponse) => void;
   onProposal: (proposal: Proposal) => void;
   onRuntimeError: (message: string) => void;
+  onModeCompleted?: () => void;
 };
 
 export function useAgentRuntime(context: RuntimeContext) {
@@ -35,10 +39,13 @@ export function useAgentRuntime(context: RuntimeContext) {
     householdId,
     personId,
     activeMode,
+    today,
     settings,
+    initialMessages,
     onAgentResponse,
     onProposal,
     onRuntimeError,
+    onModeCompleted,
   } = context;
 
   const adapter = useMemo<ChatModelAdapter>(() => {
@@ -69,6 +76,7 @@ export function useAgentRuntime(context: RuntimeContext) {
               signal: options.abortSignal,
             });
             onProposal(proposal);
+            onModeCompleted?.();
             return assistantText(proposalReply(proposal, "Meal proposal drafted."));
           }
 
@@ -83,6 +91,7 @@ export function useAgentRuntime(context: RuntimeContext) {
               signal: options.abortSignal,
             });
             onProposal(proposal);
+            onModeCompleted?.();
             return assistantText(proposalReply(proposal, "Recipe proposal drafted."));
           }
 
@@ -103,6 +112,7 @@ export function useAgentRuntime(context: RuntimeContext) {
               signal: options.abortSignal,
             });
             onProposal(proposal);
+            onModeCompleted?.();
             return assistantText(proposalReply(proposal, "Product label proposal drafted."));
           }
 
@@ -110,6 +120,7 @@ export function useAgentRuntime(context: RuntimeContext) {
             personId,
             message: messageForMode(activeMode, text),
             settings,
+            today,
             signal: options.abortSignal,
           });
           onAgentResponse(response);
@@ -124,7 +135,7 @@ export function useAgentRuntime(context: RuntimeContext) {
         }
       },
     };
-  }, [activeMode, householdId, onAgentResponse, onProposal, onRuntimeError, personId, settings]);
+  }, [activeMode, householdId, onAgentResponse, onModeCompleted, onProposal, onRuntimeError, personId, settings, today]);
 
   const attachments = useMemo(
     () => new CompositeAttachmentAdapter([new SimpleImageAttachmentAdapter(), new SimpleTextAttachmentAdapter()]),
@@ -132,6 +143,7 @@ export function useAgentRuntime(context: RuntimeContext) {
   );
 
   return useLocalRuntime(adapter, {
+    initialMessages,
     adapters: { attachments },
   });
 }

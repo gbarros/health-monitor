@@ -1,32 +1,20 @@
 from __future__ import annotations
 
+import json
 import unittest
-from pathlib import Path
 
-
-ROOT = Path(__file__).resolve().parents[2]
-MAIN = ROOT / "web" / "src" / "main.ts"
+from tests.unit.frontend_helpers import read_public_file, read_web_file
 
 
 class OfflineOutboxUiTest(unittest.TestCase):
-    def test_outbox_uses_indexeddb_and_client_request_id(self) -> None:
-        source = MAIN.read_text(encoding="utf-8")
+    def test_phase_one_keeps_pwa_install_basics_without_service_worker_runtime(self) -> None:
+        manifest = json.loads(read_public_file("manifest.webmanifest"))
+        main = read_web_file("main.tsx")
 
-        self.assertIn("indexedDB.open(outboxDbName", source)
-        self.assertIn("offline_outbox", source)
-        self.assertIn("client_request_id", source)
-        self.assertIn("uploadQueuedAttachment", source)
-        self.assertIn('window.addEventListener("online"', source)
-
-    def test_agent_forms_queue_offline_but_manual_forms_remain_online(self) -> None:
-        source = MAIN.read_text(encoding="utf-8")
-
-        self.assertIn('queueOfflineAgent("agent_text_meal"', source)
-        self.assertIn('queueOfflineAgent("agent_chat"', source)
-        self.assertIn('queueOfflineAgent("agent_label_scan"', source)
-        self.assertIn('queueOfflineAgent("agent_recipe"', source)
-        self.assertNotIn('queueOfflineAgent("manual_log"', source)
-        self.assertNotIn('queueOfflineAgent("weight"', source)
+        self.assertEqual(manifest["display"], "standalone")
+        self.assertIn("theme_color", manifest)
+        self.assertGreaterEqual(len(manifest["icons"]), 1)
+        self.assertNotIn("serviceWorker.register", main)
 
 
 if __name__ == "__main__":

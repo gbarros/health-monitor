@@ -1,38 +1,28 @@
 from __future__ import annotations
 
 import unittest
-from pathlib import Path
 
-
-ROOT = Path(__file__).resolve().parents[2]
-MAIN_TS = ROOT / "web" / "src" / "main.ts"
-STYLES = ROOT / "web" / "src" / "styles.css"
+from tests.unit.frontend_helpers import read_web_file
 
 
 class ProposalAuditUiTest(unittest.TestCase):
-    def test_proposal_review_shows_lifecycle_audit_fields(self) -> None:
-        source = MAIN_TS.read_text(encoding="utf-8")
-        styles = STYLES.read_text(encoding="utf-8")
+    def test_phase_one_keeps_proposal_writes_confirmation_gated(self) -> None:
+        app = read_web_file("App.tsx")
+        types = read_web_file("types.ts")
 
-        self.assertIn("created_at: string;", source)
-        self.assertIn("confirmed_at: string | null;", source)
-        self.assertIn("rejected_at: string | null;", source)
-        self.assertIn("renderProposalAudit(state.proposal)", source)
-        self.assertIn("type AgentToolCall", source)
-        self.assertIn("tool_calls: AgentToolCall[];", source)
-        self.assertIn("renderAgentToolTrace(state.proposal)", source)
-        self.assertIn("function renderAgentToolTrace", source)
-        self.assertIn("superseded_by_proposal_id", source)
-        self.assertIn("proposal-load-related", source)
-        self.assertIn(".audit-list", styles)
-        self.assertIn(".tool-call-list", styles)
-        self.assertIn(".tool-status-failed", styles)
+        self.assertIn("created_at?: string", types)
+        self.assertIn("confirmed_at?: string", types)
+        self.assertIn("rejected_at?: string", types)
+        self.assertIn("function DraftProposalDock", app)
+        self.assertIn("confirmProposal(proposal.id)", app)
+        self.assertIn("rejectProposal(proposal.id)", app)
+        self.assertIn("Confirmar", app)
+        self.assertIn("Rejeitar", app)
 
-    def test_terminal_proposals_do_not_offer_reject_action(self) -> None:
-        source = MAIN_TS.read_text(encoding="utf-8")
+    def test_terminal_proposals_are_not_selected_as_active_drafts(self) -> None:
+        app = read_web_file("App.tsx")
 
-        self.assertIn('const canReject = state.proposal.status === "draft" || state.proposal.status === "needs_clarification";', source)
-        self.assertIn("canReject ? `<button id=\"reject-proposal\"", source)
+        self.assertIn('["draft", "needs_clarification"].includes(proposal.status)', app)
 
 
 if __name__ == "__main__":

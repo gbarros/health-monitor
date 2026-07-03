@@ -2,10 +2,13 @@ import type {
   AgentChatResponse,
   AgentChatTurn,
   AgentSettings,
+  DaySummary,
+  GoalProfile,
   Household,
   OnboardingDraft,
   Person,
   Proposal,
+  WeightTrend,
 } from "./types";
 
 export const STORAGE_KEYS = {
@@ -55,7 +58,7 @@ export async function createInitialProfile(draft: OnboardingDraft): Promise<{
   });
   await apiPost("/api/goals", {
     person_id: person.id,
-    starts_on: todayIso(),
+    starts_on: todayIsoForTimezone(draft.timezone),
     targets: draft.targets,
     notes: "Created from chat-first onboarding.",
   });
@@ -72,12 +75,48 @@ export async function loadChatHistory(personId: string): Promise<AgentChatTurn[]
   return apiGet<AgentChatTurn[]>(`/api/agent/chat-history?person_id=${encodeURIComponent(personId)}`);
 }
 
+export async function loadDaySummary(personId: string, day: string): Promise<DaySummary> {
+  return apiGet<DaySummary>(
+    `/api/diary/day?person_id=${encodeURIComponent(personId)}&day=${encodeURIComponent(day)}`,
+  );
+}
+
+export async function loadActiveGoal(personId: string, day: string): Promise<GoalProfile | null> {
+  const goal = await apiGet<Partial<GoalProfile>>(
+    `/api/goals/active?person_id=${encodeURIComponent(personId)}&day=${encodeURIComponent(day)}`,
+  );
+  return typeof goal.id === "string" ? (goal as GoalProfile) : null;
+}
+
+export async function loadWeightTrend(personId: string): Promise<WeightTrend> {
+  return apiGet<WeightTrend>(`/api/weights/trend?person_id=${encodeURIComponent(personId)}`);
+}
+
+export async function loadProposals(personId: string): Promise<Proposal[]> {
+  return apiGet<Proposal[]>(`/api/proposals?person_id=${encodeURIComponent(personId)}`);
+}
+
 export async function confirmProposal(proposalId: string): Promise<Proposal> {
   return apiPost<Proposal>(`/api/proposals/${encodeURIComponent(proposalId)}/confirm`, {});
 }
 
 export async function rejectProposal(proposalId: string): Promise<Proposal> {
   return apiPost<Proposal>(`/api/proposals/${encodeURIComponent(proposalId)}/reject`, {});
+}
+
+export async function logWeight(input: {
+  personId: string;
+  weightKg: number;
+  measuredAtLocal?: string;
+  note?: string;
+}): Promise<unknown> {
+  return apiPost("/api/weights", {
+    person_id: input.personId,
+    measured_at_local: input.measuredAtLocal ?? localDateTimeForApi(),
+    weight_kg: input.weightKg,
+    note: input.note,
+    source: "manual_ui",
+  });
 }
 
 export async function sendAgentChat(input: {
@@ -185,11 +224,14 @@ export async function uploadDataUrlAttachment(input: {
 
 export function parseOnboardingMessage(message: string): OnboardingDraft {
   const text = message.trim();
+  const naturalName = extractNaturalName(text);
+  const naturalTimezone = extractNaturalTimezone(text);
+  const naturalActivity = extractNaturalActivity(text);
   return {
     householdName: extractText(text, ["household", "casa", "family"], "Casa"),
-    personName: extractText(text, ["name", "nome", "person"], "Gabriel"),
-    timezone: extractText(text, ["timezone", "fuso"], guessTimezone()),
-    activityLevel: extractText(text, ["activity", "atividade"], "moderate"),
+    personName: extractText(text, ["name", "nome", "person"], naturalName ?? "Gabriel"),
+    timezone: extractText(text, ["timezone", "fuso"], naturalTimezone ?? guessTimezone()),
+    activityLevel: extractText(text, ["activity", "atividade"], naturalActivity ?? "moderate"),
     targets: {
       calories_kcal: extractNumber(text, ["calories", "calorias", "kcal"], 2000),
       protein_g: extractNumber(text, ["protein", "proteina", "proteína"], 150),
@@ -215,6 +257,16 @@ export function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+export function todayIsoForTimezone(timezone: string | null | undefined): string {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone || guessTimezone(),
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  return formatter.format(new Date());
+}
+
 function localDateTimeForApi(): string {
   const now = new Date();
   const date = now.toISOString().slice(0, 10);
@@ -238,16 +290,44 @@ function extractText(text: string, labels: string[], fallback: string): string {
 
 function extractNumber(text: string, labels: string[], fallback: number): number {
   for (const label of labels) {
-    const afterLabel = text.match(new RegExp(`${label}[^\\d]*(\\d+(?:[.,]\\d+)?)`, "i"));
-    if (afterLabel?.[1]) {
-      return Number(afterLabel[1].replace(",", "."));
-    }
     const beforeLabel = text.match(new RegExp(`(\\d+(?:[.,]\\d+)?)\\s*(?:g|mg|kcal)?\\s+${label}`, "i"));
     if (beforeLabel?.[1]) {
       return Number(beforeLabel[1].replace(",", "."));
     }
+    const afterLabel = text.match(new RegExp(`${label}[^\\d]*(\\d+(?:[.,]\\d+)?)`, "i"));
+    if (afterLabel?.[1]) {
+      return Number(afterLabel[1].replace(",", "."));
+    }
   }
   return fallback;
+}
+
+function extractNaturalName(text: string): string | null {
+  const match =
+    text.match(/\b(?:meu nome é|me chamo|sou|i am|my name is)\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ '-]{1,40})/i) ??
+    text.match(/\b(?:para|for)\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ '-]{1,40})\b/i);
+  if (!match?.[1]) {
+    return null;
+  }
+  return match[1].replace(/\s+(?:e|and)\b.*$/i, "").trim();
+}
+
+function extractNaturalTimezone(text: string): string | null {
+  const match = text.match(/\b(?:America|Europe|Asia|Africa|Pacific|Atlantic|Australia)\/[A-Za-z_/-]+\b/);
+  return match?.[0] ?? null;
+}
+
+function extractNaturalActivity(text: string): string | null {
+  const match = text.match(/\b(?:atividade|activity)\s+(?:é|is)?\s*(sedent[aá]ria|sedentary|leve|light|moderada|moderate|alta|high)\b/i);
+  if (!match?.[1]) {
+    return null;
+  }
+  const value = match[1].toLocaleLowerCase("pt-BR");
+  if (value.startsWith("sedent")) return "sedentary";
+  if (value === "leve" || value === "light") return "light";
+  if (value === "moderada" || value === "moderate") return "moderate";
+  if (value === "alta" || value === "high") return "high";
+  return value;
 }
 
 function extractBarcode(text: string): string | null {

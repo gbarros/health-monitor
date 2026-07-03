@@ -1,32 +1,22 @@
 from __future__ import annotations
 
 import unittest
-from pathlib import Path
 
-
-ROOT = Path(__file__).resolve().parents[2]
-MAIN_TS = ROOT / "web" / "src" / "main.ts"
-STYLES = ROOT / "web" / "src" / "styles.css"
+from tests.unit.frontend_helpers import read_web_file
 
 
 class FrontendErrorFeedbackTest(unittest.TestCase):
-    def test_async_actions_are_bound_through_error_boundary(self) -> None:
-        source = MAIN_TS.read_text(encoding="utf-8")
+    def test_async_errors_surface_as_accessible_toasts_or_inline_errors(self) -> None:
+        app = read_web_file("App.tsx")
+        styles = read_web_file("styles.css")
 
-        self.assertIn("function safeAsync", source)
-        self.assertIn("function reportUiError", source)
-        self.assertIn('addEventListener("submit", safeAsync(onSetup))', source)
-        self.assertIn('addEventListener("click", safeAsync(confirmProposal))', source)
-
-    def test_error_banner_is_accessible_and_distinct_from_success_notice(self) -> None:
-        source = MAIN_TS.read_text(encoding="utf-8")
-        styles = STYLES.read_text(encoding="utf-8")
-
-        self.assertIn("errorMessage: string | null;", source)
-        self.assertIn('role="alert"', source)
-        self.assertIn('class="notice notice-error"', source)
-        self.assertIn(".notice-error", styles)
-        self.assertIn("border-color: #b42318", styles)
+        self.assertIn("onRuntimeError", app)
+        self.assertIn("setToast", app)
+        self.assertIn('role="status"', app)
+        self.assertIn('aria-live="polite"', app)
+        self.assertIn("form-error", app)
+        self.assertIn(".form-error", styles)
+        self.assertIn(".toast", styles)
 
 
 if __name__ == "__main__":

@@ -1,24 +1,28 @@
-import { AssistantRuntimeProvider } from "@assistant-ui/react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { AssistantRuntimeProvider, type ThreadMessageLike } from "@assistant-ui/react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { FormEvent } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   confirmProposal,
   createInitialProfile,
   defaultAgentSettings,
   loadChatHistory,
   loadPeople,
+  loadProposals,
   parseOnboardingMessage,
   rejectProposal,
   STORAGE_KEYS,
+  todayIsoForTimezone,
 } from "./api";
 import { ChatInterface } from "./components/ChatInterface";
+import { DayCard } from "./components/DayCard";
 import { ContextPanel } from "./components/ManualInputs";
-import { CHAT_MODES, ModesAndTemplates } from "./components/ModesAndTemplates";
+import { QuickActionRow } from "./components/ModesAndTemplates";
 import { useAgentRuntime } from "./hooks/useAgentRuntime";
+import { queryKeys } from "./queryKeys";
 import type {
   AgentChatResponse,
-  AgentChatTurn,
   AgentSettings,
-  AppEvent,
   ModeId,
   OnboardingDraft,
   Person,
@@ -26,252 +30,367 @@ import type {
 } from "./types";
 
 function App() {
+  const queryClient = useQueryClient();
   const [householdId, setHouseholdId] = useState<string | null>(() =>
     localStorage.getItem(STORAGE_KEYS.householdId),
   );
   const [personId, setPersonId] = useState<string | null>(() =>
     localStorage.getItem(STORAGE_KEYS.personId),
   );
-  const [people, setPeople] = useState<Person[]>([]);
   const [activeMode, setActiveMode] = useState<ModeId>("general_chat");
   const [settings, setSettings] = useState<AgentSettings>(() => defaultAgentSettings());
-  const [events, setEvents] = useState<AppEvent[]>([]);
-  const [proposals, setProposals] = useState<Proposal[]>([]);
-  const [chatHistory, setChatHistory] = useState<AgentChatTurn[]>([]);
-  const [selectedTurnId, setSelectedTurnId] = useState<string | null>(null);
-  const [isBooting, setIsBooting] = useState(true);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
 
-  const addEvent = useCallback((event: Omit<AppEvent, "id" | "createdAt">) => {
-    setEvents((current) => [
-      {
-        ...event,
-        id: crypto.randomUUID(),
-        createdAt: new Date().toISOString(),
-      },
-      ...current,
-    ].slice(0, 12));
-  }, []);
+  const peopleQuery = useQuery({
+    queryKey: queryKeys.people(householdId),
+    queryFn: () => loadPeople(householdId ?? ""),
+    enabled: householdId != null,
+  });
 
-  const refreshPeople = useCallback(async (nextHouseholdId: string, preferredPersonId?: string | null) => {
-    const nextPeople = await loadPeople(nextHouseholdId);
-    setPeople(nextPeople);
-    const nextPersonId =
-      preferredPersonId && nextPeople.some((person) => person.id === preferredPersonId)
-        ? preferredPersonId
-        : nextPeople[0]?.id ?? null;
-    setPersonId(nextPersonId);
-    if (nextPersonId) {
-      localStorage.setItem(STORAGE_KEYS.personId, nextPersonId);
-    }
-  }, []);
+  const people = peopleQuery.data ?? [];
+  const activePerson = people.find((person) => person.id === personId) ?? people[0] ?? null;
+  const selectedPersonId = activePerson?.id ?? personId;
+  const selectedDay = todayIsoForTimezone(activePerson?.timezone);
 
-  const refreshChatHistory = useCallback(async (nextPersonId: string | null) => {
-    if (!nextPersonId) {
-      setChatHistory([]);
-      return;
-    }
-    const turns = await loadChatHistory(nextPersonId);
-    setChatHistory([...turns].reverse());
-  }, []);
+  const proposalsQuery = useQuery({
+    queryKey: queryKeys.proposals(selectedPersonId),
+    queryFn: () => loadProposals(selectedPersonId ?? ""),
+    enabled: selectedPersonId != null,
+  });
 
-  useEffect(() => {
-    let cancelled = false;
-    async function boot() {
-      if (!householdId) {
-        setIsBooting(false);
-        return;
-      }
-      try {
-        await refreshPeople(householdId, personId);
-      } catch (error) {
-        localStorage.removeItem(STORAGE_KEYS.householdId);
-        localStorage.removeItem(STORAGE_KEYS.personId);
-        if (!cancelled) {
-          setHouseholdId(null);
-          setPersonId(null);
-          addEvent({
-            title: "Stored profile could not be loaded",
-            detail: error instanceof Error ? error.message : "Unknown startup error",
-            tone: "warning",
-          });
-        }
-      } finally {
-        if (!cancelled) {
-          setIsBooting(false);
-        }
-      }
-    }
-    void boot();
-    return () => {
-      cancelled = true;
-    };
-  }, [addEvent, householdId, personId, refreshPeople]);
+  const chatHistoryQuery = useQuery({
+    queryKey: queryKeys.chatHistory(selectedPersonId),
+    queryFn: () => loadChatHistory(selectedPersonId ?? ""),
+    enabled: selectedPersonId != null,
+  });
 
-  useEffect(() => {
-    void refreshChatHistory(personId).catch((error) => {
-      addEvent({
-        title: "Could not load chat history",
-        detail: error instanceof Error ? error.message : "Unknown history error",
-        tone: "warning",
-      });
-    });
-  }, [addEvent, personId, refreshChatHistory]);
-
-  const onAgentResponse = useCallback(
-    (response: AgentChatResponse) => {
-      addEvent({
-        title: "Agent responded",
-        detail: response.behavior_label,
-        tone: response.proposal ? "success" : "info",
-      });
-      void refreshChatHistory(response.person_id);
-    },
-    [addEvent, refreshChatHistory],
+  const initialMessages = useMemo<ThreadMessageLike[]>(
+    () =>
+      (chatHistoryQuery.data ?? []).flatMap((turn) => [
+        {
+          role: "user" as const,
+          content: [{ type: "text" as const, text: turn.user_message }],
+        },
+        {
+          role: "assistant" as const,
+          content: [{ type: "text" as const, text: turn.assistant_message }],
+        },
+      ]),
+    [chatHistoryQuery.data],
   );
+
+  const invalidateDailyReadModels = useCallback(async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: queryKeys.daySummary(selectedPersonId, selectedDay) }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.activeGoal(selectedPersonId, selectedDay) }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.weightTrend(selectedPersonId) }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.proposals(selectedPersonId) }),
+    ]);
+  }, [queryClient, selectedDay, selectedPersonId]);
+
+  const upsertProposal = useCallback(
+    (proposal: Proposal) => {
+      queryClient.setQueryData<Proposal[]>(queryKeys.proposals(proposal.person_id), (current = []) => [
+        proposal,
+        ...current.filter((item) => item.id !== proposal.id),
+      ]);
+    },
+    [queryClient],
+  );
+
+  const onAgentResponse = useCallback((response: AgentChatResponse) => {
+    if (response.proposal) {
+      upsertProposal(response.proposal);
+    }
+  }, [upsertProposal]);
 
   const onProposal = useCallback(
     (proposal: Proposal) => {
-      setProposals((current) => [proposal, ...current.filter((item) => item.id !== proposal.id)]);
-      addEvent({
-        title: "Proposal drafted",
-        detail: `${proposal.proposal_type}: ${proposal.summary}`,
-        tone: "success",
-      });
+      upsertProposal(proposal);
     },
-    [addEvent],
+    [upsertProposal],
   );
 
-  const onRuntimeError = useCallback(
-    (message: string) => {
-      addEvent({
-        title: "Agent call failed",
-        detail: message,
-        tone: "danger",
-      });
-    },
-    [addEvent],
-  );
+  const onRuntimeError = useCallback((message: string) => {
+    setToast(message);
+  }, []);
 
-  const runtime = useAgentRuntime({
-    householdId,
-    personId,
-    activeMode,
-    settings,
-    onAgentResponse,
-    onProposal,
-    onRuntimeError,
+  const proposalDecision = useMutation({
+    mutationFn: ({ proposal, decision }: { proposal: Proposal; decision: "confirm" | "reject" }) =>
+      decision === "confirm" ? confirmProposal(proposal.id) : rejectProposal(proposal.id),
+    onSuccess: async (proposal) => {
+      upsertProposal(proposal);
+      await invalidateDailyReadModels();
+    },
+    onError: (error) => setToast(error instanceof Error ? error.message : "Não foi possível atualizar a proposta."),
   });
 
-  const selectedTurn = useMemo(
-    () => chatHistory.find((turn) => turn.id === selectedTurnId) ?? chatHistory[0] ?? null,
-    [chatHistory, selectedTurnId],
+  const activeDraft = (proposalsQuery.data ?? []).find((proposal) =>
+    ["draft", "needs_clarification"].includes(proposal.status),
   );
 
   const changePerson = (nextPersonId: string) => {
     setPersonId(nextPersonId);
     localStorage.setItem(STORAGE_KEYS.personId, nextPersonId);
-    setSelectedTurnId(null);
+    setActiveMode("general_chat");
   };
 
   const completeOnboarding = async (draft: OnboardingDraft) => {
     const { household, person } = await createInitialProfile(draft);
     setHouseholdId(household.id);
     setPersonId(person.id);
-    await refreshPeople(household.id, person.id);
-    addEvent({
-      title: "Profile created",
-      detail: `${person.name} in ${household.name}`,
-      tone: "success",
-    });
+    await queryClient.invalidateQueries({ queryKey: queryKeys.people(household.id) });
   };
 
-  const handleProposalDecision = async (proposal: Proposal, decision: "confirm" | "reject") => {
-    const updated =
-      decision === "confirm" ? await confirmProposal(proposal.id) : await rejectProposal(proposal.id);
-    setProposals((current) => current.map((item) => (item.id === updated.id ? updated : item)));
-    addEvent({
-      title: decision === "confirm" ? "Proposal applied" : "Proposal rejected",
-      detail: updated.summary,
-      tone: decision === "confirm" ? "success" : "warning",
-    });
-    if (householdId) {
-      await refreshPeople(householdId, personId);
-    }
-  };
-
-  if (isBooting) {
-    return <div className="boot-screen">Loading Health Monitor...</div>;
-  }
-
-  if (!householdId || !personId) {
+  if (!householdId || !selectedPersonId || !activePerson) {
     return <OnboardingScreen onCreate={completeOnboarding} />;
   }
 
   return (
-    <AssistantRuntimeProvider runtime={runtime}>
-      <div className="app-shell">
-        <aside className="left-rail" aria-label="App context and modes">
-          <div className="brand-block">
-            <p className="eyebrow">Health Monitor</p>
-            <h1>Daily agent</h1>
-            <p>Chat first. Structured proposals before durable changes.</p>
-          </div>
-          <ModesAndTemplates activeMode={activeMode} onModeChange={setActiveMode} />
-          <ContextPanel
-            people={people}
-            personId={personId}
+    <div className="app-shell">
+      <header className="app-header">
+        <div className="brand-block">
+          <p className="eyebrow">Health Monitor</p>
+          <h1>Diário</h1>
+        </div>
+        <PersonChips people={people} activePersonId={selectedPersonId} onChange={changePerson} />
+        <button
+          type="button"
+          className="icon-button"
+          aria-label="Abrir ajustes do agente"
+          onClick={() => setSettingsOpen(true)}
+        >
+          Ajustes
+        </button>
+      </header>
+
+      <main className="daily-layout">
+        {chatHistoryQuery.isSuccess ? (
+          <ChatWorkspace
+            key={selectedPersonId}
+            householdId={householdId}
+            personId={selectedPersonId}
+            activeMode={activeMode}
+            today={selectedDay}
             settings={settings}
-            onPersonChange={changePerson}
-            onSettingsChange={setSettings}
+            initialMessages={initialMessages}
+            proposal={activeDraft}
+            proposalBusy={proposalDecision.isPending}
+            onModeChange={setActiveMode}
+            onToast={setToast}
+            onAgentResponse={onAgentResponse}
+            onProposal={onProposal}
+            onRuntimeError={onRuntimeError}
+            onModeCompleted={() => setActiveMode("general_chat")}
+            onConfirmProposal={(proposal) => proposalDecision.mutate({ proposal, decision: "confirm" })}
+            onRejectProposal={(proposal) => proposalDecision.mutate({ proposal, decision: "reject" })}
           />
-        </aside>
-
-        <main className="chat-main" aria-label="Agent chat">
-          <header className="chat-header">
-            <div>
-              <p className="eyebrow">Current mode</p>
-              <h2>{CHAT_MODES.find((mode) => mode.id === activeMode)?.label}</h2>
+        ) : (
+          <section className="chat-column" aria-label="Conversa">
+            <DayCard personId={selectedPersonId} day={selectedDay} />
+            <div className="chat-loading" role="status">
+              Carregando conversa...
             </div>
-            <p>{CHAT_MODES.find((mode) => mode.id === activeMode)?.description}</p>
-          </header>
-          <ChatInterface />
-        </main>
+          </section>
+        )}
 
-        <aside className="right-rail" aria-label="Activity and proposals">
-          <ProposalPanel proposals={proposals} onDecision={handleProposalDecision} />
-          <HistoryPanel
-            turns={chatHistory}
-            selectedTurn={selectedTurn}
-            onSelect={(turnId) => setSelectedTurnId(turnId)}
-          />
-          <ActivityPanel events={events} />
+        <aside className="desktop-read-column" aria-label="Resumo do dia">
+          <DayCard personId={selectedPersonId} day={selectedDay} />
+          <section className="week-placeholder">
+            <p className="eyebrow">Semana</p>
+            <p>Visão semanal entra na fase 5.</p>
+          </section>
         </aside>
-      </div>
+      </main>
+
+      {settingsOpen ? (
+        <div className="modal-backdrop" role="presentation" onClick={() => setSettingsOpen(false)}>
+          <div
+            className="settings-drawer"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Ajustes do agente"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="section-heading">
+              <span>Ajustes do agente</span>
+              <button type="button" onClick={() => setSettingsOpen(false)}>
+                Fechar
+              </button>
+            </div>
+            <ContextPanel
+              people={people}
+              personId={selectedPersonId}
+              settings={settings}
+              onPersonChange={changePerson}
+              onSettingsChange={setSettings}
+            />
+          </div>
+        </div>
+      ) : null}
+
+      {toast ? (
+        <div className="toast" role="status" aria-live="polite">
+          <span>{toast}</span>
+          <button type="button" onClick={() => setToast(null)}>
+            Fechar
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ChatWorkspace({
+  householdId,
+  personId,
+  activeMode,
+  today,
+  settings,
+  initialMessages,
+  proposal,
+  proposalBusy,
+  onModeChange,
+  onToast,
+  onAgentResponse,
+  onProposal,
+  onRuntimeError,
+  onModeCompleted,
+  onConfirmProposal,
+  onRejectProposal,
+}: {
+  householdId: string | null;
+  personId: string;
+  activeMode: ModeId;
+  today: string;
+  settings: AgentSettings;
+  initialMessages: readonly ThreadMessageLike[];
+  proposal?: Proposal;
+  proposalBusy: boolean;
+  onModeChange: (mode: ModeId) => void;
+  onToast: (message: string) => void;
+  onAgentResponse: (response: AgentChatResponse) => void;
+  onProposal: (proposal: Proposal) => void;
+  onRuntimeError: (message: string) => void;
+  onModeCompleted: () => void;
+  onConfirmProposal: (proposal: Proposal) => void;
+  onRejectProposal: (proposal: Proposal) => void;
+}) {
+  const runtime = useAgentRuntime({
+    householdId,
+    personId,
+    activeMode,
+    today,
+    settings,
+    initialMessages,
+    onAgentResponse,
+    onProposal,
+    onRuntimeError,
+    onModeCompleted,
+  });
+
+  return (
+    <AssistantRuntimeProvider runtime={runtime}>
+      <section className="chat-column" aria-label="Conversa">
+        <DayCard personId={personId} day={today} />
+        <QuickActionRow onModeChange={onModeChange} onToast={onToast} />
+        <ChatInterface />
+        <DraftProposalDock
+          proposal={proposal}
+          busy={proposalBusy}
+          onConfirm={onConfirmProposal}
+          onReject={onRejectProposal}
+        />
+      </section>
     </AssistantRuntimeProvider>
   );
 }
 
-function OnboardingScreen({ onCreate }: { onCreate: (draft: OnboardingDraft) => Promise<void> }) {
-  const [message, setMessage] = useState(
-    [
-      "Household: Casa",
-      "Name: Gabriel",
-      "Timezone: America/Sao_Paulo",
-      "Targets: 2000 kcal, 150g protein, 180g carbs, 70g fat",
-      "Activity: moderate",
-    ].join("\n"),
+function PersonChips({
+  people,
+  activePersonId,
+  onChange,
+}: {
+  people: Person[];
+  activePersonId: string;
+  onChange: (personId: string) => void;
+}) {
+  return (
+    <div className="person-chips" aria-label="Selecionar perfil">
+      {people.map((person) => (
+        <button
+          key={person.id}
+          type="button"
+          className={person.id === activePersonId ? "person-chip is-active" : "person-chip"}
+          onClick={() => onChange(person.id)}
+          aria-pressed={person.id === activePersonId}
+        >
+          <span>{person.name.slice(0, 1).toLocaleUpperCase("pt-BR")}</span>
+          {person.name}
+        </button>
+      ))}
+    </div>
   );
+}
+
+function DraftProposalDock({
+  proposal,
+  busy,
+  onConfirm,
+  onReject,
+}: {
+  proposal?: Proposal;
+  busy: boolean;
+  onConfirm: (proposal: Proposal) => void;
+  onReject: (proposal: Proposal) => void;
+}) {
+  if (!proposal) {
+    return null;
+  }
+  const canConfirm = proposal.status === "draft";
+  return (
+    <section className="draft-dock" aria-label="Proposta pendente">
+      <div>
+        <p className="eyebrow">Proposta</p>
+        <h3>{proposal.summary}</h3>
+        <p>{proposalTotals(proposal)}</p>
+      </div>
+      <div className="proposal-actions">
+        <button type="button" onClick={() => onReject(proposal)} disabled={busy}>
+          Rejeitar
+        </button>
+        <button type="button" className="primary-action" onClick={() => onConfirm(proposal)} disabled={busy || !canConfirm}>
+          {canConfirm ? "Confirmar" : "Precisa revisar"}
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function OnboardingScreen({ onCreate }: { onCreate: (draft: OnboardingDraft) => Promise<void> }) {
+  const exampleMessage = [
+    "Somos a Casa.",
+    "Meu nome é Gabriel e meu fuso é America/Sao_Paulo.",
+    "Por enquanto use metas de 2000 kcal, 150g proteína, 180g carboidratos, 70g gordura, 30g fibra e 2300mg sódio.",
+    "Minha atividade é moderada.",
+  ].join("\n");
+  const [message, setMessage] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const submit = async (event: React.FormEvent<HTMLFormElement>) => {
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (!message.trim()) {
+      setError("Escreva uma mensagem curta para criar o primeiro perfil.");
+      return;
+    }
     setIsSubmitting(true);
     setError(null);
     try {
       await onCreate(parseOnboardingMessage(message));
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not create the first profile");
+      setError(caught instanceof Error ? caught.message : "Não foi possível criar o primeiro perfil.");
     } finally {
       setIsSubmitting(false);
     }
@@ -279,26 +398,37 @@ function OnboardingScreen({ onCreate }: { onCreate: (draft: OnboardingDraft) => 
 
   return (
     <main className="onboarding-screen">
-      <section className="onboarding-chat" aria-label="Chat-first onboarding">
-        <div className="assistant-bubble">
-          <p className="eyebrow">First profile</p>
-          <h1>Tell me who this is for.</h1>
-          <p>
-            Start with a normal note. Include household, name, timezone, and any target macros you
-            know. You can change goals later through proposal-gated chat.
-          </p>
+      <section className="onboarding-chat" aria-label="Cadastro por conversa">
+        <div className="onboarding-thread">
+          <div className="assistant-bubble">
+            <p className="eyebrow">Primeiro perfil</p>
+            <h1>Vamos começar pelo básico.</h1>
+            <p>
+              Me diga quem vai usar este diário e, se já souber, as metas iniciais. Pode ser texto livre;
+              depois qualquer ajuste de perfil ou meta vira proposta no chat.
+            </p>
+          </div>
+        </div>
+        <div className="onboarding-example-row">
+          <button type="button" onClick={() => setMessage(exampleMessage)}>
+            Usar exemplo editável
+          </button>
         </div>
         <form className="onboarding-composer" onSubmit={submit}>
-          <label htmlFor="onboarding-message">Message</label>
+          <label htmlFor="onboarding-message">Sua mensagem</label>
           <textarea
             id="onboarding-message"
             value={message}
             onChange={(event) => setMessage(event.target.value)}
             rows={8}
+            placeholder="Ex.: Somos a Casa. Meu nome é Gabriel, fuso America/Sao_Paulo. Quero começar com 2000 kcal, 150g proteína..."
           />
+          <p className="onboarding-helper">
+            A criação inicial é direta para destravar o app. Depois disso, mudanças passam por propostas confirmáveis.
+          </p>
           {error ? <p className="form-error">{error}</p> : null}
           <button type="submit" className="primary-action" disabled={isSubmitting}>
-            {isSubmitting ? "Creating..." : "Create profile from message"}
+            {isSubmitting ? "Criando..." : "Criar primeiro perfil"}
           </button>
         </form>
       </section>
@@ -306,131 +436,16 @@ function OnboardingScreen({ onCreate }: { onCreate: (draft: OnboardingDraft) => 
   );
 }
 
-function ProposalPanel({
-  proposals,
-  onDecision,
-}: {
-  proposals: Proposal[];
-  onDecision: (proposal: Proposal, decision: "confirm" | "reject") => Promise<void>;
-}) {
-  return (
-    <section className="side-panel">
-      <div className="section-heading">
-        <span>Proposals</span>
-        <strong>{proposals.filter((proposal) => proposal.status === "draft").length} draft</strong>
-      </div>
-      {proposals.length === 0 ? (
-        <p className="empty-copy">Drafts from meals, labels, recipes, corrections, and goal changes appear here.</p>
-      ) : (
-        <div className="stack-list">
-          {proposals.map((proposal) => (
-            <article key={proposal.id} className="proposal-card">
-              <div>
-                <p className="eyebrow">{proposal.proposal_type}</p>
-                <h3>{proposal.summary}</h3>
-                <p>{proposalTotals(proposal)}</p>
-              </div>
-              <span className={`status-chip status-${proposal.status}`}>{proposal.status}</span>
-              {proposal.status === "draft" ? (
-                <div className="proposal-actions">
-                  <button type="button" onClick={() => void onDecision(proposal, "reject")}>
-                    Reject
-                  </button>
-                  <button
-                    type="button"
-                    className="primary-action"
-                    onClick={() => void onDecision(proposal, "confirm")}
-                  >
-                    Confirm
-                  </button>
-                </div>
-              ) : null}
-            </article>
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function HistoryPanel({
-  turns,
-  selectedTurn,
-  onSelect,
-}: {
-  turns: AgentChatTurn[];
-  selectedTurn: AgentChatTurn | null;
-  onSelect: (turnId: string) => void;
-}) {
-  return (
-    <section className="side-panel">
-      <div className="section-heading">
-        <span>History</span>
-        <strong>{turns.length}</strong>
-      </div>
-      {turns.length === 0 ? (
-        <p className="empty-copy">Previous agent turns will stay inspectable here.</p>
-      ) : (
-        <>
-          <div className="history-list">
-            {turns.slice(0, 8).map((turn) => (
-              <button
-                key={turn.id}
-                type="button"
-                className={turn.id === selectedTurn?.id ? "history-item is-active" : "history-item"}
-                onClick={() => onSelect(turn.id)}
-              >
-                <span>{turn.user_message}</span>
-                <small>{turn.behavior_label}</small>
-              </button>
-            ))}
-          </div>
-          {selectedTurn ? (
-            <article className="selected-turn">
-              <p className="eyebrow">Selected turn</p>
-              <h3>{selectedTurn.user_message}</h3>
-              <p>{selectedTurn.assistant_message}</p>
-            </article>
-          ) : null}
-        </>
-      )}
-    </section>
-  );
-}
-
-function ActivityPanel({ events }: { events: AppEvent[] }) {
-  return (
-    <section className="side-panel">
-      <div className="section-heading">
-        <span>Activity</span>
-        <strong>{events.length}</strong>
-      </div>
-      {events.length === 0 ? (
-        <p className="empty-copy">Runtime calls, errors, and proposal changes show up here.</p>
-      ) : (
-        <div className="stack-list">
-          {events.map((event) => (
-            <article key={event.id} className={`activity-item tone-${event.tone}`}>
-              <strong>{event.title}</strong>
-              <p>{event.detail}</p>
-            </article>
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
-
 function proposalTotals(proposal: Proposal): string {
   const totals = proposal.totals;
   if (!totals) {
-    return "No nutrition totals on this proposal.";
+    return "Sem totais nutricionais nesta proposta.";
   }
   return [
-    totals.calories_kcal != null ? `${totals.calories_kcal} kcal` : null,
-    totals.protein_g != null ? `${totals.protein_g}g protein` : null,
-    totals.carbs_g != null ? `${totals.carbs_g}g carbs` : null,
-    totals.fat_g != null ? `${totals.fat_g}g fat` : null,
+    totals.calories_kcal != null ? `${Math.round(totals.calories_kcal)} kcal` : null,
+    totals.protein_g != null ? `${Math.round(totals.protein_g)}g prot` : null,
+    totals.carbs_g != null ? `${Math.round(totals.carbs_g)}g carb` : null,
+    totals.fat_g != null ? `${Math.round(totals.fat_g)}g gord` : null,
   ]
     .filter(Boolean)
     .join(" · ");

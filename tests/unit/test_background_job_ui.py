@@ -1,35 +1,28 @@
 from __future__ import annotations
 
 import unittest
-from pathlib import Path
 
-
-ROOT = Path(__file__).resolve().parents[2]
-MAIN_TS = ROOT / "web" / "src" / "main.ts"
-STYLES = ROOT / "web" / "src" / "styles.css"
+from tests.unit.frontend_helpers import read_web_file
 
 
 class BackgroundJobUiTest(unittest.TestCase):
-    def test_frontend_polls_until_background_jobs_settle(self) -> None:
-        source = MAIN_TS.read_text(encoding="utf-8")
-        styles = STYLES.read_text(encoding="utf-8")
+    def test_activity_and_history_rails_are_removed_for_chat_first_shell(self) -> None:
+        app = read_web_file("App.tsx")
+        styles = read_web_file("styles.css")
 
-        self.assertIn("let jobPollTimer", source)
-        self.assertIn("function syncJobPolling", source)
-        self.assertIn("function hasActiveJobs", source)
-        self.assertIn("window.setInterval", source)
-        self.assertIn("window.clearInterval", source)
-        self.assertIn("syncJobPolling();", source)
-        self.assertIn("job-status-active", source)
-        self.assertIn(".job-status-active", styles)
+        self.assertNotIn("ActivityPanel", app)
+        self.assertNotIn("HistoryPanel", app)
+        self.assertIn("toast", app)
+        self.assertIn('role="status"', app)
+        self.assertIn(".toast", styles)
 
-    def test_completed_chat_jobs_can_open_saved_chat_turn(self) -> None:
-        source = MAIN_TS.read_text(encoding="utf-8")
+    def test_chat_loading_state_does_not_reset_thread_until_history_loaded(self) -> None:
+        app = read_web_file("App.tsx")
+        styles = read_web_file("styles.css")
 
-        self.assertIn('typeof job.result.chat_turn_id === "string"', source)
-        self.assertIn("job-open-chat", source)
-        self.assertIn("onJobOpenChat", source)
-        self.assertIn("state.chatHistory.find((turn) => turn.id === chatTurnId)", source)
+        self.assertIn("chatHistoryQuery.isSuccess", app)
+        self.assertIn("Carregando conversa", app)
+        self.assertIn(".chat-loading", styles)
 
 
 if __name__ == "__main__":

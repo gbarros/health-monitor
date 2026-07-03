@@ -286,6 +286,22 @@ class AgentChatHarnessTest(unittest.TestCase):
 
         self.assertEqual(service.people[person_id].height_cm, 181)
 
+    def test_chat_explains_profile_and_goal_changes_are_proposal_gated(self) -> None:
+        service, person_id, _ = self.make_service_with_entry()
+
+        response = service.chat(
+            person_id=person_id,
+            message="Can you alter my profile and goals?",
+            today=date(2026, 7, 2),
+            agent_settings={"agent_runtime": "pydantic-ai", "model_profile": "qwen3.6:latest"},
+        )
+
+        self.assertEqual(response.behavior_label, "answer_profile_goal_capabilities")
+        self.assertIsNone(response.proposal_id)
+        self.assertIn("proposal", response.message.casefold())
+        self.assertIn("profile", response.message.casefold())
+        self.assertIn("goal", response.message.casefold())
+
     def test_chat_answers_whether_new_food_label_is_default_and_used(self) -> None:
         service = HealthMonitorService()
         household = service.create_household(name="Casa")

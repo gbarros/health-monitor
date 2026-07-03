@@ -1,23 +1,21 @@
 from __future__ import annotations
 
 import unittest
-from pathlib import Path
 
-
-ROOT = Path(__file__).resolve().parents[2]
-MAIN_TS = ROOT / "web" / "src" / "main.ts"
+from tests.unit.frontend_helpers import read_web_file
 
 
 class FoodContextUiTest(unittest.TestCase):
-    def test_food_labels_show_default_and_last_used_context(self) -> None:
-        source = MAIN_TS.read_text(encoding="utf-8")
+    def test_day_card_renders_human_food_names_and_version_context(self) -> None:
+        types = read_web_file("types.ts")
+        day_card = read_web_file("components/DayCard.tsx")
 
-        self.assertIn("is_default: boolean;", source)
-        self.assertIn("last_used_at: string | null;", source)
-        self.assertIn("foodContextLabel(item)", source)
-        self.assertIn("function foodContextLabel", source)
-        self.assertIn("current default", source)
-        self.assertIn("last used", source)
+        self.assertIn("food_name: string", types)
+        self.assertIn("food_version_label: string", types)
+        self.assertIn("brand?: string", types)
+        self.assertIn("entry.food_name", day_card)
+        self.assertIn("entry.food_version_label", day_card)
+        self.assertIn("entry.brand", day_card)
 
 
 if __name__ == "__main__":

@@ -1965,6 +1965,13 @@ class HealthMonitorService:
             )
             return finish(response)
 
+        if parse_chat_profile_goal_capability_question(message):
+            response = self._chat_explain_profile_goal_capabilities(
+                person_id=person_id,
+                run=run,
+            )
+            return finish(response)
+
         version_use_phrase = parse_chat_food_version_use_question(message)
         if version_use_phrase is not None:
             response = self._chat_explain_food_version_use(
@@ -3047,6 +3054,35 @@ class HealthMonitorService:
             message=f"I drafted a {proposal_type.replace('_', ' ')} proposal. Confirm it before anything changes.",
             behavior_label=f"draft_{proposal_type}",
             proposal_id=proposal.id,
+        )
+
+    def _chat_explain_profile_goal_capabilities(
+        self,
+        *,
+        person_id: str,
+        run: AgentRun,
+    ) -> AgentChatResponse:
+        self._record_agent_tool_call(
+            run=run,
+            tool_name="explain_profile_goal_capabilities",
+            input_summary="profile/goal capability question",
+            output_summary="profile and goal changes are proposal-gated",
+        )
+        self.agent_runs[run.id] = replace(
+            run,
+            status="answered",
+            tool_loop_count=len(self.agent_tool_calls_for_run(run.id)),
+        )
+        return AgentChatResponse(
+            run_id=run.id,
+            person_id=person_id,
+            message=(
+                "Yes. I can help change profile fields and nutrition goals, but I will draft a "
+                "proposal first instead of applying changes directly. For example, you can say "
+                "'update my height to 181 cm' or 'change my goal to 1900 kcal and 160g protein "
+                "starting 2026-07-10', then confirm the proposal if it looks right."
+            ),
+            behavior_label="answer_profile_goal_capabilities",
         )
 
     def _chat_draft_diary_correction(
@@ -4657,6 +4693,42 @@ def parse_chat_profile_goal_update(message: str, *, today: date) -> dict[str, ob
             "payload": changes,
         }
     return None
+
+
+def parse_chat_profile_goal_capability_question(message: str) -> bool:
+    lowered = message.casefold()
+    has_profile_or_goal = any(
+        marker in lowered
+        for marker in (
+            "profile",
+            "perfil",
+            "goal",
+            "goals",
+            "target",
+            "targets",
+            "meta",
+            "metas",
+        )
+    )
+    has_change_intent = any(
+        marker in lowered
+        for marker in (
+            "can you",
+            "could you",
+            "are you able",
+            "alter",
+            "change",
+            "update",
+            "adjust",
+            "consegue",
+            "pode",
+            "alterar",
+            "mudar",
+            "ajustar",
+            "atualizar",
+        )
+    )
+    return has_profile_or_goal and has_change_intent and "?" in message
 
 
 def parse_nutrition_label_text(text: str) -> ParsedNutritionLabel:

@@ -1,27 +1,24 @@
 from __future__ import annotations
 
 import unittest
-from pathlib import Path
 
-
-ROOT = Path(__file__).resolve().parents[2]
-MAIN_TS = ROOT / "web" / "src" / "main.ts"
-STYLES = ROOT / "web" / "src" / "styles.css"
+from tests.unit.frontend_helpers import read_web_file
 
 
 class AgentChatHistoryUiTest(unittest.TestCase):
-    def test_agent_chat_history_is_fetched_and_rendered(self) -> None:
-        source = MAIN_TS.read_text(encoding="utf-8")
-        styles = STYLES.read_text(encoding="utf-8")
+    def test_agent_chat_history_hydrates_assistant_ui_thread(self) -> None:
+        app = read_web_file("App.tsx")
+        runtime = read_web_file("hooks/useAgentRuntime.ts")
+        api = read_web_file("api.ts")
 
-        self.assertIn("type AgentChatTurn", source)
-        self.assertIn("chatHistory: AgentChatTurn[];", source)
-        self.assertIn("function workAgentMessages()", source)
-        self.assertIn('<agent-chat id="work-agent-chat"></agent-chat>', source)
-        self.assertIn("workAgentChat.data = workAgentState()", source)
-        self.assertIn("/api/agent/chat-history?person_id=", source)
-        self.assertIn("state.chatHistory = await apiGet<AgentChatTurn[]>", source)
-        self.assertIn(".chat-answer", styles)
+        self.assertIn("loadChatHistory", app)
+        self.assertIn("queryKeys.chatHistory(selectedPersonId)", app)
+        self.assertIn("initialMessages = useMemo<ThreadMessageLike[]>", app)
+        self.assertIn("turn.user_message", app)
+        self.assertIn("turn.assistant_message", app)
+        self.assertIn("/api/agent/chat-history?person_id=", api)
+        self.assertIn("initialMessages", runtime)
+        self.assertIn("useLocalRuntime(adapter", runtime)
 
 
 if __name__ == "__main__":

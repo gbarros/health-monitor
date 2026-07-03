@@ -16,14 +16,14 @@ export function ContextPanel({
   onSettingsChange,
 }: Props) {
   return (
-    <section className="context-panel" aria-label="Current context">
+    <section className="context-panel" aria-label="Contexto atual">
       <div className="section-heading">
-        <span>Context</span>
-        <strong>{people.find((person) => person.id === personId)?.name ?? "No profile"}</strong>
+        <span>Contexto</span>
+        <strong>{people.find((person) => person.id === personId)?.name ?? "Sem perfil"}</strong>
       </div>
 
       <label className="field">
-        <span>Profile</span>
+        <span>Perfil</span>
         <select
           value={personId ?? ""}
           onChange={(event) => onPersonChange(event.target.value)}
@@ -38,7 +38,7 @@ export function ContextPanel({
       </label>
 
       <details className="settings-disclosure">
-        <summary>Model knobs</summary>
+        <summary>Modelo e esforço</summary>
         <label className="field">
           <span>Runtime</span>
           <select
@@ -51,11 +51,11 @@ export function ContextPanel({
             }
           >
             <option value="pydantic-ai">PydanticAI / Ollama</option>
-            <option value="deterministic">Deterministic fallback</option>
+            <option value="deterministic">Fallback determinístico</option>
           </select>
         </label>
         <label className="field">
-          <span>Model</span>
+          <span>Modelo</span>
           <input
             value={settings.model_profile}
             onChange={(event) => onSettingsChange({ ...settings, model_profile: event.target.value })}
@@ -63,21 +63,21 @@ export function ContextPanel({
           />
         </label>
         <label className="field">
-          <span>Effort</span>
+          <span>Esforço</span>
           <select
             value={settings.effort}
             onChange={(event) =>
               onSettingsChange({ ...settings, effort: event.target.value as AgentSettings["effort"] })
             }
           >
-            <option value="low">Low</option>
+            <option value="low">Baixo</option>
             <option value="normal">Normal</option>
-            <option value="medium">Medium</option>
-            <option value="high">High</option>
+            <option value="medium">Médio</option>
+            <option value="high">Alto</option>
           </select>
         </label>
         <label className="field">
-          <span>Tool loops</span>
+          <span>Loops de ferramenta</span>
           <input
             type="number"
             min={1}
@@ -99,7 +99,7 @@ export function ContextPanel({
               onSettingsChange({ ...settings, research_lookup: event.target.checked })
             }
           />
-          <span>Allow controlled research lookup</span>
+          <span>Permitir pesquisa controlada</span>
         </label>
       </details>
     </section>
