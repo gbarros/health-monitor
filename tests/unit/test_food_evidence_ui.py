@@ -50,7 +50,10 @@ class FoodEvidenceUiTest(unittest.TestCase):
         self.assertIn("onLogFoodClick", quick_actions)
         self.assertIn("LogFoodModal", app)
         self.assertIn("Porção consumida", app)
+        self.assertIn("Fotos do alimento ou rótulo", app)
+        self.assertIn("setFiles(Array.from", app)
         self.assertIn('intent: "log_food"', app)
+        self.assertIn("files: input.files", app)
         self.assertIn("sendAgentChat", app)
         self.assertNotIn('setText(template)', quick_actions)
 

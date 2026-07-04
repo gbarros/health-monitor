@@ -701,7 +701,9 @@ function App() {
         <LogFoodModal
           busy={promptBuilderSend.isPending}
           onClose={() => setLogFoodOpen(false)}
-          onSubmit={(message) => promptBuilderSend.mutate({ message, intent: "log_food" })}
+          onSubmit={(input) =>
+            promptBuilderSend.mutate({ message: input.message, files: input.files, intent: "log_food" })
+          }
         />
       ) : null}
 
@@ -1570,15 +1572,17 @@ function LogFoodModal({
 }: {
   busy: boolean;
   onClose: () => void;
-  onSubmit: (message: string) => void;
+  onSubmit: (input: { message: string; files: File[] }) => void;
 }) {
   const [name, setName] = useState("");
   const [portion, setPortion] = useState("");
   const [notes, setNotes] = useState("");
+  const [files, setFiles] = useState<File[]>([]);
   const message = [
     "Registrar alimento:",
     name.trim() ? `Nome: ${name.trim()}` : "",
     portion.trim() ? `Porção consumida: ${portion.trim()}` : "",
+    files.length ? `${files.length} foto(s) anexada(s).` : "",
     notes.trim() ? `Detalhes: ${notes.trim()}` : "",
   ]
     .filter(Boolean)
@@ -1593,7 +1597,10 @@ function LogFoodModal({
         onClick={(event) => event.stopPropagation()}
         onSubmit={(event) => {
           event.preventDefault();
-          onSubmit(message || "Registrar alimento. Preciso que você me ajude a completar os detalhes.");
+          onSubmit({
+            message: message || "Registrar alimento. Preciso que você me ajude a completar os detalhes.",
+            files,
+          });
         }}
       >
         <div className="section-heading">
@@ -1603,12 +1610,30 @@ function LogFoodModal({
           </button>
         </div>
         <label className="field">
+          <span>Fotos do alimento ou rótulo</span>
+          <input
+            type="file"
+            accept="image/*"
+            multiple
+            onChange={(event) => setFiles(Array.from(event.target.files ?? []))}
+          />
+        </label>
+        <label className="field">
           <span>Nome</span>
-          <input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="requeijão light" />
+          <input
+            autoFocus
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            placeholder="requeijão light"
+          />
         </label>
         <label className="field">
           <span>Porção consumida</span>
-          <input value={portion} onChange={(event) => setPortion(event.target.value)} placeholder="30g, 1 fatia, 1 pote" />
+          <input
+            value={portion}
+            onChange={(event) => setPortion(event.target.value)}
+            placeholder="30g, 1 fatia, 1 pote"
+          />
         </label>
         <label className="field">
           <span>Texto livre</span>
