@@ -4,6 +4,7 @@ import os
 import unittest
 import urllib.error
 import urllib.request
+from datetime import date
 
 from health_monitor.application.service import HealthMonitorService
 from health_monitor.domain.nutrients import Nutrients
@@ -65,7 +66,7 @@ class LiveModelAgentTest(unittest.TestCase):
         response = service.chat(
             person_id=person_id,
             message="Use structured app data to answer: what is my largest logged contributor?",
-            today=__import__("datetime").date(2026, 7, 2),
+            today=date(2026, 7, 2),
         )
 
         run = service.get_agent_run(response.run_id)
@@ -78,13 +79,15 @@ class LiveModelAgentTest(unittest.TestCase):
     def test_live_model_text_meal_drafts_without_mutation(self) -> None:
         service, person_id = self.make_service()
 
-        proposal = service.propose_text_meal(
+        response = service.chat(
             person_id=person_id,
-            logged_at_local="2026-07-02T12:00:00",
-            text="50g queijo",
+            today=date(2026, 7, 2),
+            message="50g queijo",
         )
 
-        run = service.get_agent_run(proposal.source_agent_run_id or "")
+        self.assertIsNotNone(response.proposal_id)
+        proposal = service.get_proposal(response.proposal_id or "")
+        run = service.get_agent_run(response.run_id)
         self.assertEqual(run.runtime, "pydantic-ai")
         self.assertEqual(run.status, "proposal_created")
         self.assertIsNone(run.fallback_reason)

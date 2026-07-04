@@ -99,12 +99,15 @@ def run_live_service_smoke(config: AppConfig) -> None:
         raise RuntimeError(
             f"unexpected runtime={run.runtime!r} fallback={run.fallback_reason!r}"
         )
-    proposal = service.propose_text_meal(
+    draft = service.chat(
         person_id=person.id,
-        logged_at_local="2026-07-02T12:00:00",
-        text="50g queijo",
+        today=date(2026, 7, 2),
+        message="50g queijo",
     )
-    proposal_run = service.get_agent_run(proposal.source_agent_run_id or "")
+    if draft.proposal_id is None:
+        raise RuntimeError("live chat did not draft a meal proposal")
+    proposal = service.get_proposal(draft.proposal_id)
+    proposal_run = service.get_agent_run(draft.run_id)
     if proposal.status != "draft" or proposal_run.fallback_reason is not None:
         raise RuntimeError(
             f"unexpected proposal={proposal.status!r} fallback={proposal_run.fallback_reason!r}"

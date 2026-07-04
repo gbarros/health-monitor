@@ -142,19 +142,12 @@ def run_case(
     case: dict[str, object],
 ) -> dict[str, object]:
     prompt = str(case["prompt"])
-    eval_kind = str(case["eval_kind"])
-    if eval_kind in {"weird_meal_phrasing", "restaurant_or_social_estimate"}:
-        proposal = service.propose_text_meal(
-            person_id=person_id,
-            logged_at_local="2026-07-02T12:00:00",
-            text=prompt,
-            agent_settings={"research_lookup": True},
-        )
-        return {"proposal": proposal, "run": service.get_agent_run(proposal.source_agent_run_id or "")}
+    settings = {"research_lookup": True} if str(case["eval_kind"]) == "restaurant_or_social_estimate" else None
     response = service.chat(
         person_id=person_id,
         message=prompt,
         today=date(2026, 7, 2),
+        agent_settings=settings,
     )
     proposal = service.get_proposal(response.proposal_id) if response.proposal_id else None
     return {"response": response, "proposal": proposal, "run": service.get_agent_run(response.run_id)}
