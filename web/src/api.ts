@@ -473,7 +473,10 @@ export async function streamAgentChat(input: {
   return { final, events };
 }
 
-export type AgentChatStreamEvent = { event: "tool_call" | "text_delta" | "final" | "message"; data: unknown };
+export type AgentChatStreamEvent = {
+  event: "run_started" | "tool_call" | "text_delta" | "final" | "message";
+  data: unknown;
+};
 
 export type StreamAgentChatResult = {
   final: AgentChatResponse;
@@ -496,7 +499,9 @@ function parseSseEvent(chunk: string): AgentChatStreamEvent {
 }
 
 function streamEventName(value: string): AgentChatStreamEvent["event"] {
-  return value === "tool_call" || value === "text_delta" || value === "final" ? value : "message";
+  return value === "run_started" || value === "tool_call" || value === "text_delta" || value === "final"
+    ? value
+    : "message";
 }
 
 export type AgentChatIntent = "log_food" | "recipe" | "label_scan" | "weight" | "repeat_meal" | "review";

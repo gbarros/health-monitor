@@ -2622,8 +2622,9 @@ class HttpApiContractTest(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual([event["event"] for event in response.events], ["text_delta", "final"])
-        self.assertEqual(response.events[0]["data"]["text"], response.body["message"])
+        self.assertEqual([event["event"] for event in response.events], ["run_started", "text_delta", "final"])
+        self.assertEqual(response.events[0]["data"]["run_id"], response.body["run_id"])
+        self.assertEqual(response.events[1]["data"]["text"], response.body["message"])
         self.assertEqual(response.events[-1]["data"]["run_id"], response.body["run_id"])
         self.assertEqual(len(api.service.chat_turns_for_person(person["id"])), 1)
 

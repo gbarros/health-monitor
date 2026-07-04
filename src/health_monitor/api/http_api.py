@@ -598,6 +598,7 @@ class HttpApi:
                 status_code=200,
                 body=final,
                 events=(
+                    {"event": "run_started", "data": {"run_id": response.run_id}},
                     *tool_events,
                     {"event": "text_delta", "data": {"text": response.message}},
                     {"event": "final", "data": final},
