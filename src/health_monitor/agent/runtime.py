@@ -46,16 +46,6 @@ class HealthMonitorServiceProtocol(Protocol):
     ) -> Any:
         pass
 
-    def propose_text_meal(
-        self,
-        *,
-        person_id: str,
-        logged_at_local: str,
-        text: str,
-        agent_settings: dict[str, Any] | None = None,
-    ) -> Any:
-        pass
-
     def chat(
         self,
         *,
@@ -352,41 +342,6 @@ class PydanticAINutritionAgent:
             ),
         )
         return normalize_agent_runtime_output(result.output)
-
-    def draft_text_meal(
-        self,
-        *,
-        deps: AgentDeps,
-        logged_at_local: str,
-        text: str,
-    ) -> AgentRuntimeResponse:
-        result = self._run(
-            deps=deps,
-            message=(
-                "Validate that this is a meal logging request, then rely on the "
-                "draft_text_meal_proposal tool for the actual draft. Do not apply "
-                f"records. logged_at_local={logged_at_local!r}; text={text!r}"
-            ),
-            task_instructions=(
-                "Return JSON. If the request should be drafted, output_type must be "
-                "'proposal_draft'. If required details are missing, output_type must "
-                "be 'clarification_request'."
-            ),
-        )
-        _ = normalize_agent_runtime_output(result.output)
-        from health_monitor.agent.tools import NutritionAgentTools
-
-        proposal = NutritionAgentTools().draft_text_meal_proposal(
-            deps,
-            logged_at_local=logged_at_local,
-            text=text,
-        )
-        return AgentRuntimeResponse(
-            message=proposal["summary"],
-            behavior_label="proposal_draft",
-            proposal_id=str(proposal["proposal_id"]),
-            output_type="proposal_draft",
-        )
 
     def _run(self, *, deps: AgentDeps, message: str, task_instructions: str) -> Any:
         try:

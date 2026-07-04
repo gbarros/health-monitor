@@ -301,21 +301,6 @@ class NutritionAgentTools:
             "warnings": [str(item) for item in result.get("warnings", [])],
         }
 
-    def draft_text_meal_proposal(
-        self,
-        deps: AgentDeps,
-        *,
-        logged_at_local: str,
-        text: str,
-    ) -> dict[str, Any]:
-        proposal = deps.service.propose_text_meal(
-            person_id=deps.person_id,
-            logged_at_local=logged_at_local,
-            text=text,
-            agent_settings={**deps.settings, "agent_runtime": "deterministic"},
-        )
-        return self._proposal_payload(proposal)
-
     def draft_meal_proposal(
         self,
         deps: AgentDeps,
