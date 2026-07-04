@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
-import { loadReviewNotes, loadRollingSummary, loadWeekSummary, loadWeightTrend } from "../api";
+import { loadActiveGoal, loadReviewNotes, loadRollingSummary, loadWeekSummary, loadWeightTrend } from "../api";
 import { queryKeys } from "../queryKeys";
-import type { Nutrients, RollingSummary, WeightEntry } from "../types";
+import type { GoalProfile, Nutrients, RollingSummary, WeightEntry } from "../types";
 
 export function WeekCard({ personId, day }: { personId: string; day: string }) {
   const { start, end } = weekWindow(day);
@@ -21,6 +21,10 @@ export function WeekCard({ personId, day }: { personId: string; day: string }) {
     queryKey: queryKeys.weightTrend(personId),
     queryFn: () => loadWeightTrend(personId),
   });
+  const goalQuery = useQuery({
+    queryKey: queryKeys.activeGoal(personId, day),
+    queryFn: () => loadActiveGoal(personId, day),
+  });
   const reviewNotesQuery = useQuery({
     queryKey: queryKeys.reviewNotes(personId),
     queryFn: () => loadReviewNotes(personId),
@@ -29,8 +33,9 @@ export function WeekCard({ personId, day }: { personId: string; day: string }) {
   const summary = query.data;
   const rolling = rollingQuery.data;
   const rollingThirty = rollingThirtyQuery.data;
-  const weekWeights = (weightQuery.data?.entries ?? []).filter(
-    (entry) => entry.measured_at.slice(0, 10) >= start && entry.measured_at.slice(0, 10) <= end,
+  const trendStart = addDays(day, -29);
+  const trendWeights = (weightQuery.data?.entries ?? []).filter(
+    (entry) => entry.measured_at.slice(0, 10) >= trendStart && entry.measured_at.slice(0, 10) <= day,
   );
 
   return (
@@ -65,7 +70,7 @@ export function WeekCard({ personId, day }: { personId: string; day: string }) {
             })}
           </div>
 
-          {weekWeights.length > 1 ? <WeightSparkline entries={weekWeights} /> : null}
+          {trendWeights.length > 1 ? <WeightTrendChart entries={trendWeights} goal={goalQuery.data ?? null} /> : null}
 
           <p className="week-card__summary">
             Média: {Math.round(summary.averages.calories_kcal ?? 0)} kcal/dia
@@ -201,31 +206,92 @@ function CalorieTrendLine({ rolling }: { rolling: RollingSummary }) {
   );
 }
 
-function WeightSparkline({ entries }: { entries: WeightEntry[] }) {
+function WeightTrendChart({ entries, goal }: { entries: WeightEntry[]; goal: GoalProfile | null }) {
   const sorted = [...entries].sort((a, b) => a.measured_at.localeCompare(b.measured_at));
   const values = sorted.map((entry) => entry.weight_kg);
-  const min = Math.min(...values);
-  const max = Math.max(...values);
+  const guide = weightGoalGuide(sorted, goal);
+  const guideValues = guide?.points.map((point) => point.weight_kg) ?? [];
+  const min = Math.min(...values, ...guideValues);
+  const max = Math.max(...values, ...guideValues);
   const range = max - min || 1;
-  const width = 280;
-  const height = 36;
-  const points = sorted
-    .map((entry, index) => {
-      const x = (index / (sorted.length - 1)) * width;
-      const y = height - ((entry.weight_kg - min) / range) * height;
+  const width = 420;
+  const height = 96;
+  const points = trendPoints(
+    sorted.map((entry) => ({ day: entry.measured_at.slice(0, 10), weight_kg: entry.weight_kg })),
+    min,
+    range,
+    width,
+    height,
+  );
+  const guidePoints = guide ? trendPoints(guide.points, min, range, width, height) : "";
+  return (
+    <div className="weight-trend-chart" aria-label="Tendência de peso">
+      <div className="section-heading">
+        <span>Peso 30 dias</span>
+        <strong>{formatKg(sorted[sorted.length - 1].weight_kg)}</strong>
+      </div>
+      <svg viewBox={`0 0 ${width} ${height}`} width="100%" height={height} preserveAspectRatio="none">
+        {guidePoints ? <polyline points={guidePoints} fill="none" stroke="currentColor" strokeDasharray="5 5" strokeWidth="2" /> : null}
+        <polyline points={points} fill="none" stroke="currentColor" strokeWidth="2" />
+      </svg>
+      <div className="trend-axis">
+        <span>{sorted[0].measured_at.slice(5, 10)}</span>
+        <span>{formatKg(sorted[0].weight_kg)} → {formatKg(sorted[sorted.length - 1].weight_kg)}</span>
+        <span>{sorted[sorted.length - 1].measured_at.slice(5, 10)}</span>
+      </div>
+      {guide ? <small>Guia: {guide.label}</small> : <small>Adicione uma meta em kg/sem nas notas para ver o guia.</small>}
+    </div>
+  );
+}
+
+function trendPoints(
+  points: Array<{ day: string; weight_kg: number }>,
+  min: number,
+  range: number,
+  width: number,
+  height: number,
+): string {
+  const first = points[0]?.day ?? "";
+  const last = points[points.length - 1]?.day ?? first;
+  const totalDays = Math.max(1, daysBetween(first, last));
+  return points
+    .map((point) => {
+      const x = (daysBetween(first, point.day) / totalDays) * width;
+      const y = height - ((point.weight_kg - min) / range) * height;
       return `${x.toFixed(1)},${y.toFixed(1)}`;
     })
     .join(" ");
-  return (
-    <div className="weight-sparkline" aria-label="Tendência de peso na semana">
-      <svg viewBox={`0 0 ${width} ${height}`} width="100%" height={height} preserveAspectRatio="none">
-        <polyline points={points} fill="none" stroke="currentColor" strokeWidth="2" />
-      </svg>
-      <span>
-        {formatKg(sorted[0].weight_kg)} → {formatKg(sorted[sorted.length - 1].weight_kg)}
-      </span>
-    </div>
-  );
+}
+
+function weightGoalGuide(
+  entries: WeightEntry[],
+  goal: GoalProfile | null,
+): { label: string; points: Array<{ day: string; weight_kg: number }> } | null {
+  const rate = parseKgPerWeek(goal?.notes ?? "");
+  if (rate == null || entries.length < 2) {
+    return null;
+  }
+  const first = entries[0];
+  const last = entries[entries.length - 1];
+  const firstDay = first.measured_at.slice(0, 10);
+  const lastDay = last.measured_at.slice(0, 10);
+  const projected = first.weight_kg + (rate / 7) * daysBetween(firstDay, lastDay);
+  return {
+    label: `${rate > 0 ? "+" : ""}${rate.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} kg/sem`,
+    points: [
+      { day: firstDay, weight_kg: first.weight_kg },
+      { day: lastDay, weight_kg: projected },
+    ],
+  };
+}
+
+function parseKgPerWeek(notes: string): number | null {
+  const match = notes.match(/([+-]?\d+(?:[,.]\d+)?)\s*kg\s*\/?\s*(?:sem|semana)/i);
+  if (!match) {
+    return null;
+  }
+  const value = Number(match[1].replace(",", "."));
+  return Number.isFinite(value) ? value : null;
 }
 
 function WeeklyTable({
@@ -279,6 +345,18 @@ function weekWindow(day: string): { start: string; end: string } {
   const start = new Date(end);
   start.setDate(end.getDate() - 6);
   return { start: isoDate(start), end: isoDate(end) };
+}
+
+function addDays(day: string, offset: number): string {
+  const date = new Date(`${day}T12:00:00`);
+  date.setDate(date.getDate() + offset);
+  return isoDate(date);
+}
+
+function daysBetween(start: string, end: string): number {
+  const startMs = new Date(`${start}T12:00:00`).getTime();
+  const endMs = new Date(`${end}T12:00:00`).getTime();
+  return Math.round((endMs - startMs) / 86_400_000);
 }
 
 function isoDate(date: Date): string {

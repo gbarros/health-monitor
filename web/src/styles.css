@@ -1256,13 +1256,20 @@ h3 {
   font-size: 13px;
 }
 
-.weight-sparkline {
+.weight-trend-chart {
   display: grid;
-  gap: 4px;
-  color: #2f6fed;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
 }
 
-.weight-sparkline span {
+.weight-trend-chart svg {
+  display: block;
+  color: var(--primary);
+}
+
+.weight-trend-chart small {
   color: var(--muted);
   font-size: 12px;
 }
