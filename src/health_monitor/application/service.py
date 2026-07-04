@@ -2054,6 +2054,21 @@ class HealthMonitorService:
                 raise ModelUnavailableError(fallback_reason, replay_message=message)
             return None
 
+        if response.proposal_id is not None:
+            proposal = self.get_proposal(response.proposal_id)
+            self.proposals.proposals[proposal.id] = replace(
+                proposal,
+                source_agent_run_id=run.id,
+                payload={
+                    **proposal.payload,
+                    "live_agent_orchestration": {
+                        "runtime": metadata["runtime"],
+                        "model_name": metadata["model_name"],
+                        "tool_source_agent_run_id": proposal.source_agent_run_id,
+                    },
+                },
+            )
+
         self._record_agent_tool_call(
             run=run,
             tool_name="pydantic_ai_chat",
@@ -2062,7 +2077,8 @@ class HealthMonitorService:
         )
         self.agent_runs[run.id] = replace(
             run,
-            status="answered",
+            status="proposal_created" if response.proposal_id is not None else "answered",
+            proposal_id=response.proposal_id,
             runtime=metadata["runtime"],
             model_name=metadata["model_name"],
             tool_loop_count=len(self.agent_tool_calls_for_run(run.id)),

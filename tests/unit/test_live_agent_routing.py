@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from datetime import date
 from unittest.mock import patch
 
 from health_monitor.agent.runtime import AgentRuntimeResponse, PydanticAIUnavailable
@@ -13,12 +14,15 @@ class FakeDraftingAgent:
         self.model_name = model_name
         self.ollama_base_url = ollama_base_url
 
-    def draft_text_meal(self, *, deps, logged_at_local: str, text: str) -> AgentRuntimeResponse:
-        proposal = deps.service.propose_text_meal(
+    def answer(self, *, deps, message: str) -> AgentRuntimeResponse:
+        proposal = deps.service.draft_structured_meal_proposal(
             person_id=deps.person_id,
-            logged_at_local=logged_at_local,
-            text=text,
-            agent_settings={**deps.settings, "agent_runtime": "deterministic"},
+            day=deps.today,
+            time_text="10:00",
+            meal_type="breakfast",
+            items=[{"phrase": "queijo", "quantity_g": 50}],
+            source_text=message,
+            agent_settings=deps.settings,
         )
         return AgentRuntimeResponse(
             message=proposal.summary,
@@ -32,7 +36,7 @@ class FailingAgent:
     def __init__(self, *, model_name: str, ollama_base_url: str) -> None:
         pass
 
-    def draft_text_meal(self, *, deps, logged_at_local: str, text: str) -> AgentRuntimeResponse:
+    def answer(self, *, deps, message: str) -> AgentRuntimeResponse:
         raise PydanticAIUnavailable("missing dependency")
 
 
@@ -83,42 +87,47 @@ class LiveAgentRoutingTest(unittest.TestCase):
         )
         return service, person.id
 
-    def test_pydantic_text_meal_path_links_live_run_to_proposal(self) -> None:
+    def test_pydantic_chat_path_links_live_run_to_structured_meal_proposal(self) -> None:
         service, person_id = self.make_service()
 
         with patch("health_monitor.application.service.PydanticAINutritionAgent", FakeDraftingAgent):
-            proposal = service.propose_text_meal(
+            response = service.chat(
                 person_id=person_id,
-                logged_at_local="2026-07-02T10:00:00",
-                text="50g queijo",
+                today=date(2026, 7, 2),
+                message="Café: 50g queijo",
             )
 
-        run = service.get_agent_run(proposal.source_agent_run_id or "")
+        self.assertIsNotNone(response.proposal_id)
+        proposal = service.get_proposal(response.proposal_id or "")
+        run = service.get_agent_run(response.run_id)
         self.assertEqual(run.runtime, "pydantic-ai")
         self.assertEqual(run.model_name, "ornith:9b")
         self.assertEqual(run.status, "proposal_created")
         self.assertEqual(run.proposal_id, proposal.id)
         self.assertIsNone(run.fallback_reason)
+        self.assertEqual(proposal.source_agent_run_id, response.run_id)
         self.assertEqual(proposal.payload["live_agent_orchestration"]["model_name"], "ornith:9b")
-        self.assertTrue(proposal.payload["live_agent_orchestration"]["deterministic_source_agent_run_id"])
+        self.assertTrue(proposal.payload["live_agent_orchestration"]["tool_source_agent_run_id"])
+        self.assertEqual(proposal.entries[0].quantity_g, 50)
         self.assertEqual(service.day_summary(person_id, proposal.entries[0].logged_at.date()).totals, Nutrients())
 
-    def test_pydantic_text_meal_failure_records_fallback_reason(self) -> None:
+    def test_pydantic_chat_failure_records_fallback_reason_without_deterministic_proposal(self) -> None:
         # Deterministic fallback only exists when require_model is disabled.
         service, person_id = self.make_service(require_model=False)
 
         with patch("health_monitor.application.service.PydanticAINutritionAgent", FailingAgent):
-            proposal = service.propose_text_meal(
+            response = service.chat(
                 person_id=person_id,
-                logged_at_local="2026-07-02T10:00:00",
-                text="50g queijo",
+                today=date(2026, 7, 2),
+                message="50g queijo",
             )
 
-        run = service.get_agent_run(proposal.source_agent_run_id or "")
+        run = service.get_agent_run(response.run_id)
         self.assertEqual(run.runtime, "pydantic-ai")
-        self.assertEqual(run.status, "proposal_created")
+        self.assertEqual(run.status, "answered")
         self.assertIn("pydantic_ai unavailable", run.fallback_reason or "")
-        self.assertEqual(run.tool_loop_count, 2)
+        self.assertIsNone(response.proposal_id)
+        self.assertEqual(service.proposals.proposals, {})
 
     def test_pydantic_onboarding_chat_can_create_profile_setup_proposal(self) -> None:
         service = HealthMonitorService(
