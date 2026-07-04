@@ -112,6 +112,33 @@ class LiveAgentEvalCasesTest(unittest.TestCase):
             aliases=["iogurte novo"],
             food_id=yogurt_food.id,
         )
+        service.create_food_with_version(
+            household_id=household.id,
+            name="Arroz",
+            brand=None,
+            version_label="cozido",
+            nutrients_per_100g=Nutrients(130, 2.7, 28, 0.3),
+            source="reference",
+            aliases=["arroz"],
+        )
+        service.create_food_with_version(
+            household_id=household.id,
+            name="Feijão",
+            brand=None,
+            version_label="cozido",
+            nutrients_per_100g=Nutrients(76, 4.8, 13.6, 0.5),
+            source="reference",
+            aliases=["feijao", "feijão"],
+        )
+        service.create_food_with_version(
+            household_id=household.id,
+            name="Sobrecoxa",
+            brand=None,
+            version_label="assada",
+            nutrients_per_100g=Nutrients(210, 26, 0, 12),
+            source="reference",
+            aliases=["sobrecoxa"],
+        )
         service.log_diary_entry(
             person_id=person.id,
             logged_at_local="2026-07-02T10:00:00",
