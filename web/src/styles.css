@@ -1118,6 +1118,11 @@ h3 {
   white-space: nowrap;
 }
 
+.inline-weight-controls {
+  grid-template-columns: 170px 82px 180px repeat(2, max-content);
+  min-width: 590px;
+}
+
 .week-card {
   display: grid;
   gap: 12px;

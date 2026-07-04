@@ -28,6 +28,7 @@ import {
   todayIsoForTimezone,
   updateDiaryEntry,
   updateProposalEntry,
+  updateWeightEntry,
   uploadDataUrlAttachment,
 } from "./api";
 import { ChatInterface } from "./components/ChatInterface";
@@ -987,6 +988,7 @@ function DataPage({
   const [rangeStart, setRangeStart] = useState(selectedDay);
   const [rangeEnd, setRangeEnd] = useState(selectedDay);
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
+  const [editingWeightId, setEditingWeightId] = useState<string | null>(null);
   useEffect(() => {
     setRangeStart(selectedDay);
     setRangeEnd(selectedDay);
@@ -1057,8 +1059,17 @@ function DataPage({
       <DataTable
         title="Pesos"
         empty="Nenhum peso registrado neste intervalo."
-        columns={["Medido em", "kg", "Fonte", "Nota"]}
-        rows={weights.map((entry) => weightEntryRow(entry))}
+        columns={["Medido em", "kg", "Fonte", "Nota", "Ações"]}
+        rows={weights.map((entry) =>
+          weightEntryRow(entry, {
+            editing: editingWeightId === entry.id,
+            onEdit: () => setEditingWeightId(entry.id),
+            onCancel: () => setEditingWeightId(null),
+            onDone: () => setEditingWeightId(null),
+            onToast,
+            onDataChanged,
+          }),
+        )}
       />
       <DataTable
         title="Alimentos e versões"
@@ -1249,13 +1260,87 @@ function DiaryEntryInlineEditor({
   );
 }
 
-function weightEntryRow(entry: WeightEntry): string[] {
+function weightEntryRow(
+  entry: WeightEntry,
+  controls: {
+    editing: boolean;
+    onEdit: () => void;
+    onCancel: () => void;
+    onDone: () => void;
+    onToast: (message: string) => void;
+    onDataChanged: () => Promise<void>;
+  },
+): DataRow {
   return [
     formatDateTime(entry.measured_at),
     entry.weight_kg.toLocaleString("pt-BR", { maximumFractionDigits: 2 }),
     entry.source,
     entry.note ?? "",
+    controls.editing ? (
+      <WeightInlineEditor key={entry.id} entry={entry} {...controls} />
+    ) : (
+      <button type="button" onClick={controls.onEdit}>
+        Editar
+      </button>
+    ),
   ];
+}
+
+function WeightInlineEditor({
+  entry,
+  onCancel,
+  onDone,
+  onToast,
+  onDataChanged,
+}: {
+  entry: WeightEntry;
+  onCancel: () => void;
+  onDone: () => void;
+  onToast: (message: string) => void;
+  onDataChanged: () => Promise<void>;
+}) {
+  const [measuredAt, setMeasuredAt] = useState(entry.measured_at.slice(0, 16));
+  const [weightText, setWeightText] = useState(String(entry.weight_kg));
+  const [note, setNote] = useState(entry.note ?? "");
+  const save = useMutation({
+    mutationFn: () =>
+      updateWeightEntry({
+        entryId: entry.id,
+        measuredAtLocal: measuredAt,
+        weightKg: Number(weightText.replace(",", ".")),
+        note: note.trim() || undefined,
+      }),
+    onSuccess: async () => {
+      await onDataChanged();
+      onDone();
+    },
+    onError: (error) => onToast(error instanceof Error ? error.message : "Não foi possível editar o peso."),
+  });
+  const parsedWeight = Number(weightText.replace(",", "."));
+  const canSave = Number.isFinite(parsedWeight) && parsedWeight > 0 && measuredAt.length > 0;
+  return (
+    <div className="inline-edit-controls inline-weight-controls">
+      <input
+        aria-label="Data e hora do peso"
+        type="datetime-local"
+        value={measuredAt}
+        onChange={(event) => setMeasuredAt(event.target.value)}
+      />
+      <input
+        aria-label="Peso em kg"
+        inputMode="decimal"
+        value={weightText}
+        onChange={(event) => setWeightText(event.target.value)}
+      />
+      <input aria-label="Nota do peso" value={note} onChange={(event) => setNote(event.target.value)} />
+      <button type="button" onClick={() => save.mutate()} disabled={!canSave || save.isPending}>
+        {save.isPending ? "Salvando..." : "Salvar"}
+      </button>
+      <button type="button" onClick={onCancel} disabled={save.isPending}>
+        Cancelar
+      </button>
+    </div>
+  );
 }
 
 function foodVersionRow(item: FoodResponse): string[] {

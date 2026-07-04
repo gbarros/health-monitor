@@ -26,8 +26,10 @@ class ReviewChartUiTest(unittest.TestCase):
         app = read_web_file("App.tsx")
 
         self.assertIn("loadWeightTrend", app)
+        self.assertIn("updateWeightEntry", app)
         self.assertIn('title="Pesos"', app)
         self.assertIn("weightEntryRow", app)
+        self.assertIn("WeightInlineEditor", app)
         self.assertIn("queryKeys.weightTrend(personId)", app)
 
     def test_data_page_includes_food_version_rows_for_export(self) -> None:
