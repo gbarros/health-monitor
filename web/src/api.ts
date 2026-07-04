@@ -414,6 +414,77 @@ export async function sendAgentChat(input: {
   return decodeResponse<AgentChatResponse>(response);
 }
 
+export async function streamAgentChat(input: {
+  personId: string;
+  message: string;
+  settings: AgentSettings;
+  today?: string;
+  intent?: AgentChatIntent;
+  attachmentIds?: string[];
+  signal?: AbortSignal;
+}): Promise<AgentChatResponse> {
+  const response = await fetch("/api/agent/chat/stream", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      person_id: input.personId,
+      message: input.message,
+      today: input.today ?? todayIso(),
+      intent: input.intent,
+      agent_settings: input.settings,
+      attachment_ids: input.attachmentIds?.length ? input.attachmentIds : undefined,
+    }),
+    signal: input.signal,
+  });
+  if (!response.ok || response.body == null) {
+    return decodeResponse<AgentChatResponse>(response);
+  }
+  const decoder = new TextDecoder();
+  const reader = response.body.getReader();
+  let buffer = "";
+  let final: AgentChatResponse | null = null;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    buffer += decoder.decode(value, { stream: true });
+    const chunks = buffer.split("\n\n");
+    buffer = chunks.pop() ?? "";
+    for (const chunk of chunks) {
+      const event = parseSseEvent(chunk);
+      if (event.event === "final") {
+        final = event.data as AgentChatResponse;
+      }
+    }
+  }
+  if (buffer.trim()) {
+    const event = parseSseEvent(buffer);
+    if (event.event === "final") {
+      final = event.data as AgentChatResponse;
+    }
+  }
+  if (final == null) {
+    throw new Error("Resposta final ausente no stream do agente.");
+  }
+  return final;
+}
+
+function parseSseEvent(chunk: string): { event: string; data: unknown } {
+  const event =
+    chunk
+      .split("\n")
+      .find((line) => line.startsWith("event:"))
+      ?.slice("event:".length)
+      .trim() ?? "message";
+  const dataText = chunk
+    .split("\n")
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice("data:".length).trimStart())
+    .join("\n");
+  return { event, data: dataText ? JSON.parse(dataText) : null };
+}
+
 export type AgentChatIntent = "log_food" | "recipe" | "label_scan" | "weight" | "repeat_meal" | "review";
 
 export async function uploadDataUrlAttachment(input: {

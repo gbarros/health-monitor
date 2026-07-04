@@ -29,9 +29,11 @@ class FoodEvidenceUiTest(unittest.TestCase):
         self.assertIn("Código de barras", app)
         self.assertIn('intent: "label_scan"', app)
         self.assertIn("sendAgentChat", app)
-        self.assertIn("sendAgentChat", runtime)
+        self.assertIn("streamAgentChat", runtime)
         self.assertIn("attachmentIds", runtime)
         self.assertIn("/api/agent/chat", api)
+        self.assertIn("/api/agent/chat/stream", api)
+        self.assertIn("parseSseEvent", api)
         self.assertIn("intent: input.intent", api)
         self.assertIn("attachment_ids", api)
 

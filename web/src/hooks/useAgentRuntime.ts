@@ -16,7 +16,7 @@ import { useMemo } from "react";
 import {
   ApiError,
   enqueueAgentChatJob,
-  sendAgentChat,
+  streamAgentChat,
   uploadDataUrlAttachment,
 } from "../api";
 import type { AgentChatResponse, AgentSettings, BackgroundJob, Proposal } from "../types";
@@ -90,7 +90,7 @@ export function useAgentRuntime(context: RuntimeContext) {
             return assistantText("Na fila do worker… acompanhe em Tarefas.");
           }
 
-          const response = await sendAgentChat({
+          const response = await streamAgentChat({
             personId,
             message: text,
             settings,
