@@ -19,6 +19,7 @@ import {
   streamAgentChat,
   uploadDataUrlAttachment,
 } from "../api";
+import type { AgentChatStreamEvent } from "../api";
 import type { AgentChatResponse, AgentSettings, BackgroundJob, Proposal } from "../types";
 
 type RuntimeContext = {
@@ -90,7 +91,7 @@ export function useAgentRuntime(context: RuntimeContext) {
             return assistantText("Na fila do worker… acompanhe em Tarefas.");
           }
 
-          const response = await streamAgentChat({
+          const streamed = await streamAgentChat({
             personId,
             message: text,
             settings,
@@ -98,12 +99,13 @@ export function useAgentRuntime(context: RuntimeContext) {
             attachmentIds,
             signal: options.abortSignal,
           });
+          const response = streamed.final;
           onAgentResponse(response);
           if (response.proposal) {
             onProposal(response.proposal);
-            return assistantProposal(response.proposal, chatReply(response));
+            return assistantProposal(response.proposal, chatReply(response, streamed.events));
           }
-          return assistantText(chatReply(response));
+          return assistantText(chatReply(response, streamed.events));
         } catch (error) {
           if (error instanceof ApiError && error.type === "model_unavailable") {
             onSendFailed(error.replayMessage ?? text, "model_unavailable");
@@ -183,8 +185,12 @@ function messageHasUploadableAttachment(content: readonly ThreadUserMessagePart[
   return content.some((part) => part.type === "image" || part.type === "file");
 }
 
-function chatReply(response: AgentChatResponse): string {
-  const lines = [response.message];
+function chatReply(response: AgentChatResponse, events: readonly AgentChatStreamEvent[] = []): string {
+  const lines = toolProgressLines(events);
+  if (lines.length) {
+    lines.push("");
+  }
+  lines.push(response.message);
   if (response.proposal) {
     lines.push("");
     lines.push(proposalReply(response.proposal, "Proposal drafted."));
@@ -194,6 +200,28 @@ function chatReply(response: AgentChatResponse): string {
     lines.push(`Citations: ${response.citations.length}`);
   }
   return lines.join("\n");
+}
+
+function toolProgressLines(events: readonly AgentChatStreamEvent[]): string[] {
+  const toolCalls = events.filter(
+    (event): event is AgentChatStreamEvent & { data: Record<string, unknown> } =>
+      event.event === "tool_call" && isObject(event.data),
+  );
+  if (!toolCalls.length) {
+    return [];
+  }
+  return [
+    "Ferramentas consultadas:",
+    ...toolCalls.map((event) => {
+      const name = String(event.data["name"] ?? "tool").replaceAll("_", " ");
+      const status = String(event.data["status"] ?? "?");
+      return `- ${name}: ${status}`;
+    }),
+  ];
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 function proposalReply(proposal: Proposal, intro: string): string {

@@ -422,7 +422,7 @@ export async function streamAgentChat(input: {
   intent?: AgentChatIntent;
   attachmentIds?: string[];
   signal?: AbortSignal;
-}): Promise<AgentChatResponse> {
+}): Promise<StreamAgentChatResult> {
   const response = await fetch("/api/agent/chat/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -437,12 +437,13 @@ export async function streamAgentChat(input: {
     signal: input.signal,
   });
   if (!response.ok || response.body == null) {
-    return decodeResponse<AgentChatResponse>(response);
+    return { final: await decodeResponse<AgentChatResponse>(response), events: [] };
   }
   const decoder = new TextDecoder();
   const reader = response.body.getReader();
   let buffer = "";
   let final: AgentChatResponse | null = null;
+  const events: AgentChatStreamEvent[] = [];
   while (true) {
     const { done, value } = await reader.read();
     if (done) {
@@ -453,6 +454,7 @@ export async function streamAgentChat(input: {
     buffer = chunks.pop() ?? "";
     for (const chunk of chunks) {
       const event = parseSseEvent(chunk);
+      events.push(event);
       if (event.event === "final") {
         final = event.data as AgentChatResponse;
       }
@@ -460,6 +462,7 @@ export async function streamAgentChat(input: {
   }
   if (buffer.trim()) {
     const event = parseSseEvent(buffer);
+    events.push(event);
     if (event.event === "final") {
       final = event.data as AgentChatResponse;
     }
@@ -467,10 +470,17 @@ export async function streamAgentChat(input: {
   if (final == null) {
     throw new Error("Resposta final ausente no stream do agente.");
   }
-  return final;
+  return { final, events };
 }
 
-function parseSseEvent(chunk: string): { event: string; data: unknown } {
+export type AgentChatStreamEvent = { event: "tool_call" | "text_delta" | "final" | "message"; data: unknown };
+
+export type StreamAgentChatResult = {
+  final: AgentChatResponse;
+  events: AgentChatStreamEvent[];
+};
+
+function parseSseEvent(chunk: string): AgentChatStreamEvent {
   const event =
     chunk
       .split("\n")
@@ -482,7 +492,11 @@ function parseSseEvent(chunk: string): { event: string; data: unknown } {
     .filter((line) => line.startsWith("data:"))
     .map((line) => line.slice("data:".length).trimStart())
     .join("\n");
-  return { event, data: dataText ? JSON.parse(dataText) : null };
+  return { event: streamEventName(event), data: dataText ? JSON.parse(dataText) : null };
+}
+
+function streamEventName(value: string): AgentChatStreamEvent["event"] {
+  return value === "tool_call" || value === "text_delta" || value === "final" ? value : "message";
 }
 
 export type AgentChatIntent = "log_food" | "recipe" | "label_scan" | "weight" | "repeat_meal" | "review";
