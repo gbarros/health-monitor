@@ -22,6 +22,14 @@ class ReviewChartUiTest(unittest.TestCase):
         self.assertNotIn("renderMacroChart", app)
         self.assertNotIn("renderWeightTrendChart", app)
 
+    def test_data_page_includes_weight_rows_for_range_export(self) -> None:
+        app = read_web_file("App.tsx")
+
+        self.assertIn("loadWeightTrend", app)
+        self.assertIn('title="Pesos"', app)
+        self.assertIn("weightEntryRow", app)
+        self.assertIn("queryKeys.weightTrend(personId)", app)
+
 
 if __name__ == "__main__":
     unittest.main()

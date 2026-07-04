@@ -16,6 +16,7 @@ import {
   loadPeople,
   loadProposal,
   loadProposals,
+  loadWeightTrend,
   logWeight,
   rejectProposal,
   resolveProposalClarification,
@@ -51,6 +52,7 @@ import type {
   Proposal,
   ProposalCandidate,
   ProposalEntry,
+  WeightEntry,
 } from "./types";
 
 type AppView = "chat" | "panel" | "data" | "settings";
@@ -978,7 +980,15 @@ function DataPage({
     queryKey: queryKeys.diaryRange(personId, rangeQueryStart, rangeQueryEnd),
     queryFn: () => loadDiaryRange(personId, rangeQueryStart, rangeQueryEnd),
   });
+  const weightTrendQuery = useQuery({
+    queryKey: queryKeys.weightTrend(personId),
+    queryFn: () => loadWeightTrend(personId),
+  });
   const entries = diaryRangeQuery.data ?? [];
+  const weights = (weightTrendQuery.data?.entries ?? []).filter((entry) => {
+    const measuredDay = entry.measured_at.slice(0, 10);
+    return measuredDay >= rangeQueryStart && measuredDay <= rangeQueryEnd;
+  });
   return (
     <section className="data-page" aria-label="Dados">
       <div className="data-range-controls" aria-label="Intervalo do diário">
@@ -1011,6 +1021,12 @@ function DataPage({
           proposal.status,
           proposal.summary,
         ])}
+      />
+      <DataTable
+        title="Pesos"
+        empty="Nenhum peso registrado neste intervalo."
+        columns={["Medido em", "kg", "Fonte", "Nota"]}
+        rows={weights.map((entry) => weightEntryRow(entry))}
       />
       <DataTable
         title="Jobs"
@@ -1099,6 +1115,15 @@ function diaryEntryRow(entry: DaySummaryEntry): string[] {
     Math.round(entry.nutrients.calories_kcal ?? 0).toString(),
     entry.source,
     `${Math.round(entry.confidence * 100)}%`,
+  ];
+}
+
+function weightEntryRow(entry: WeightEntry): string[] {
+  return [
+    formatDateTime(entry.measured_at),
+    entry.weight_kg.toLocaleString("pt-BR", { maximumFractionDigits: 2 }),
+    entry.source,
+    entry.note ?? "",
   ];
 }
 
