@@ -564,17 +564,24 @@ class HttpApi:
             return HttpResponse(201, agent_chat_response_to_dict(response, self.service))
 
         if method in {"GET", "POST"} and path == "/api/agent/chat/stream":
+            # EventSource-friendly streaming path for chat replies.
             stream_input = body if method == "POST" else query
+            if "person_id" not in stream_input or not stream_input["person_id"]:
+                raise ValueError("stream requires person_id")
+            if "message" not in stream_input or not stream_input["message"]:
+                raise ValueError("stream requires message")
+            if method == "GET" and "attachment_ids" in stream_input:
+                raise ValueError("GET stream endpoint does not accept attachment_ids")
             stream_settings = stream_input.get("agent_settings")
             if stream_settings is None and method == "GET" and query.get("model_profile"):
                 stream_settings = {"model_profile": query["model_profile"]}
             response = self.service.chat(
-                person_id=stream_input["person_id"],
-                message=stream_input["message"],
-                today=date.fromisoformat(stream_input["today"]) if stream_input.get("today") else date.today(),
+                person_id=str(stream_input["person_id"]),
+                message=str(stream_input["message"]),
+                today=date.fromisoformat(str(stream_input["today"])) if stream_input.get("today") else date.today(),
                 agent_settings=stream_settings,
                 attachment_ids=stream_input.get("attachment_ids") if method == "POST" else None,
-                intent=stream_input.get("intent"),
+                intent=str(stream_input["intent"]) if stream_input.get("intent") is not None else None,
             )
             final = agent_chat_response_to_dict(response, self.service)
             tool_events = tuple(
@@ -632,15 +639,6 @@ class HttpApi:
         if method == "POST" and path.startswith("/api/proposals/") and path.endswith("/confirm"):
             proposal_id = path.removeprefix("/api/proposals/").removesuffix("/confirm")
             proposal = self.service.confirm_proposal(proposal_id)
-            return HttpResponse(200, proposal_to_dict(proposal, self.service))
-
-        if method == "POST" and path.startswith("/api/proposals/") and path.endswith("/resolve-food"):
-            proposal_id = path.removeprefix("/api/proposals/").removesuffix("/resolve-food")
-            proposal = self.service.resolve_text_meal_food_clarification(
-                proposal_id=proposal_id,
-                unresolved_index=int(body["unresolved_index"]),
-                food_version_id=body["food_version_id"],
-            )
             return HttpResponse(200, proposal_to_dict(proposal, self.service))
 
         if method == "PATCH" and path.startswith("/api/proposals/") and "/entries/" in path:

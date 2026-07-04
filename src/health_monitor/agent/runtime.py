@@ -624,6 +624,7 @@ class PydanticAINutritionAgent:
                 session_id=session_id,
                 household_name=household_name,
                 household_id=household_id,
+                starts_on=deps.today.isoformat(),
                 person=person,
                 targets=targets,
                 notes=notes,

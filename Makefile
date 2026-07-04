@@ -1,4 +1,4 @@
-.PHONY: test test-unit test-behavior test-live-model test-cloud-evals test-private-ocr-evals smoke-ollama dev-api dev-web web-install web-build agent-chat-ui-typecheck e2e-agent-chat-ui e2e e2e-private-week
+.PHONY: test test-unit test-behavior test-live-model test-cloud-evals test-private-ocr-evals setup smoke-ollama dev-api dev-web web-install web-build agent-chat-ui-typecheck e2e-agent-chat-ui e2e e2e-private-week
 
 PYTHON ?= $(shell [ -x .venv/bin/python ] && echo .venv/bin/python || echo python3)
 
@@ -23,7 +23,22 @@ test-private-ocr-evals:
 smoke-ollama:
 	PYTHONPATH=src $(PYTHON) -m health_monitor smoke-ollama --timeout-seconds 10
 
+setup:
+	$(PYTHON) -m pip install -e .
+
 dev-api:
+	@if [ "$${AGENT_RUNTIME:-pydantic-ai}" = "pydantic-ai" ] && [ "$${REQUIRE_MODEL:-true}" != "false" ]; then \
+		$(PYTHON) - <<'PY' || (echo 'pip install pydantic-ai with `make setup` (or your venv pip) before running dev-api' >&2; exit 1)\n\
+import importlib\n\
+import sys\n\
+try:\n\
+    importlib.import_module(\"pydantic_ai\")\n\
+except Exception as exc:\n\
+    raise SystemExit(str(exc))\n\
+PY\n\
+	else \
+		true; \
+	fi
 	PYTHONPATH=src $(PYTHON) -m health_monitor api --host 127.0.0.1 --port 8765 & \
 	API_PID=$$!; \
 	PYTHONPATH=src $(PYTHON) -m health_monitor worker --interval-seconds 5 & \

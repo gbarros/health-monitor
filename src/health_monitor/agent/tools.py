@@ -529,6 +529,7 @@ class NutritionAgentTools:
         household_id: str | None = None,
         person: dict[str, Any],
         targets: dict[str, Any],
+        starts_on: str | None = None,
         notes: str | None = None,
         source_text: str = "",
     ) -> dict[str, Any]:
@@ -538,6 +539,7 @@ class NutritionAgentTools:
             household_id=household_id,
             person=person,
             targets=targets,
+            starts_on=date.fromisoformat(starts_on) if starts_on is not None else deps.today,
             notes=notes,
             source_text=source_text,
         )

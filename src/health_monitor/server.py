@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from importlib import import_module
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
@@ -135,6 +136,14 @@ class HealthMonitorRequestHandler(BaseHTTPRequestHandler):
 
 def run(host: str = "127.0.0.1", port: int = 8765) -> None:
     config = load_config()
+    pydantic_ai_available = False
+    if config.agent_runtime == "pydantic-ai":
+        try:
+            import_module("pydantic_ai")
+        except Exception:
+            pydantic_ai_available = False
+        else:
+            pydantic_ai_available = True
     sink = build_nexuslog_sink(
         mode=config.nexuslog_mode,
         jsonl_path=config.nexuslog_jsonl_path,
@@ -149,6 +158,11 @@ def run(host: str = "127.0.0.1", port: int = 8765) -> None:
                 "host": host,
                 "port": port,
                 "persistence_backend": config.persistence_backend,
+                "agent_runtime": config.agent_runtime,
+                "model_provider": config.model_provider,
+                "model_name": config.ollama_model,
+                "ollama_base_url": config.ollama_base_url,
+                "pydantic_ai_imported": pydantic_ai_available,
             },
         )
     )

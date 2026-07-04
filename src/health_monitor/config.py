@@ -13,7 +13,7 @@ class AppConfig:
     log_format: str = "text"
     nexuslog_mode: str = "stdout"
     nexuslog_jsonl_path: Path = Path("var/nexuslog-events/health-monitor.jsonl")
-    agent_runtime: str = "deterministic"
+    agent_runtime: str = "pydantic-ai"
     model_provider: str = "deterministic"
     require_model: bool = True
     food_estimator: str = "ollama"
@@ -46,7 +46,7 @@ def load_config() -> AppConfig:
         nexuslog_jsonl_path=Path(
             os.environ.get("NEXUSLOG_JSONL_PATH", "var/nexuslog-events/health-monitor.jsonl")
         ),
-        agent_runtime=os.environ.get("AGENT_RUNTIME", "deterministic"),
+        agent_runtime=os.environ.get("AGENT_RUNTIME", "pydantic-ai"),
         model_provider=os.environ.get("MODEL_PROVIDER", "deterministic"),
         require_model=os.environ.get("REQUIRE_MODEL", "true").casefold()
         in {"1", "true", "yes", "on"},
