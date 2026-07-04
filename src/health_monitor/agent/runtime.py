@@ -485,19 +485,6 @@ class PydanticAINutritionAgent:
             return tools.extract_label_text_from_attachment(ctx.deps, attachment_id=attachment_id)
 
         @agent.tool
-        async def draft_text_meal_proposal(
-            ctx,
-            logged_at_local: str,
-            text: str,
-        ) -> dict[str, Any]:
-            """Draft a meal logging proposal without applying diary records."""
-            return tools.draft_text_meal_proposal(
-                ctx.deps,
-                logged_at_local=logged_at_local,
-                text=text,
-            )
-
-        @agent.tool
         async def draft_meal_proposal(
             ctx,
             items: list[dict[str, Any]],

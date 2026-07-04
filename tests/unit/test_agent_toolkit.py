@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 from datetime import date
+from pathlib import Path
 
 from health_monitor.agent import AgentDeps
 from health_monitor.agent.tools import NutritionAgentTools
@@ -83,11 +84,6 @@ class NutritionAgentToolsTest(unittest.TestCase):
         service, deps, _ = self.make_deps()
         tools = NutritionAgentTools()
 
-        text_meal = tools.draft_text_meal_proposal(
-            deps,
-            logged_at_local="2026-07-02T10:00:00",
-            text="50g queijo",
-        )
         structured_meal = tools.draft_meal_proposal(
             deps,
             day="2026-07-02",
@@ -110,8 +106,6 @@ class NutritionAgentToolsTest(unittest.TestCase):
             source_text="agent extracted review note",
         )
 
-        self.assertEqual(text_meal["proposal_status"], "draft")
-        self.assertEqual(text_meal["proposal_type"], "diary_entries")
         self.assertEqual(structured_meal["proposal_type"], "diary_entries")
         self.assertEqual(structured_meal["entries"][0]["meal_type"], "lunch")
         self.assertEqual(structured_meal["entries"][0]["quantity_g"], 40)
@@ -192,6 +186,12 @@ class NutritionAgentToolsTest(unittest.TestCase):
         self.assertEqual(result["confidence"], 0.88)
         self.assertIn("Valor energetico", result["text"])
         self.assertEqual(result["warnings"], ["glare"])
+
+    def test_runtime_does_not_register_raw_text_meal_parser_tool(self) -> None:
+        runtime = Path("src/health_monitor/agent/runtime.py").read_text()
+
+        self.assertNotIn("@agent.tool\n        async def draft_text_meal_proposal", runtime)
+        self.assertIn("async def draft_meal_proposal", runtime)
 
 
 if __name__ == "__main__":
