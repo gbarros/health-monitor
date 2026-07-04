@@ -12,7 +12,9 @@ from health_monitor.lookup.labels import LabelTextExtraction, StaticLabelTextExt
 
 class HttpApi(BaseHttpApi):
     def _handle(self, method: str, target: str, body: dict[str, object]):
-        if method == "POST" and target == "/api/agent/text-meal":
+        # These test-only shims keep old proposal behavior covered without
+        # making removed prompt-builder endpoints look like public HTTP routes.
+        if method == "POST" and target == "/_test/service/text-meal":
             proposal = self.service.propose_text_meal(
                 person_id=str(body["person_id"]),
                 logged_at_local=str(body["logged_at_local"]),
@@ -21,7 +23,7 @@ class HttpApi(BaseHttpApi):
                 amend_proposal_id=str(body["amend_proposal_id"]) if body.get("amend_proposal_id") is not None else None,
             )
             return BaseHttpApi.handle(self, "GET", f"/api/proposals/{proposal.id}", None)
-        if method == "POST" and target == "/api/agent/label-scan":
+        if method == "POST" and target == "/_test/service/label-scan":
             proposal = self.service.propose_label_scan(
                 household_id=str(body["household_id"]),
                 person_id=str(body["person_id"]),
@@ -35,7 +37,7 @@ class HttpApi(BaseHttpApi):
                 meal_type=str(body["meal_type"]) if body.get("meal_type") is not None else None,
             )
             return BaseHttpApi.handle(self, "GET", f"/api/proposals/{proposal.id}", None)
-        if method == "POST" and target == "/api/agent/recipe":
+        if method == "POST" and target == "/_test/service/recipe":
             proposal = self.service.propose_recipe(
                 household_id=str(body["household_id"]),
                 person_id=str(body["person_id"]),
@@ -722,7 +724,7 @@ class HttpApiContractTest(unittest.TestCase):
 
         proposal = api.handle(
             "POST",
-            "/api/agent/text-meal",
+            "/_test/service/text-meal",
             {
                 "person_id": person["id"],
                 "logged_at_local": "2026-07-01T10:00:00",
@@ -935,7 +937,7 @@ class HttpApiContractTest(unittest.TestCase):
 
         proposal = api.handle(
             "POST",
-            "/api/agent/text-meal",
+            "/_test/service/text-meal",
             {
                 "person_id": person["id"],
                 "logged_at_local": "2026-07-02T09:00:00",
@@ -999,7 +1001,7 @@ class HttpApiContractTest(unittest.TestCase):
 
         proposal = api.handle(
             "POST",
-            "/api/agent/text-meal",
+            "/_test/service/text-meal",
             {
                 "person_id": person["id"],
                 "logged_at_local": "2026-07-01T10:00:00",
@@ -1056,7 +1058,7 @@ class HttpApiContractTest(unittest.TestCase):
 
         proposal = api.handle(
             "POST",
-            "/api/agent/text-meal",
+            "/_test/service/text-meal",
             {
                 "person_id": person["id"],
                 "logged_at_local": "2026-07-01T10:00:00",
@@ -1132,7 +1134,7 @@ class HttpApiContractTest(unittest.TestCase):
         ).body
         clarification = api.handle(
             "POST",
-            "/api/agent/text-meal",
+            "/_test/service/text-meal",
             {
                 "person_id": person["id"],
                 "logged_at_local": "2026-07-01T10:00:00",
@@ -1209,7 +1211,7 @@ class HttpApiContractTest(unittest.TestCase):
         )
         proposal = api.handle(
             "POST",
-            "/api/agent/text-meal",
+            "/_test/service/text-meal",
             {
                 "person_id": person["id"],
                 "logged_at_local": "2026-07-01T10:00:00",
@@ -1286,7 +1288,7 @@ class HttpApiContractTest(unittest.TestCase):
         ).body
         proposal = api.handle(
             "POST",
-            "/api/agent/text-meal",
+            "/_test/service/text-meal",
             {
                 "person_id": person["id"],
                 "logged_at_local": "2026-07-01T10:00:00",
@@ -1354,7 +1356,7 @@ class HttpApiContractTest(unittest.TestCase):
         )
         first = api.handle(
             "POST",
-            "/api/agent/text-meal",
+            "/_test/service/text-meal",
             {
                 "person_id": gabriel["id"],
                 "logged_at_local": "2026-07-01T10:00:00",
@@ -1364,7 +1366,7 @@ class HttpApiContractTest(unittest.TestCase):
         ).body
         second = api.handle(
             "POST",
-            "/api/agent/text-meal",
+            "/_test/service/text-meal",
             {
                 "person_id": gabriel["id"],
                 "logged_at_local": "2026-07-02T10:00:00",
@@ -1374,7 +1376,7 @@ class HttpApiContractTest(unittest.TestCase):
         ).body
         partner_proposal = api.handle(
             "POST",
-            "/api/agent/text-meal",
+            "/_test/service/text-meal",
             {
                 "person_id": partner["id"],
                 "logged_at_local": "2026-07-02T10:00:00",
@@ -1497,7 +1499,7 @@ class HttpApiContractTest(unittest.TestCase):
         ).body
         proposal = api.handle(
             "POST",
-            "/api/agent/label-scan",
+            "/_test/service/label-scan",
             {
                 "household_id": household["id"],
                 "person_id": person["id"],
@@ -1547,7 +1549,7 @@ class HttpApiContractTest(unittest.TestCase):
         ).body
         proposal = api.handle(
             "POST",
-            "/api/agent/label-scan",
+            "/_test/service/label-scan",
             {
                 "household_id": household["id"],
                 "person_id": person["id"],
@@ -1594,7 +1596,7 @@ class HttpApiContractTest(unittest.TestCase):
         ).body
         proposal = api.handle(
             "POST",
-            "/api/agent/label-scan",
+            "/_test/service/label-scan",
             {
                 "household_id": household["id"],
                 "person_id": person["id"],
@@ -1677,7 +1679,7 @@ class HttpApiContractTest(unittest.TestCase):
         )
         proposal = api.handle(
             "POST",
-            "/api/agent/label-scan",
+            "/_test/service/label-scan",
             {
                 "household_id": household["id"],
                 "person_id": person["id"],
@@ -1744,7 +1746,7 @@ class HttpApiContractTest(unittest.TestCase):
         ).body
         proposal = api.handle(
             "POST",
-            "/api/agent/label-scan",
+            "/_test/service/label-scan",
             {
                 "household_id": household["id"],
                 "person_id": person["id"],
@@ -1802,7 +1804,7 @@ class HttpApiContractTest(unittest.TestCase):
         ]
         proposal = api.handle(
             "POST",
-            "/api/agent/label-scan",
+            "/_test/service/label-scan",
             {
                 "household_id": household["id"],
                 "person_id": person["id"],
@@ -1861,7 +1863,7 @@ class HttpApiContractTest(unittest.TestCase):
         ).body
         proposal = api.handle(
             "POST",
-            "/api/agent/label-scan",
+            "/_test/service/label-scan",
             {
                 "household_id": household["id"],
                 "person_id": person["id"],
@@ -1953,7 +1955,7 @@ class HttpApiContractTest(unittest.TestCase):
 
         proposal = api.handle(
             "POST",
-            "/api/agent/label-scan",
+            "/_test/service/label-scan",
             {
                 "household_id": household["id"],
                 "person_id": person["id"],
@@ -2086,7 +2088,7 @@ class HttpApiContractTest(unittest.TestCase):
 
         proposal = api.handle(
             "POST",
-            "/api/agent/recipe",
+            "/_test/service/recipe",
             {
                 "household_id": household["id"],
                 "person_id": person["id"],
@@ -2168,7 +2170,7 @@ class HttpApiContractTest(unittest.TestCase):
         )
         proposal = api.handle(
             "POST",
-            "/api/agent/recipe",
+            "/_test/service/recipe",
             {
                 "household_id": household["id"],
                 "person_id": person["id"],
@@ -2236,7 +2238,7 @@ class HttpApiContractTest(unittest.TestCase):
 
         proposal = api.handle(
             "POST",
-            "/api/agent/recipe",
+            "/_test/service/recipe",
             {
                 "household_id": household["id"],
                 "person_id": person["id"],
@@ -2280,7 +2282,7 @@ class HttpApiContractTest(unittest.TestCase):
         ).body
         proposal = api.handle(
             "POST",
-            "/api/agent/text-meal",
+            "/_test/service/text-meal",
             {
                 "person_id": person["id"],
                 "logged_at_local": "2026-07-01T20:00:00",
@@ -2352,7 +2354,7 @@ class HttpApiContractTest(unittest.TestCase):
 
         proposal = api.handle(
             "POST",
-            "/api/agent/text-meal",
+            "/_test/service/text-meal",
             {
                 "person_id": person["id"],
                 "logged_at_local": "2026-07-01T20:00:00",
@@ -2434,7 +2436,7 @@ class HttpApiContractTest(unittest.TestCase):
 
         proposal = api.handle(
             "POST",
-            "/api/agent/text-meal",
+            "/_test/service/text-meal",
             {
                 "person_id": person["id"],
                 "logged_at_local": "2026-07-01T20:00:00",
@@ -2807,7 +2809,7 @@ class HttpApiContractTest(unittest.TestCase):
         ).body
         label = api.handle(
             "POST",
-            "/api/agent/label-scan",
+            "/_test/service/label-scan",
             {
                 "household_id": household["id"],
                 "person_id": person["id"],
