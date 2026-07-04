@@ -1,7 +1,7 @@
-import { useAui } from "@assistant-ui/react";
 import { useState } from "react";
 
 type Props = {
+  onLogFoodClick?: () => void;
   onRepeatClick?: () => void;
   onWeightClick?: () => void;
   onRecipeClick?: () => void;
@@ -41,15 +41,12 @@ export function ReplayBanner({
   );
 }
 
-export function QuickActionRow({ onRepeatClick, onWeightClick, onRecipeClick, onLabelClick }: Props) {
-  const aui = useAui();
-
-  const setComposer = (template: string) => {
-    aui.thread().composer().setText(template);
-  };
-
+export function QuickActionRow({ onLogFoodClick, onRepeatClick, onWeightClick, onRecipeClick, onLabelClick }: Props) {
   return (
     <nav className="quick-action-row" aria-label="Ações rápidas">
+      <button type="button" onClick={onLogFoodClick}>
+        Registrar alimento
+      </button>
       <button type="button" onClick={onRepeatClick}>
         Repetir refeição
       </button>
@@ -67,9 +64,6 @@ export function QuickActionRow({ onRepeatClick, onWeightClick, onRecipeClick, on
         onClick={onLabelClick}
       >
         Escanear rótulo
-      </button>
-      <button type="button" onClick={() => setComposer("Almoço:\n")}>
-        Registrar refeição
       </button>
     </nav>
   );

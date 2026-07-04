@@ -11,9 +11,10 @@ class FoodFilterUiTest(unittest.TestCase):
         app = read_web_file("App.tsx")
 
         self.assertIn("QuickActionRow", quick_actions)
-        self.assertIn("Registrar refeição", quick_actions)
+        self.assertIn("Registrar alimento", quick_actions)
         self.assertIn("Receita/lote", quick_actions)
         self.assertIn("Escanear rótulo", quick_actions)
+        self.assertIn("LogFoodModal", app)
         self.assertIn("<QuickActionRow", app)
         self.assertNotIn("food-filter", app)
 

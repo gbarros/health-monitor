@@ -41,6 +41,18 @@ class FoodEvidenceUiTest(unittest.TestCase):
         self.assertIn("intent: input.intent", api)
         self.assertIn("attachment_ids", api)
 
+    def test_log_food_mode_is_prompt_builder_chat_intent(self) -> None:
+        quick_actions = read_web_file("components/ModesAndTemplates.tsx")
+        app = read_web_file("App.tsx")
+
+        self.assertIn("Registrar alimento", quick_actions)
+        self.assertIn("onLogFoodClick", quick_actions)
+        self.assertIn("LogFoodModal", app)
+        self.assertIn("Porção consumida", app)
+        self.assertIn('intent: "log_food"', app)
+        self.assertIn("sendAgentChat", app)
+        self.assertNotIn('setText(template)', quick_actions)
+
 
 if __name__ == "__main__":
     unittest.main()

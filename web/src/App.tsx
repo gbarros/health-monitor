@@ -76,6 +76,7 @@ function App() {
   );
   const [settings, setSettings] = useState<AgentSettings>(() => defaultAgentSettings());
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [logFoodOpen, setLogFoodOpen] = useState(false);
   const [weightOpen, setWeightOpen] = useState(false);
   const [recipeOpen, setRecipeOpen] = useState(false);
   const [labelOpen, setLabelOpen] = useState(false);
@@ -370,6 +371,7 @@ function App() {
     },
     onSuccess: async (response) => {
       onAgentResponse(response);
+      setLogFoodOpen(false);
       setRecipeOpen(false);
       setLabelOpen(false);
       setRepeatOpen(false);
@@ -565,6 +567,7 @@ function App() {
               proposal={fallbackDraft}
               proposals={proposalsQuery.data ?? []}
               proposalBusy={proposalDecision.isPending || proposalEntryUpdate.isPending}
+              onLogFoodClick={() => setLogFoodOpen(true)}
               onRepeatClick={() => setRepeatOpen(true)}
               onWeightClick={() => setWeightOpen(true)}
               onRecipeClick={() => setRecipeOpen(true)}
@@ -694,6 +697,14 @@ function App() {
         />
       ) : null}
 
+      {logFoodOpen ? (
+        <LogFoodModal
+          busy={promptBuilderSend.isPending}
+          onClose={() => setLogFoodOpen(false)}
+          onSubmit={(message) => promptBuilderSend.mutate({ message, intent: "log_food" })}
+        />
+      ) : null}
+
       {repeatOpen ? (
         <RepeatMealModal
           busy={promptBuilderSend.isPending}
@@ -794,6 +805,7 @@ function ChatWorkspace({
   proposal,
   proposals,
   proposalBusy,
+  onLogFoodClick,
   onRepeatClick,
   onWeightClick,
   onRecipeClick,
@@ -823,6 +835,7 @@ function ChatWorkspace({
   proposal?: Proposal;
   proposals: Proposal[];
   proposalBusy: boolean;
+  onLogFoodClick: () => void;
   onRepeatClick: () => void;
   onWeightClick: () => void;
   onRecipeClick: () => void;
@@ -871,6 +884,7 @@ function ChatWorkspace({
       <section className="chat-column" aria-label="Conversa">
         <DaySummaryStrip personId={personId} day={today} onDayChange={onDayChange} />
         <QuickActionRow
+          onLogFoodClick={onLogFoodClick}
           onRepeatClick={onRepeatClick}
           onWeightClick={onWeightClick}
           onRecipeClick={onRecipeClick}
@@ -1549,6 +1563,70 @@ function WeightModal({
   );
 }
 
+function LogFoodModal({
+  busy,
+  onClose,
+  onSubmit,
+}: {
+  busy: boolean;
+  onClose: () => void;
+  onSubmit: (message: string) => void;
+}) {
+  const [name, setName] = useState("");
+  const [portion, setPortion] = useState("");
+  const [notes, setNotes] = useState("");
+  const message = [
+    "Registrar alimento:",
+    name.trim() ? `Nome: ${name.trim()}` : "",
+    portion.trim() ? `Porção consumida: ${portion.trim()}` : "",
+    notes.trim() ? `Detalhes: ${notes.trim()}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+  return (
+    <div className="modal-backdrop" role="presentation" onClick={onClose}>
+      <form
+        className="small-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Registrar alimento"
+        onClick={(event) => event.stopPropagation()}
+        onSubmit={(event) => {
+          event.preventDefault();
+          onSubmit(message || "Registrar alimento. Preciso que você me ajude a completar os detalhes.");
+        }}
+      >
+        <div className="section-heading">
+          <span>Registrar alimento</span>
+          <button type="button" onClick={onClose}>
+            Fechar
+          </button>
+        </div>
+        <label className="field">
+          <span>Nome</span>
+          <input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="requeijão light" />
+        </label>
+        <label className="field">
+          <span>Porção consumida</span>
+          <input value={portion} onChange={(event) => setPortion(event.target.value)} placeholder="30g, 1 fatia, 1 pote" />
+        </label>
+        <label className="field">
+          <span>Texto livre</span>
+          <textarea
+            rows={4}
+            value={notes}
+            onChange={(event) => setNotes(event.target.value)}
+            placeholder="Marca, horário, refeição, ou qualquer dúvida."
+          />
+        </label>
+        <button type="submit" className="primary-action" disabled={busy}>
+          {busy ? "Enviando..." : "Enviar ao chat"}
+        </button>
+      </form>
+    </div>
+  );
+}
+
 function RepeatMealModal({
   busy,
   today,
@@ -1617,7 +1695,6 @@ function RecipeModal({
   const [yieldG, setYieldG] = useState("");
   const [ingredients, setIngredients] = useState("");
   const [notes, setNotes] = useState("");
-  const canSubmit = name.trim() || yieldG.trim() || ingredients.trim() || notes.trim();
   const recipeText = [
     "Receita/lote:",
     name.trim() ? `Nome: ${name.trim()}` : "",
@@ -1638,9 +1715,7 @@ function RecipeModal({
         onClick={(event) => event.stopPropagation()}
         onSubmit={(event) => {
           event.preventDefault();
-          if (canSubmit) {
-            onSubmit(recipeText);
-          }
+          onSubmit(recipeText || "Receita/lote. Preciso que você me ajude a completar os detalhes.");
         }}
       >
         <div className="section-heading">
@@ -1675,7 +1750,7 @@ function RecipeModal({
             placeholder="Qualquer detalhe que ajude o agente."
           />
         </label>
-        <button type="submit" className="primary-action" disabled={busy || !canSubmit}>
+        <button type="submit" className="primary-action" disabled={busy}>
           {busy ? "Enviando..." : "Enviar ao chat"}
         </button>
       </form>
