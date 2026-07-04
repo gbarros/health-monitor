@@ -11,7 +11,8 @@ class ReviewChartUiTest(unittest.TestCase):
         week_card = read_web_file("components/WeekCard.tsx")
         styles = read_web_file("styles.css")
 
-        self.assertIn('activeView === "panel"', app)
+        self.assertIn('pathname === "/panel"', app)
+        self.assertIn("NavLink", app)
         self.assertIn("page-grid", app)
         self.assertIn("<WeekCard", app)
         self.assertIn("loadWeekSummary", week_card)

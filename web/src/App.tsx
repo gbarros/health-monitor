@@ -2,6 +2,7 @@ import { AssistantRuntimeProvider, useAssistantToolUI, type ThreadMessageLike } 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ReadonlyJSONObject } from "assistant-stream/utils";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { NavLink, useLocation } from "react-router-dom";
 import {
   ApiError,
   confirmProposal,
@@ -52,8 +53,14 @@ import type {
   ProposalEntry,
 } from "./types";
 
+type AppView = "chat" | "panel" | "data" | "settings";
+
+const TOP_LEVEL_VIEWS: readonly AppView[] = ["chat", "panel", "data", "settings"];
+
 function App() {
   const queryClient = useQueryClient();
+  const location = useLocation();
+  const activeView = viewFromPath(location.pathname);
   const [householdId, setHouseholdId] = useState<string | null>(() =>
     localStorage.getItem(STORAGE_KEYS.householdId),
   );
@@ -70,7 +77,6 @@ function App() {
   const [foodLibraryOpen, setFoodLibraryOpen] = useState(false);
   const [jobsSheetOpen, setJobsSheetOpen] = useState(false);
   const [addingPerson, setAddingPerson] = useState(false);
-  const [activeView, setActiveView] = useState<"chat" | "panel" | "data" | "settings">("chat");
   const [backgroundJobsEnabled, setBackgroundJobsEnabled] = useState(false);
   const [toast, setToast] = useState<{ message: string; action?: { label: string; onClick: () => void } } | null>(
     null,
@@ -497,16 +503,18 @@ function App() {
           onAddPerson={() => setAddingPerson(true)}
         />
         <nav className="app-nav" aria-label="Navegação principal">
-          {(["chat", "panel", "data", "settings"] as const).map((view) => (
-            <button
+          {TOP_LEVEL_VIEWS.map((view) => (
+            <NavLink
               key={view}
-              type="button"
-              className={view === activeView ? "nav-tab is-active" : "nav-tab"}
+              to={viewPath(view)}
+              className={({ isActive }) => {
+                const active = isActive || (view === "chat" && location.pathname === "/");
+                return active ? "nav-tab is-active" : "nav-tab";
+              }}
               aria-current={view === activeView ? "page" : undefined}
-              onClick={() => setActiveView(view)}
             >
               {viewTitle(view)}
-            </button>
+            </NavLink>
           ))}
         </nav>
         <div className="header-actions">
@@ -879,7 +887,19 @@ function ChatWorkspace({
   );
 }
 
-function viewTitle(view: "chat" | "panel" | "data" | "settings"): string {
+function viewFromPath(pathname: string): AppView {
+  if (pathname === "/panel") return "panel";
+  if (pathname === "/data") return "data";
+  if (pathname === "/settings") return "settings";
+  return "chat";
+}
+
+function viewPath(view: AppView): string {
+  if (view === "chat") return "/chat";
+  return `/${view}`;
+}
+
+function viewTitle(view: AppView): string {
   if (view === "panel") return "Painel";
   if (view === "data") return "Dados";
   if (view === "settings") return "Ajustes";

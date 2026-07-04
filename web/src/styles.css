@@ -247,8 +247,15 @@ h3 {
 
 .nav-tab {
   min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
   border-radius: 999px;
+  padding: 0 12px;
+  color: var(--text);
   font-weight: 750;
+  text-decoration: none;
 }
 
 .nav-tab.is-active {
