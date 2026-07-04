@@ -627,9 +627,9 @@ Initial route groups:
 Streaming chat can use Server-Sent Events first. WebSockets can be added later if bidirectional streaming becomes necessary.
 
 Legacy prompt-builder draft endpoints such as `/api/agent/text-meal`,
-`/api/agent/label-scan`, and `/api/agent/recipe` are not part of the current
-HTTP surface. Dedicated UI helpers compose messages for `/api/agent/chat`
-instead.
+`/api/agent/label-scan`, `/api/agent/recipe`, and the old direct
+`/api/diary/repeat` shortcut are not part of the current HTTP surface.
+Dedicated UI helpers compose messages for `/api/agent/chat` instead.
 
 ## Authentication And Access
 

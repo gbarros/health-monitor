@@ -2,7 +2,10 @@
 
 Status: gap review, 2026-07-03. Basis: full inventory of `main:web/src/main.ts` (2,589 lines, ~70 user-facing features) diffed against the current `feature/react-assistant-ui` app.
 
-The backend lost nothing — every endpoint the old app used still exists. The new frontend calls only: households, people, goals, weights, attachments, diary/repeat, and the four agent endpoints. Everything below is frontend work against existing APIs unless marked otherwise.
+Agent-first follow-up: the legacy repeat shortcut is no longer an active frontend
+path. The new frontend calls household/person/goal/weight/attachment/read APIs
+plus agent chat/onboarding endpoints; repeat-meal is composed into chat and
+handled by the agent `repeat_meal` tool.
 
 Guiding principle for restoration: **stay chat-centric**. The chat is the write path; the gaps are almost all *read/inspect/verify* surfaces. Restore them as drawers, sheets, and expandable cards around the chat — not as the old wall of forms.
 

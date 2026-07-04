@@ -92,7 +92,7 @@ class HttpApiContractTest(unittest.TestCase):
     def test_legacy_prompt_builder_endpoints_are_removed_from_http_surface(self) -> None:
         api = BaseHttpApi(HealthMonitorService())
 
-        for path in ("/api/agent/text-meal", "/api/agent/label-scan", "/api/agent/recipe"):
+        for path in ("/api/agent/text-meal", "/api/agent/label-scan", "/api/agent/recipe", "/api/diary/repeat"):
             response = api.handle("POST", path, {})
             self.assertEqual(response.status_code, 404)
             self.assertEqual(response.body["error"]["type"], "NotFound")

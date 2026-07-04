@@ -54,6 +54,14 @@ class FoodEvidenceUiTest(unittest.TestCase):
         self.assertIn("sendAgentChat", app)
         self.assertNotIn('setText(template)', quick_actions)
 
+    def test_repeat_meal_mode_is_prompt_builder_chat_intent(self) -> None:
+        app = read_web_file("App.tsx")
+        api = read_web_file("api.ts")
+
+        self.assertIn("RepeatMealModal", app)
+        self.assertIn('intent: "repeat_meal"', app)
+        self.assertNotIn("/api/diary/repeat", api)
+
 
 if __name__ == "__main__":
     unittest.main()

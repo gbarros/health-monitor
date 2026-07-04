@@ -375,20 +375,6 @@ export async function updateWeightEntry(input: {
   return decodeResponse(response);
 }
 
-export async function repeatMeal(input: {
-  personId: string;
-  sourceDay: string;
-  mealType: string;
-  loggedAtLocal?: string;
-}): Promise<Proposal> {
-  return apiPost<Proposal>("/api/diary/repeat", {
-    person_id: input.personId,
-    source_day: input.sourceDay,
-    meal_type: input.mealType,
-    logged_at_local: input.loggedAtLocal ?? localDateTimeForApi(),
-  });
-}
-
 export async function sendAgentChat(input: {
   personId: string;
   message: string;
