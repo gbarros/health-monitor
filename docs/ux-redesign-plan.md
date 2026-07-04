@@ -1,6 +1,11 @@
 # UX Redesign Plan — Chat-First Meal Log
 
-Status: approved direction, ready for implementation.
+Status: superseded for routing and mode behavior by `docs/agent-first-plan.md`.
+Keep this document only as historical UI inventory and mobile-first context.
+Any instruction here that says deterministic classifier/router first, direct
+mode endpoints, or keeping `/api/agent/text-meal`, `/api/agent/label-scan`, or
+`/api/agent/recipe` as frontend form targets is obsolete.
+
 Audience: an implementing agent working on branch `feature/react-assistant-ui`. This document is self-contained; read the referenced files before each phase, and re-read `docs/feature-behavior-spec.md` (CR-001..CR-008) — proposal gating and deterministic calculations remain law.
 
 ## 0. Context and evidence

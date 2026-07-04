@@ -1,5 +1,11 @@
 # Agent Chat UI Spec
 
+Status: superseded by the current assistant-ui implementation and
+`docs/agent-first-plan.md`. Keep this document only as historical research for
+chat interaction requirements. Do not implement the private
+`packages/agent-chat-ui` custom element unless a future plan explicitly revives
+it.
+
 ## Purpose
 
 Build a standalone, framework-neutral chat component for agent-assisted workflows. The health monitor app should become chat-first without migrating the Vite app to React, Next, shadcn, or another large UI stack.

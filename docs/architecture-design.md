@@ -1,7 +1,11 @@
 # Health Monitor Architecture Design
 
-Status: Draft
+Status: Draft, updated for `agent-first-plan.md`
 Created: 2026-07-01
+
+Current product shape: an agent-first chat, proposal-gated writes, and separate data
+inspection pages. `docs/agent-first-plan.md` supersedes any older routing direction
+that says deterministic natural-language classifiers should run before the model.
 
 ## Architecture Goals
 
@@ -78,15 +82,15 @@ The web service owns the user interface.
 
 Expected responsibilities:
 
-- Today diary.
-- Calendar diary.
-- Food library.
-- Recipe library.
-- Weight log.
-- Macro and trend charts.
-- Agent chat.
-- Proposal review and confirmation.
-- Settings and import/export.
+- Full-screen agent chat as the primary screen.
+- URL-addressable inspection pages: Chat, Painel, Dados, Ajustes.
+- Painel: day card, weekly and rolling summaries, calorie and weight trends.
+- Dados: raw diary, weight, food/version, proposal, job, and chat-turn tables.
+- Food library and evidence inspection.
+- Recipe/library inspection.
+- Weight log inspection and edits.
+- Proposal review, confirmation, rejection, and audit details.
+- Settings, outbox, background jobs, import/export.
 
 Implementation direction:
 
@@ -301,13 +305,15 @@ Use PydanticAI as the agent runtime.
 
 Agent responsibilities:
 
-- Parse natural meal input.
+- Interpret user chat turns and prompt-builder messages.
+- Ask clarifying questions in the thread when the user intent or required fields are ambiguous.
+- Extract structured tool arguments from natural language.
 - Resolve food references using tools.
 - Request external lookup when local matching is weak.
-- Parse nutrition label/table text.
-- Draft recipe proposals.
+- Run targeted label OCR on uploaded attachments when needed.
+- Draft meal, amendment, range-estimate, recipe, food-version, correction, profile, goal, onboarding, and review-note proposals.
+- Log chat weight measurements through the explicit `log_weight` tool.
 - Answer free-form questions over app data.
-- Draft corrections and review notes.
 
 Agent dependencies:
 
@@ -321,27 +327,75 @@ Agent dependencies:
 
 Agent tools:
 
+- `day_summary`
+- `week_summary`
+- `weight_trend`
+- `resolve_food`
+- `lookup_food`
 - `search_foods`
-- `resolve_food_reference`
-- `lookup_external_food`
-- `get_day_summary`
-- `get_week_summary`
-- `search_diary_entries`
-- `get_weight_trend`
-- `draft_diary_entries`
-- `draft_food_version`
-- `draft_recipe`
-- `draft_correction`
-- `draft_review_note`
+- `get_food_details`
+- `list_open_proposals`
+- `food_version_history`
+- `extract_label_text_from_attachment`
+- `draft_meal_proposal`
+- `amend_meal_proposal`
+- `log_weight`
+- `repeat_meal`
+- `draft_range_estimate`
+- `draft_recipe_proposal`
+- `draft_diary_correction_proposal`
+- `draft_review_note_proposal`
+- `draft_profile_update_proposal`
+- `draft_goal_profile_proposal`
+- `draft_onboarding_proposal`
 
 Tool design rules:
 
 - Read tools can be broad.
 - Write-like tools return proposals, not durable records.
+- `log_weight` is the single sanctioned direct-write agent tool because a weight measurement is already a structured number.
+- Meal tools accept structured arguments extracted by the model. They must not call raw user-text parsers.
 - Tool results include source IDs and confidence where relevant.
 - Food lookup tools preserve source metadata.
 - Model estimates are labeled as estimates.
 - Every tool call should leave an audit trail with agent run ID, tool name, input summary, output summary, source record IDs, timing, status, and error details when applicable.
+
+### Agent Chat Flow
+
+The primary write intent path is:
+
+```text
+user message or prompt-builder message
+  -> POST /api/agent/chat or /api/agent/chat/stream
+  -> REQUIRE_MODEL gate for pydantic-ai settings
+  -> context builder
+     - person and active goal
+     - last chat turns
+     - open proposals
+     - recent day summaries, with older days pruned
+  -> PydanticAI agent loop
+     - read tools
+     - clarify in plain chat
+     - or call draft/direct tools
+  -> persisted chat turn
+  -> optional proposal id
+```
+
+Important routing rules:
+
+- No deterministic natural-language branch decides what a chat message means.
+- The deterministic runtime is a test double only, not a model-backed fallback.
+- If `REQUIRE_MODEL` is enabled and the configured model is unavailable, chat fails with a 503-style model-unavailable response and a replay message.
+- If `REQUIRE_MODEL` is disabled and pydantic-ai fails, chat answers that the configured agent did not return a result; it does not silently draft proposals with regex parsing.
+- Prompt-builder modals compose readable chat messages plus optional `intent`; they do not call dedicated draft endpoints.
+
+Streaming chat uses Server-Sent Events:
+
+- `tool_call`
+- `text_delta`
+- `final`
+
+The non-stream endpoint remains for jobs, tests, and simple integrations.
 
 ### Agent Runtime Settings
 
@@ -370,13 +424,13 @@ Agent-created changes go through proposals.
 
 Flow:
 
-1. User sends meal text, label image, recipe text, or chat request.
-2. Agent uses tools and returns a structured proposal.
-3. Backend validates proposal payload with Pydantic models.
-4. UI shows proposal preview.
-5. User confirms, edits, or rejects.
+1. User sends a chat message, a prompt-builder message, or an onboarding message.
+2. Agent uses tools and either asks a clarifying question or returns a structured proposal.
+3. Backend validates proposal payload with domain models.
+4. UI shows proposal preview inline or in proposal/detail surfaces.
+5. User confirms, edits, resolves clarification candidates, or rejects.
 6. Backend applies confirmed proposal through domain services.
-7. Application stores proposal status, applied records, and audit metadata.
+7. Application stores proposal status, applied records, chat run, tool calls, and audit metadata.
 
 Direct manual writes still go through domain services, but they do not need an agent proposal.
 
@@ -384,9 +438,11 @@ Examples:
 
 - Manual diary entry: direct domain write.
 - Agent meal parse: proposal, then domain write after confirmation.
+- Agent meal amendment: new proposal supersedes the old draft, then domain write after confirmation.
 - Agent correction: proposal, then domain write after confirmation.
 - Label scan: proposal for food/version creation.
 - Recipe parse: proposal for recipe version creation.
+- Onboarding: proposal for household/person/goal setup, then creation on confirmation.
 
 ## Food Resolution Architecture
 
@@ -559,6 +615,9 @@ Initial route groups:
 /api/summaries
 /api/proposals
 /api/agent/chat
+/api/agent/chat/stream
+/api/agent/onboarding-chat
+/api/agent/onboarding-history
 /api/attachments
 /api/imports
 /api/exports
@@ -566,6 +625,11 @@ Initial route groups:
 ```
 
 Streaming chat can use Server-Sent Events first. WebSockets can be added later if bidirectional streaming becomes necessary.
+
+Legacy prompt-builder draft endpoints such as `/api/agent/text-meal`,
+`/api/agent/label-scan`, and `/api/agent/recipe` are not part of the current
+HTTP surface. Dedicated UI helpers compose messages for `/api/agent/chat`
+instead.
 
 ## Authentication And Access
 

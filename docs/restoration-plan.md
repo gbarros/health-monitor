@@ -1,6 +1,10 @@
 # Restoration Plan — Inspection Surfaces + PWA
 
-Status: approved direction, ready for implementation.
+Status: superseded where it conflicts with `docs/agent-first-plan.md`.
+Keep this document as inspection-surface and PWA inventory. Chat routing,
+prompt-builder behavior, model availability, and direct agent endpoint guidance
+come from `agent-first-plan.md`.
+
 Audience: an implementing agent on branch `feature/react-assistant-ui`. Self-contained; companion analysis in `docs/feature-parity-gaps.md` (what was lost and why it matters), UX ground rules and verification protocol in `docs/ux-redesign-plan.md` (§1, §4, §5 still apply). Core rules CR-001..008 in `docs/feature-behavior-spec.md` remain law.
 
 ## 0. Intent
