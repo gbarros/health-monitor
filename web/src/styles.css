@@ -1096,6 +1096,28 @@ h3 {
   overflow-wrap: anywhere;
 }
 
+.inline-edit-controls {
+  display: grid;
+  grid-template-columns: 82px 118px repeat(3, max-content);
+  gap: 6px;
+  align-items: center;
+  min-width: 420px;
+}
+
+.inline-edit-controls input,
+.inline-edit-controls select {
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.inline-edit-controls button {
+  white-space: nowrap;
+}
+
 .week-card {
   display: grid;
   gap: 12px;

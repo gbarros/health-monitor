@@ -38,6 +38,16 @@ class ReviewChartUiTest(unittest.TestCase):
         self.assertIn("foodVersionRow", app)
         self.assertIn("queryKeys.foods(householdId, personId)", app)
 
+    def test_data_page_diary_rows_are_editable_and_deletable(self) -> None:
+        app = read_web_file("App.tsx")
+
+        self.assertIn("deleteDiaryEntry", app)
+        self.assertIn("updateDiaryEntry", app)
+        self.assertIn("DiaryEntryInlineEditor", app)
+        self.assertIn('"Ações"', app)
+        self.assertIn("onEntryDeleted(entry.id)", app)
+        self.assertIn("onDataChanged={invalidateDailyReadModels}", app)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,12 +1,13 @@
 import { AssistantRuntimeProvider, useAssistantToolUI, type ThreadMessageLike } from "@assistant-ui/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ReadonlyJSONObject } from "assistant-stream/utils";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import {
   ApiError,
   confirmProposal,
   defaultAgentSettings,
+  deleteDiaryEntry,
   loadActiveGoal,
   loadDaySummary,
   loadChatHistory,
@@ -25,6 +26,7 @@ import {
   sendAgentChat,
   STORAGE_KEYS,
   todayIsoForTimezone,
+  updateDiaryEntry,
   updateProposalEntry,
   uploadDataUrlAttachment,
 } from "./api";
@@ -620,6 +622,9 @@ function App() {
             proposals={proposalsQuery.data ?? []}
             jobs={jobsQuery.data ?? []}
             turns={chatHistoryQuery.data ?? []}
+            onToast={showToast}
+            onEntryDeleted={onEntryDeleted}
+            onDataChanged={invalidateDailyReadModels}
           />
         ) : null}
 
@@ -965,6 +970,9 @@ function DataPage({
   proposals,
   jobs,
   turns,
+  onToast,
+  onEntryDeleted,
+  onDataChanged,
 }: {
   householdId: string;
   personId: string;
@@ -972,9 +980,13 @@ function DataPage({
   proposals: Proposal[];
   jobs: BackgroundJob[];
   turns: AgentChatTurn[];
+  onToast: (message: string) => void;
+  onEntryDeleted: (entryId: string) => void;
+  onDataChanged: () => Promise<void>;
 }) {
   const [rangeStart, setRangeStart] = useState(selectedDay);
   const [rangeEnd, setRangeEnd] = useState(selectedDay);
+  const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
   useEffect(() => {
     setRangeStart(selectedDay);
     setRangeEnd(selectedDay);
@@ -1018,8 +1030,18 @@ function DataPage({
             : `Diário de ${rangeQueryStart} a ${rangeQueryEnd}`
         }
         empty="Nenhum item registrado neste intervalo."
-        columns={["Hora", "Refeição", "Alimento", "g", "kcal", "Fonte", "Conf."]}
-        rows={entries.map((entry) => diaryEntryRow(entry))}
+        columns={["Hora", "Refeição", "Alimento", "g", "kcal", "Fonte", "Conf.", "Ações"]}
+        rows={entries.map((entry) =>
+          diaryEntryRow(entry, {
+            editing: editingEntryId === entry.id,
+            onEdit: () => setEditingEntryId(entry.id),
+            onCancel: () => setEditingEntryId(null),
+            onDone: () => setEditingEntryId(null),
+            onToast,
+            onEntryDeleted,
+            onDataChanged,
+          }),
+        )}
       />
       <DataTable
         title="Propostas"
@@ -1074,9 +1096,9 @@ function DataTable({
   title: string;
   empty: string;
   columns: string[];
-  rows: string[][];
+  rows: DataRow[];
 }) {
-  const csv = [columns, ...rows].map((row) => row.map(csvCell).join(",")).join("\n");
+  const csv = [columns, ...rows].map((row) => row.map((cell) => csvCell(cellToCsvValue(cell))).join(",")).join("\n");
   const download = () => {
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
@@ -1122,7 +1144,24 @@ function DataTable({
   );
 }
 
-function diaryEntryRow(entry: DaySummaryEntry): string[] {
+type DataRow = Array<string | ReactNode>;
+
+function cellToCsvValue(cell: string | ReactNode): string {
+  return typeof cell === "string" ? cell : "";
+}
+
+function diaryEntryRow(
+  entry: DaySummaryEntry,
+  controls: {
+    editing: boolean;
+    onEdit: () => void;
+    onCancel: () => void;
+    onDone: () => void;
+    onToast: (message: string) => void;
+    onEntryDeleted: (entryId: string) => void;
+    onDataChanged: () => Promise<void>;
+  },
+): DataRow {
   return [
     formatDateTime(entry.logged_at),
     entry.meal_type,
@@ -1131,7 +1170,83 @@ function diaryEntryRow(entry: DaySummaryEntry): string[] {
     Math.round(entry.nutrients.calories_kcal ?? 0).toString(),
     entry.source,
     `${Math.round(entry.confidence * 100)}%`,
+    controls.editing ? (
+      <DiaryEntryInlineEditor key={entry.id} entry={entry} {...controls} />
+    ) : (
+      <button type="button" onClick={controls.onEdit}>
+        Editar
+      </button>
+    ),
   ];
+}
+
+function DiaryEntryInlineEditor({
+  entry,
+  onCancel,
+  onDone,
+  onToast,
+  onEntryDeleted,
+  onDataChanged,
+}: {
+  entry: DaySummaryEntry;
+  onCancel: () => void;
+  onDone: () => void;
+  onToast: (message: string) => void;
+  onEntryDeleted: (entryId: string) => void;
+  onDataChanged: () => Promise<void>;
+}) {
+  const [quantityText, setQuantityText] = useState(String(entry.quantity_g));
+  const [mealType, setMealType] = useState(entry.meal_type);
+  const save = useMutation({
+    mutationFn: () =>
+      updateDiaryEntry({
+        entryId: entry.id,
+        quantityG: Number(quantityText.replace(",", ".")),
+        mealType,
+      }),
+    onSuccess: async () => {
+      await onDataChanged();
+      onDone();
+    },
+    onError: (error) => onToast(error instanceof Error ? error.message : "Não foi possível editar o item."),
+  });
+  const remove = useMutation({
+    mutationFn: () => deleteDiaryEntry(entry.id),
+    onSuccess: async () => {
+      await onDataChanged();
+      onEntryDeleted(entry.id);
+      onDone();
+    },
+    onError: (error) => onToast(error instanceof Error ? error.message : "Não foi possível excluir o item."),
+  });
+  const parsedQuantity = Number(quantityText.replace(",", "."));
+  const canSave = Number.isFinite(parsedQuantity) && parsedQuantity > 0;
+  return (
+    <div className="inline-edit-controls">
+      <input
+        aria-label="Quantidade em gramas"
+        inputMode="decimal"
+        value={quantityText}
+        onChange={(event) => setQuantityText(event.target.value)}
+      />
+      <select aria-label="Refeição" value={mealType} onChange={(event) => setMealType(event.target.value)}>
+        <option value="breakfast">Café</option>
+        <option value="lunch">Almoço</option>
+        <option value="snack">Lanche</option>
+        <option value="dinner">Janta</option>
+        <option value="late">Madrugada</option>
+      </select>
+      <button type="button" onClick={() => save.mutate()} disabled={!canSave || save.isPending || remove.isPending}>
+        {save.isPending ? "Salvando..." : "Salvar"}
+      </button>
+      <button type="button" onClick={() => remove.mutate()} disabled={save.isPending || remove.isPending}>
+        {remove.isPending ? "Excluindo..." : "Excluir"}
+      </button>
+      <button type="button" onClick={onCancel} disabled={save.isPending || remove.isPending}>
+        Cancelar
+      </button>
+    </div>
+  );
 }
 
 function weightEntryRow(entry: WeightEntry): string[] {
