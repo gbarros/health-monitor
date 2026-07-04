@@ -30,6 +30,14 @@ class ReviewChartUiTest(unittest.TestCase):
         self.assertIn("weightEntryRow", app)
         self.assertIn("queryKeys.weightTrend(personId)", app)
 
+    def test_data_page_includes_food_version_rows_for_export(self) -> None:
+        app = read_web_file("App.tsx")
+
+        self.assertIn("loadFoods", app)
+        self.assertIn('title="Alimentos e versões"', app)
+        self.assertIn("foodVersionRow", app)
+        self.assertIn("queryKeys.foods(householdId, personId)", app)
+
 
 if __name__ == "__main__":
     unittest.main()

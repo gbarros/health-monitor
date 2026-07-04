@@ -11,6 +11,7 @@ import {
   loadDaySummary,
   loadChatHistory,
   loadDiaryRange,
+  loadFoods,
   loadJobs,
   loadOnboardingHistory,
   loadPeople,
@@ -47,6 +48,7 @@ import type {
   AgentSettings,
   BackgroundJob,
   DaySummaryEntry,
+  FoodResponse,
   OnboardingTurn,
   Person,
   Proposal,
@@ -612,6 +614,7 @@ function App() {
 
         {activeView === "data" ? (
           <DataPage
+            householdId={householdId}
             personId={selectedPersonId}
             selectedDay={selectedDay}
             proposals={proposalsQuery.data ?? []}
@@ -956,12 +959,14 @@ function DaySummaryStrip({
 }
 
 function DataPage({
+  householdId,
   personId,
   selectedDay,
   proposals,
   jobs,
   turns,
 }: {
+  householdId: string;
   personId: string;
   selectedDay: string;
   proposals: Proposal[];
@@ -984,7 +989,12 @@ function DataPage({
     queryKey: queryKeys.weightTrend(personId),
     queryFn: () => loadWeightTrend(personId),
   });
+  const foodsQuery = useQuery({
+    queryKey: queryKeys.foods(householdId, personId),
+    queryFn: () => loadFoods({ householdId, personId }),
+  });
   const entries = diaryRangeQuery.data ?? [];
+  const foods = foodsQuery.data ?? [];
   const weights = (weightTrendQuery.data?.entries ?? []).filter((entry) => {
     const measuredDay = entry.measured_at.slice(0, 10);
     return measuredDay >= rangeQueryStart && measuredDay <= rangeQueryEnd;
@@ -1027,6 +1037,12 @@ function DataPage({
         empty="Nenhum peso registrado neste intervalo."
         columns={["Medido em", "kg", "Fonte", "Nota"]}
         rows={weights.map((entry) => weightEntryRow(entry))}
+      />
+      <DataTable
+        title="Alimentos e versões"
+        empty="Nenhum alimento cadastrado."
+        columns={["Alimento", "Versão", "kcal/100g", "P/C/G", "Fonte", "Conf.", "Aliases", "Códigos"]}
+        rows={foods.map((item) => foodVersionRow(item))}
       />
       <DataTable
         title="Jobs"
@@ -1125,6 +1141,24 @@ function weightEntryRow(entry: WeightEntry): string[] {
     entry.source,
     entry.note ?? "",
   ];
+}
+
+function foodVersionRow(item: FoodResponse): string[] {
+  const nutrients = item.version.nutrients_per_100g;
+  return [
+    [item.food.brand, item.food.name].filter(Boolean).join(" · "),
+    `${item.version.label}${item.is_default ? " (padrão)" : ""}${item.food.archived ? " (arquivado)" : ""}`,
+    Math.round(nutrients.calories_kcal ?? 0).toString(),
+    `${roundOne(nutrients.protein_g)} / ${roundOne(nutrients.carbs_g)} / ${roundOne(nutrients.fat_g)}`,
+    item.version.source,
+    `${Math.round(item.version.confidence * 100)}%`,
+    item.aliases.join(", "),
+    item.barcodes.join(", "),
+  ];
+}
+
+function roundOne(value?: number | null): number {
+  return Math.round((value ?? 0) * 10) / 10;
 }
 
 function ProposalToolRenderer({
