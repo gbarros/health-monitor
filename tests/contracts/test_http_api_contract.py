@@ -2628,6 +2628,36 @@ class HttpApiContractTest(unittest.TestCase):
         self.assertEqual(response.events[-1]["data"]["run_id"], response.body["run_id"])
         self.assertEqual(len(api.service.chat_turns_for_person(person["id"])), 1)
 
+    def test_agent_chat_stream_supports_get_sse_route(self) -> None:
+        api = HttpApi(HealthMonitorService())
+        household = api.handle("POST", "/api/households", {"name": "Casa"}).body
+        person = api.handle(
+            "POST",
+            "/api/people",
+            {
+                "household_id": household["id"],
+                "name": "Gabriel",
+                "timezone": "America/Sao_Paulo",
+            },
+        ).body
+
+        response = api.handle(
+            "GET",
+            (
+                "/api/agent/chat/stream"
+                f"?person_id={person['id']}"
+                "&message=Pode%20resumir%20meu%20dia%3F"
+                "&today=2026-07-02"
+                "&model_profile=deterministic-test"
+            ),
+            None,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([event["event"] for event in response.events], ["run_started", "text_delta", "final"])
+        self.assertEqual(response.events[-1]["data"]["run_id"], response.body["run_id"])
+        self.assertEqual(api.service.chat_turns_for_person(person["id"])[0].user_message, "Pode resumir meu dia?")
+
     def test_onboarding_chat_turns_are_persisted_by_session(self) -> None:
         api = HttpApi(HealthMonitorService(require_model=False))
 

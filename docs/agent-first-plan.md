@@ -151,5 +151,32 @@ Suggested sequence for one implementer: **B → C → A1 → A2 → A3+D → A5 
 5. **Chat look**: side-by-side with assistant-ui's demo, the thread is recognizably the same component family (markdown, bubbles, streaming) — not a bespoke square.
 6. **Onboarding**: a new user (or new household member) is set up entirely through conversation ending in a confirmable profile+goals proposal — no static form, no keyword guessing.
 
-## 6. Verification protocol
+## 6. Close-out punch list (audit of the implementation, 2026-07-04)
+
+Independent review verdict: the inversion **did land** — `chat()` is gate → context → agent with no routing branches; mode endpoints are gone; prompt-builder modals compose intent-tagged chat messages; onboarding is conversational; the thread is stock `@assistant-ui/react-ui`; pages exist under react-router; SSE streaming is wired. The remaining gaps are below. Each task is small, self-contained, and ordered by severity. Do them in order; do not start new scope.
+
+### T1 — BUG: onboarding goal is not active on the drafted day (test currently red)
+`test_onboarding_profile_setup_proposal_applies_household_person_and_goal` fails with `KeyError: 'targets'` because `GET /api/goals/active?day=2026-07-03` returns `{}`: the profile_setup **apply** path stamps the goal's `starts_on` with server-now, and the clock rolled past the drafted day. Reproduced live. Fix: `draft_onboarding_proposal` must capture `starts_on` (the drafting day) in the proposal payload and the apply path must use it — never `date.today()` at confirm time (replay/confirm can happen days later; server-now violates "server owns dates" in the wrong direction). Update the contract test to assert against the payload's `starts_on` rather than a hardcoded date. Acceptance: `make test` green on any calendar day.
+
+### T2 — Finish and commit the in-flight GET SSE work
+Working tree has uncommitted changes: `/api/agent/chat/stream` gains GET support (+ contract test). Finish it: GET must reject missing `person_id`/`message` with 400, document that GET is for `EventSource` clients (no attachments), and confirm the frontend actually uses whichever verb it needs. Commit.
+
+### T3 — The product cannot run in the dev environment (why "done" never feels done)
+`pydantic_ai` is **not installed** in the local Python env — every chat correctly 503s, so no one (implementer or reviewer) has exercised the real agent loop end-to-end on this machine. Tasks:
+- Add `pydantic-ai` to the project's dependency manifest (pyproject/requirements) and README setup steps.
+- Flip the server default: `AGENT_RUNTIME` defaults to `pydantic-ai` in `config.py` (deterministic remains available for tests only); `make dev-api` and `compose.yaml` set nothing special.
+- Acceptance: fresh checkout + documented setup → send "Almoço: 74g arroz" in the UI → agent drafts a proposal via `draft_meal_proposal` (visible in the tool trace).
+
+### T4 — Delete the quarantined legacy text path
+`propose_text_meal` (+ `_create_amended_text_meal_proposal`, `parse_text_meal_amendment`, `parse_text_meal_items`-as-message-parser) survive with ~25 behavior/contract tests as their only callers. This is exactly the footprint that caused the original drift — future agents will find it and re-wire it. Migrate those tests to the tool path (`draft_meal_proposal` / `amend_structured_meal_proposal` with structured args assert the same proposal contents), then delete the legacy functions. Acceptance: `grep -rn "propose_text_meal\|parse_text_meal_amendment" src/` returns nothing.
+
+### T5 — Live-model eval run (the real acceptance)
+With T3 done and Ollama up: run `make test-live-model` and walk §5's Gabriel test in the UI (meal → draft; "esqueci o pão" → clarify-or-amend; log-food modal with photo only; onboarding conversation on a scratch DB). File every miss as a prompt/tool-description tuning item — not as new routing code. This is a verification session (reviewer-led), not an implementation task.
+
+### T6 — Small frontend closures
+- Confirm needs-clarification candidates picker still works now that clarification is conversational (agent `clarify_food_choice` path) — if the agent asks in plain text only, remove the dead picker or wire it to the tool result.
+- Painel: confirm review notes surface survived the page move (was in R5; not found during audit — restore on Painel if dropped).
+- Verify streaming UX on a slow model: token deltas render progressively and tool progress lines ("consultando rótulos…") appear; if the foreground still waits for `final`, fix the adapter to consume deltas.
+
+## 7. Verification protocol
 Per phase, as established (`ux-redesign-plan.md` §5): `make test` + `bun run build`; live walkthrough at 375×812 **and** desktop width against a scratch DB; live-model eval run (`make test-live-model`) after A2 since routing correctness now lives in the model+tools; adversarial diff review with special attention to anti-goals §0 (any new regex on user text is a finding); REQUIRE_MODEL regression (503 + persisted replay) after every backend phase.

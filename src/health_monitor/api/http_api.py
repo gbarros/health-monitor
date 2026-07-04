@@ -563,14 +563,18 @@ class HttpApi:
             )
             return HttpResponse(201, agent_chat_response_to_dict(response, self.service))
 
-        if method == "POST" and path == "/api/agent/chat/stream":
+        if method in {"GET", "POST"} and path == "/api/agent/chat/stream":
+            stream_input = body if method == "POST" else query
+            stream_settings = stream_input.get("agent_settings")
+            if stream_settings is None and method == "GET" and query.get("model_profile"):
+                stream_settings = {"model_profile": query["model_profile"]}
             response = self.service.chat(
-                person_id=body["person_id"],
-                message=body["message"],
-                today=date.fromisoformat(body["today"]) if body.get("today") else date.today(),
-                agent_settings=body.get("agent_settings"),
-                attachment_ids=body.get("attachment_ids"),
-                intent=body.get("intent"),
+                person_id=stream_input["person_id"],
+                message=stream_input["message"],
+                today=date.fromisoformat(stream_input["today"]) if stream_input.get("today") else date.today(),
+                agent_settings=stream_settings,
+                attachment_ids=stream_input.get("attachment_ids") if method == "POST" else None,
+                intent=stream_input.get("intent"),
             )
             final = agent_chat_response_to_dict(response, self.service)
             tool_events = tuple(
