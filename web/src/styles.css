@@ -1137,6 +1137,50 @@ h3 {
   gap: 8px;
 }
 
+.rolling-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+}
+
+.rolling-stat-tile {
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--surface-soft);
+}
+
+.rolling-stat-tile span,
+.rolling-stat-tile small,
+.trend-axis {
+  color: var(--muted);
+}
+
+.rolling-stat-tile strong {
+  font-size: 20px;
+}
+
+.calorie-trend {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.calorie-trend svg {
+  display: block;
+  color: var(--accent);
+}
+
+.trend-axis {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+}
+
 .week-bar-row {
   display: grid;
   grid-template-columns: 38px minmax(0, 1fr) 52px;

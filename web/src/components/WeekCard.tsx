@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { loadReviewNotes, loadRollingSummary, loadWeekSummary, loadWeightTrend } from "../api";
 import { queryKeys } from "../queryKeys";
-import type { Nutrients, WeightEntry } from "../types";
+import type { Nutrients, RollingSummary, WeightEntry } from "../types";
 
 export function WeekCard({ personId, day }: { personId: string; day: string }) {
   const { start, end } = weekWindow(day);
@@ -10,8 +10,12 @@ export function WeekCard({ personId, day }: { personId: string; day: string }) {
     queryFn: () => loadWeekSummary(personId, start, end),
   });
   const rollingQuery = useQuery({
-    queryKey: queryKeys.rollingSummary(personId, day),
+    queryKey: queryKeys.rollingSummary(personId, day, 7),
     queryFn: () => loadRollingSummary({ personId, end: day, days: 7 }),
+  });
+  const rollingThirtyQuery = useQuery({
+    queryKey: queryKeys.rollingSummary(personId, day, 30),
+    queryFn: () => loadRollingSummary({ personId, end: day, days: 30 }),
   });
   const weightQuery = useQuery({
     queryKey: queryKeys.weightTrend(personId),
@@ -24,6 +28,7 @@ export function WeekCard({ personId, day }: { personId: string; day: string }) {
 
   const summary = query.data;
   const rolling = rollingQuery.data;
+  const rollingThirty = rollingThirtyQuery.data;
   const weekWeights = (weightQuery.data?.entries ?? []).filter(
     (entry) => entry.measured_at.slice(0, 10) >= start && entry.measured_at.slice(0, 10) <= end,
   );
@@ -69,12 +74,10 @@ export function WeekCard({ personId, day }: { personId: string; day: string }) {
               : ""}
           </p>
           {rolling ? (
-            <p className="week-card__summary">
-              Média 7d: {Math.round(rolling.averages.calories_kcal ?? 0)} kcal ± {Math.round(rolling.stddev.calories_kcal ?? 0)}
-              {" · "}
-              {roundOne(rolling.averages.protein_g)}g prot
-            </p>
+            <RollingStats rolling={rolling} rollingThirty={rollingThirty} />
           ) : null}
+
+          {rollingThirty ? <CalorieTrendLine rolling={rollingThirty} /> : null}
 
           <details className="settings-disclosure">
             <summary>Tabela semanal</summary>
@@ -104,6 +107,64 @@ export function WeekCard({ personId, day }: { personId: string; day: string }) {
         </details>
       ) : null}
     </section>
+  );
+}
+
+function RollingStats({
+  rolling,
+  rollingThirty,
+}: {
+  rolling: RollingSummary;
+  rollingThirty?: RollingSummary;
+}) {
+  return (
+    <div className="rolling-stat-grid" aria-label="Médias móveis">
+      <RollingStatTile label="Média 7d" rolling={rolling} />
+      {rollingThirty ? <RollingStatTile label="Média 30d" rolling={rollingThirty} /> : null}
+    </div>
+  );
+}
+
+function RollingStatTile({ label, rolling }: { label: string; rolling: RollingSummary }) {
+  return (
+    <div className="rolling-stat-tile">
+      <span>{label}</span>
+      <strong>{Math.round(rolling.averages.calories_kcal ?? 0)} kcal</strong>
+      <small>
+        ± {Math.round(rolling.stddev.calories_kcal ?? 0)} · {roundOne(rolling.averages.protein_g)}g prot ·{" "}
+        {rolling.days_with_data}/{rolling.days} dias
+      </small>
+    </div>
+  );
+}
+
+function CalorieTrendLine({ rolling }: { rolling: RollingSummary }) {
+  const dates = Object.keys(rolling.daily).sort();
+  const values = dates.map((date) => rolling.daily[date]?.calories_kcal ?? 0);
+  const max = Math.max(...values, 1);
+  const width = 420;
+  const height = 96;
+  const points = values
+    .map((value, index) => {
+      const x = dates.length > 1 ? (index / (dates.length - 1)) * width : width;
+      const y = height - (value / max) * height;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+  return (
+    <div className="calorie-trend" aria-label="Linha de kcal dos últimos 30 dias">
+      <div className="section-heading">
+        <span>30 dias kcal</span>
+        <strong>{rolling.days_with_data}/{rolling.days}</strong>
+      </div>
+      <svg viewBox={`0 0 ${width} ${height}`} width="100%" height={height} preserveAspectRatio="none">
+        <polyline points={points} fill="none" stroke="currentColor" strokeWidth="2.5" />
+      </svg>
+      <div className="trend-axis">
+        <span>{dates[0]?.slice(5) ?? ""}</span>
+        <span>{dates[dates.length - 1]?.slice(5) ?? ""}</span>
+      </div>
+    </div>
   );
 }
 

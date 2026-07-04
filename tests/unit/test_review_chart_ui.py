@@ -17,8 +17,12 @@ class ReviewChartUiTest(unittest.TestCase):
         self.assertIn("<WeekCard", app)
         self.assertIn("loadWeekSummary", week_card)
         self.assertIn("/api/summaries/week", read_web_file("api.ts"))
+        self.assertIn("days: 30", week_card)
+        self.assertIn("CalorieTrendLine", week_card)
+        self.assertIn("RollingStatTile", week_card)
         self.assertIn(".page-grid", styles)
         self.assertIn(".week-card", styles)
+        self.assertIn(".calorie-trend", styles)
         self.assertNotIn("renderMacroChart", app)
         self.assertNotIn("renderWeightTrendChart", app)
 
