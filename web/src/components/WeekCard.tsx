@@ -73,6 +73,7 @@ export function WeekCard({ personId, day }: { personId: string; day: string }) {
               ? ` · Peso ${summary.weight_delta_kg > 0 ? "+" : ""}${summary.weight_delta_kg} kg`
               : ""}
           </p>
+          <MacroSplit nutrients={summary.averages} />
           {rolling ? (
             <RollingStats rolling={rolling} rollingThirty={rollingThirty} />
           ) : null}
@@ -107,6 +108,38 @@ export function WeekCard({ personId, day }: { personId: string; day: string }) {
         </details>
       ) : null}
     </section>
+  );
+}
+
+function MacroSplit({ nutrients }: { nutrients: Nutrients }) {
+  const segments = [
+    { label: "Prot", grams: nutrients.protein_g ?? 0, className: "macro-segment--protein" },
+    { label: "Carb", grams: nutrients.carbs_g ?? 0, className: "macro-segment--carbs" },
+    { label: "Gord", grams: nutrients.fat_g ?? 0, className: "macro-segment--fat" },
+  ];
+  const total = segments.reduce((sum, segment) => sum + segment.grams, 0);
+  if (total <= 0) {
+    return null;
+  }
+  return (
+    <div className="macro-split" aria-label="Divisão média de macros">
+      <div className="macro-split-bar">
+        {segments.map((segment) => (
+          <span
+            key={segment.label}
+            className={segment.className}
+            style={{ width: `${Math.max(4, (segment.grams / total) * 100)}%` }}
+          />
+        ))}
+      </div>
+      <div className="macro-split-legend">
+        {segments.map((segment) => (
+          <span key={segment.label}>
+            {segment.label} {roundOne(segment.grams)}g
+          </span>
+        ))}
+      </div>
+    </div>
   );
 }
 

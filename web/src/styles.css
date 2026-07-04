@@ -1137,6 +1137,43 @@ h3 {
   gap: 8px;
 }
 
+.macro-split {
+  display: grid;
+  gap: 8px;
+}
+
+.macro-split-bar {
+  display: flex;
+  height: 12px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--surface-soft);
+}
+
+.macro-split-bar span {
+  display: block;
+}
+
+.macro-segment--protein {
+  background: #0f766e;
+}
+
+.macro-segment--carbs {
+  background: #2563eb;
+}
+
+.macro-segment--fat {
+  background: #a16207;
+}
+
+.macro-split-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .rolling-stat-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
