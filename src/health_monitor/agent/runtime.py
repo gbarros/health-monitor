@@ -308,9 +308,11 @@ class PydanticAINutritionAgent:
         *,
         model_name: str,
         ollama_base_url: str,
+        model: Any | None = None,
     ) -> None:
         self.model_name = model_name
         self.ollama_base_url = normalize_ollama_base_url(ollama_base_url)
+        self.model = model
 
     def answer(self, *, deps: AgentDeps, message: str) -> AgentRuntimeResponse:
         result = self._run(
@@ -354,7 +356,7 @@ class PydanticAINutritionAgent:
         from health_monitor.agent.tools import NutritionAgentTools
 
         tools = NutritionAgentTools()
-        model = OllamaModel(
+        model = self.model or OllamaModel(
             self.model_name,
             provider=OllamaProvider(base_url=self.ollama_base_url),
         )

@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import unittest
 from datetime import date
+from typing import Any
 from unittest.mock import patch
 
-from health_monitor.agent.runtime import AgentRuntimeResponse, PydanticAIUnavailable
+from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+from health_monitor.agent.runtime import AgentDeps, AgentRuntimeResponse, PydanticAINutritionAgent, PydanticAIUnavailable
 from health_monitor.application.service import HealthMonitorService
 from health_monitor.domain.nutrients import Nutrients
 
@@ -63,7 +67,7 @@ class FakeOnboardingAgent:
 
 
 class LiveAgentRoutingTest(unittest.TestCase):
-    def make_service(self, *, require_model: bool = True) -> tuple[HealthMonitorService, str]:
+    def make_service(self, *, require_model: bool = True) -> tuple[HealthMonitorService, str, str]:
         service = HealthMonitorService(
             agent_runtime="pydantic-ai",
             agent_model="ornith:9b",
@@ -85,10 +89,73 @@ class LiveAgentRoutingTest(unittest.TestCase):
             source="label_scan",
             aliases=["queijo"],
         )
-        return service, person.id
+        return service, person.id, household.id
+
+    def test_function_model_chat_harness_calls_real_draft_meal_tool(self) -> None:
+        service, person_id, household_id = self.make_service()
+        requested_tools: list[str] = []
+
+        def scripted_model(messages: list[Any], agent_info: AgentInfo) -> ModelResponse:
+            requested_tools[:] = [tool.name for tool in agent_info.function_tools]
+            proposal_id = proposal_id_from_tool_returns(messages)
+            if proposal_id is None:
+                return ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            "draft_meal_proposal",
+                            {
+                                "items": [{"phrase": "queijo", "quantity_g": 50}],
+                                "day": "2026-07-02",
+                                "time": "10:00",
+                                "meal_type": "breakfast",
+                                "source_text": "Café: 50g queijo",
+                            },
+                        )
+                    ]
+                )
+            return ModelResponse(
+                parts=[
+                    TextPart(
+                        (
+                            '{"output_type":"proposal_draft",'
+                            f'"proposal_id":"{proposal_id}",'
+                            '"summary":"Proposta de café pronta."}'
+                        )
+                    )
+                ]
+            )
+
+        agent = PydanticAINutritionAgent(
+            model_name="function-test",
+            ollama_base_url="http://127.0.0.1:11434",
+            model=FunctionModel(scripted_model),
+        )
+
+        response = agent.answer(
+            deps=AgentDeps(
+                service=service,
+                person_id=person_id,
+                household_id=household_id,
+                today=date(2026, 7, 2),
+                settings={"agent_runtime": "pydantic-ai"},
+                source_config={
+                    "openfoodfacts_enabled": False,
+                    "research_lookup_enabled": False,
+                    "ocr_enabled": False,
+                },
+            ),
+            message="Café: 50g queijo",
+        )
+
+        self.assertIn("draft_meal_proposal", requested_tools)
+        self.assertEqual(response.proposal_id, "proposal_1")
+        self.assertEqual(response.behavior_label, "proposal_draft")
+        proposal = service.get_proposal(response.proposal_id or "")
+        self.assertEqual(proposal.entries[0].quantity_g, 50)
+        self.assertEqual(proposal.entries[0].meal_type, "breakfast")
 
     def test_pydantic_chat_path_links_live_run_to_structured_meal_proposal(self) -> None:
-        service, person_id = self.make_service()
+        service, person_id, _ = self.make_service()
 
         with patch("health_monitor.application.service.PydanticAINutritionAgent", FakeDraftingAgent):
             response = service.chat(
@@ -113,7 +180,7 @@ class LiveAgentRoutingTest(unittest.TestCase):
 
     def test_pydantic_chat_failure_records_fallback_reason_without_deterministic_proposal(self) -> None:
         # Deterministic fallback only exists when require_model is disabled.
-        service, person_id = self.make_service(require_model=False)
+        service, person_id, _ = self.make_service(require_model=False)
 
         with patch("health_monitor.application.service.PydanticAINutritionAgent", FailingAgent):
             response = service.chat(
@@ -149,6 +216,19 @@ class LiveAgentRoutingTest(unittest.TestCase):
         self.assertEqual(proposal.proposal_type, "profile_setup")
         self.assertEqual(proposal.payload["person"]["timezone"], "America/Sao_Paulo")
         self.assertEqual(service.onboarding_turns_for_session("session-1"), (turn,))
+
+
+def proposal_id_from_tool_returns(messages: list[Any]) -> str | None:
+    for message in reversed(messages):
+        if not isinstance(message, ModelRequest):
+            continue
+        for part in message.parts:
+            if not isinstance(part, ToolReturnPart) or part.tool_name != "draft_meal_proposal":
+                continue
+            content = part.content
+            if isinstance(content, dict) and isinstance(content.get("proposal_id"), str):
+                return content["proposal_id"]
+    return None
 
 
 if __name__ == "__main__":
