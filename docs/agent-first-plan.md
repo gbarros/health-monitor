@@ -153,7 +153,9 @@ Suggested sequence for one implementer: **B → C → A1 → A2 → A3+D → A5 
 
 ## 6. Close-out punch list (audit of the implementation, 2026-07-04)
 
-Independent review verdict: the inversion **did land** — `chat()` is gate → context → agent with no routing branches; mode endpoints are gone; prompt-builder modals compose intent-tagged chat messages; onboarding is conversational; the thread is stock `@assistant-ui/react-ui`; pages exist under react-router; SSE streaming is wired. The remaining gaps are below. Each task is small, self-contained, and ordered by severity. Do them in order; do not start new scope.
+Independent review verdict: the inversion **did land** — `chat()` is gate → context → agent with no routing branches; mode endpoints are gone; prompt-builder modals compose intent-tagged chat messages; onboarding is conversational; the thread is stock `@assistant-ui/react-ui`; pages exist under react-router; SSE streaming is wired.
+
+> **Implementers: the items below are expanded into executable phases in `docs/agent-first-closeout-plan.md` — work from that document, not this list.**
 
 ### T1 — BUG: onboarding goal is not active on the drafted day (test currently red)
 `test_onboarding_profile_setup_proposal_applies_household_person_and_goal` fails with `KeyError: 'targets'` because `GET /api/goals/active?day=2026-07-03` returns `{}`: the profile_setup **apply** path stamps the goal's `starts_on` with server-now, and the clock rolled past the drafted day. Reproduced live. Fix: `draft_onboarding_proposal` must capture `starts_on` (the drafting day) in the proposal payload and the apply path must use it — never `date.today()` at confirm time (replay/confirm can happen days later; server-now violates "server owns dates" in the wrong direction). Update the contract test to assert against the payload's `starts_on` rather than a hardcoded date. Acceptance: `make test` green on any calendar day.
