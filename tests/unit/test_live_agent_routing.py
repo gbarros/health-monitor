@@ -89,6 +89,24 @@ class LiveAgentRoutingTest(unittest.TestCase):
             source="label_scan",
             aliases=["queijo"],
         )
+        service.create_food_with_version(
+            household_id=household.id,
+            name="Arroz",
+            brand=None,
+            version_label="cozido",
+            nutrients_per_100g=Nutrients(130, 2.7, 28, 0.3),
+            source="reference",
+            aliases=["arroz"],
+        )
+        service.create_food_with_version(
+            household_id=household.id,
+            name="Frango",
+            brand=None,
+            version_label="grelhado",
+            nutrients_per_100g=Nutrients(165, 31, 0, 3.6),
+            source="reference",
+            aliases=["frango"],
+        )
         return service, person.id, household.id
 
     def test_function_model_chat_harness_calls_real_draft_meal_tool(self) -> None:
@@ -97,7 +115,7 @@ class LiveAgentRoutingTest(unittest.TestCase):
 
         def scripted_model(messages: list[Any], agent_info: AgentInfo) -> ModelResponse:
             requested_tools[:] = [tool.name for tool in agent_info.function_tools]
-            proposal_id = proposal_id_from_tool_returns(messages)
+            proposal_id = proposal_id_from_tool_returns(messages, "draft_meal_proposal")
             if proposal_id is None:
                 return ModelResponse(
                     parts=[
@@ -153,6 +171,96 @@ class LiveAgentRoutingTest(unittest.TestCase):
         proposal = service.get_proposal(response.proposal_id or "")
         self.assertEqual(proposal.entries[0].quantity_g, 50)
         self.assertEqual(proposal.entries[0].meal_type, "breakfast")
+
+    def test_function_model_chat_harness_can_ask_clarifying_question_without_proposal(self) -> None:
+        service, person_id, household_id = self.make_service()
+        requested_tools: list[str] = []
+
+        def scripted_model(_: list[Any], agent_info: AgentInfo) -> ModelResponse:
+            requested_tools[:] = [tool.name for tool in agent_info.function_tools]
+            return ModelResponse(
+                parts=[
+                    TextPart(
+                        (
+                            '{"output_type":"clarification_request",'
+                            '"question":"Quantos gramas de queijo você comeu?",'
+                            '"missing_fields":["quantity_g"]}'
+                        )
+                    )
+                ]
+            )
+
+        response = scripted_agent_answer(
+            service=service,
+            person_id=person_id,
+            household_id=household_id,
+            scripted_model=scripted_model,
+            message="Comi queijo.",
+        )
+
+        self.assertIn("draft_meal_proposal", requested_tools)
+        self.assertEqual(response.behavior_label, "clarification_request")
+        self.assertEqual(response.message, "Quantos gramas de queijo você comeu?")
+        self.assertIsNone(response.proposal_id)
+        self.assertEqual(service.proposals.proposals, {})
+
+    def test_function_model_chat_harness_calls_real_amend_meal_tool(self) -> None:
+        service, person_id, household_id = self.make_service()
+        original = service.draft_structured_meal_proposal(
+            person_id=person_id,
+            day=date(2026, 7, 2),
+            time_text="12:30",
+            meal_type="lunch",
+            items=[{"phrase": "arroz", "quantity_g": 150}],
+            agent_settings={"external_lookup": False},
+            source_text="model extracted rice",
+        )
+        requested_tools: list[str] = []
+
+        def scripted_model(messages: list[Any], agent_info: AgentInfo) -> ModelResponse:
+            requested_tools[:] = [tool.name for tool in agent_info.function_tools]
+            proposal_id = proposal_id_from_tool_returns(messages, "amend_meal_proposal")
+            if proposal_id is None:
+                return ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            "amend_meal_proposal",
+                            {
+                                "proposal_id": original.id,
+                                "add": [{"phrase": "frango", "quantity_g": 113}],
+                                "remove": [],
+                                "set_quantity": [{"phrase": "arroz", "quantity_g": 100}],
+                                "source_text": "Esqueci o frango e eram 100g de arroz.",
+                            },
+                        )
+                    ]
+                )
+            return ModelResponse(
+                parts=[
+                    TextPart(
+                        (
+                            '{"output_type":"proposal_draft",'
+                            f'"proposal_id":"{proposal_id}",'
+                            '"summary":"Atualizei a proposta do almoço."}'
+                        )
+                    )
+                ]
+            )
+
+        response = scripted_agent_answer(
+            service=service,
+            person_id=person_id,
+            household_id=household_id,
+            scripted_model=scripted_model,
+            message="Esqueci o frango e eram 100g de arroz.",
+        )
+
+        self.assertIn("amend_meal_proposal", requested_tools)
+        self.assertEqual(response.proposal_id, "proposal_2")
+        amended = service.get_proposal(response.proposal_id or "")
+        self.assertEqual(service.get_proposal(original.id).status, "superseded")
+        self.assertEqual(amended.payload["amended_from_proposal_id"], original.id)
+        self.assertEqual([entry.quantity_g for entry in amended.entries], [100, 113])
 
     def test_pydantic_chat_path_links_live_run_to_structured_meal_proposal(self) -> None:
         service, person_id, _ = self.make_service()
@@ -218,12 +326,42 @@ class LiveAgentRoutingTest(unittest.TestCase):
         self.assertEqual(service.onboarding_turns_for_session("session-1"), (turn,))
 
 
-def proposal_id_from_tool_returns(messages: list[Any]) -> str | None:
+def scripted_agent_answer(
+    *,
+    service: HealthMonitorService,
+    person_id: str,
+    household_id: str,
+    scripted_model: Any,
+    message: str,
+) -> AgentRuntimeResponse:
+    agent = PydanticAINutritionAgent(
+        model_name="function-test",
+        ollama_base_url="http://127.0.0.1:11434",
+        model=FunctionModel(scripted_model),
+    )
+    return agent.answer(
+        deps=AgentDeps(
+            service=service,
+            person_id=person_id,
+            household_id=household_id,
+            today=date(2026, 7, 2),
+            settings={"agent_runtime": "pydantic-ai", "external_lookup": False},
+            source_config={
+                "openfoodfacts_enabled": False,
+                "research_lookup_enabled": False,
+                "ocr_enabled": False,
+            },
+        ),
+        message=message,
+    )
+
+
+def proposal_id_from_tool_returns(messages: list[Any], tool_name: str) -> str | None:
     for message in reversed(messages):
         if not isinstance(message, ModelRequest):
             continue
         for part in message.parts:
-            if not isinstance(part, ToolReturnPart) or part.tool_name != "draft_meal_proposal":
+            if not isinstance(part, ToolReturnPart) or part.tool_name != tool_name:
                 continue
             content = part.content
             if isinstance(content, dict) and isinstance(content.get("proposal_id"), str):
