@@ -1096,6 +1096,11 @@ h3 {
   overflow-wrap: anywhere;
 }
 
+.proposal-detail-section .proposal-card {
+  width: 100%;
+  box-shadow: none;
+}
+
 .inline-edit-controls {
   display: grid;
   grid-template-columns: 82px 118px repeat(3, max-content);

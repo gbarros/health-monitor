@@ -60,6 +60,16 @@ class ReviewChartUiTest(unittest.TestCase):
         self.assertIn("onEntryDeleted(entry.id)", app)
         self.assertIn("onDataChanged={invalidateDailyReadModels}", app)
 
+    def test_data_page_proposal_rows_open_details(self) -> None:
+        app = read_web_file("App.tsx")
+        styles = read_web_file("styles.css")
+
+        self.assertIn("selectedProposalId", app)
+        self.assertIn("proposalRow", app)
+        self.assertIn('aria-label="Detalhes da proposta"', app)
+        self.assertIn("<ProposalCard", app)
+        self.assertIn(".proposal-detail-section", styles)
+
 
 if __name__ == "__main__":
     unittest.main()

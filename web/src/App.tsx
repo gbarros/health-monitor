@@ -989,6 +989,7 @@ function DataPage({
   const [rangeEnd, setRangeEnd] = useState(selectedDay);
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
   const [editingWeightId, setEditingWeightId] = useState<string | null>(null);
+  const [selectedProposalId, setSelectedProposalId] = useState<string | null>(null);
   useEffect(() => {
     setRangeStart(selectedDay);
     setRangeEnd(selectedDay);
@@ -1009,6 +1010,7 @@ function DataPage({
   });
   const entries = diaryRangeQuery.data ?? [];
   const foods = foodsQuery.data ?? [];
+  const selectedProposal = proposals.find((proposal) => proposal.id === selectedProposalId) ?? null;
   const weights = (weightTrendQuery.data?.entries ?? []).filter((entry) => {
     const measuredDay = entry.measured_at.slice(0, 10);
     return measuredDay >= rangeQueryStart && measuredDay <= rangeQueryEnd;
@@ -1048,14 +1050,26 @@ function DataPage({
       <DataTable
         title="Propostas"
         empty="Nenhuma proposta."
-        columns={["Criada", "Tipo", "Status", "Resumo"]}
-        rows={proposals.map((proposal) => [
-          formatDateTime(proposal.created_at),
-          proposal.proposal_type,
-          proposal.status,
-          proposal.summary,
-        ])}
+        columns={["Criada", "Tipo", "Status", "Resumo", "Ações"]}
+        rows={proposals.map((proposal) => proposalRow(proposal, () => setSelectedProposalId(proposal.id)))}
       />
+      {selectedProposal ? (
+        <section className="data-section proposal-detail-section" aria-label="Detalhes da proposta">
+          <div className="section-heading">
+            <span>Detalhes da proposta</span>
+            <button type="button" onClick={() => setSelectedProposalId(null)}>
+              Fechar
+            </button>
+          </div>
+          <ProposalCard
+            proposal={selectedProposal}
+            busy
+            onConfirm={() => undefined}
+            onReject={() => undefined}
+            showDetails
+          />
+        </section>
+      ) : null}
       <DataTable
         title="Pesos"
         empty="Nenhum peso registrado neste intervalo."
@@ -1341,6 +1355,20 @@ function WeightInlineEditor({
       </button>
     </div>
   );
+}
+
+function proposalRow(proposal: Proposal, onDetails: () => void): DataRow {
+  return [
+    formatDateTime(proposal.created_at),
+    proposal.proposal_type,
+    proposal.status,
+    proposal.summary,
+    (
+      <button type="button" onClick={onDetails}>
+        Detalhes
+      </button>
+    ),
+  ];
 }
 
 function foodVersionRow(item: FoodResponse): string[] {
