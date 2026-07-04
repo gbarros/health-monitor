@@ -617,18 +617,6 @@ class HttpApi:
             turns = self.service.onboarding_turns_for_session(query["session_id"])
             return HttpResponse(200, [onboarding_turn_to_dict(turn) for turn in turns])
 
-        if method == "POST" and path == "/api/agent/onboarding-proposal":
-            proposal = self.service.draft_onboarding_proposal(
-                session_id=body["session_id"],
-                household_name=body.get("household_name"),
-                household_id=body.get("household_id"),
-                person=dict(body["person"]),
-                targets=dict(body["targets"]),
-                notes=body.get("notes"),
-                source_text=body.get("source_text", ""),
-            )
-            return HttpResponse(201, proposal_to_dict(proposal, self.service))
-
         if method == "GET" and path == "/api/agent/chat-history":
             turns = self.service.chat_turns_for_person(query["person_id"])
             return HttpResponse(200, [agent_chat_turn_to_dict(turn) for turn in turns])

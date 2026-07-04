@@ -10,7 +10,6 @@ import type {
   FoodLookupCandidate,
   FoodResponse,
   GoalProfile,
-  Nutrients,
   OnboardingTurn,
   Person,
   Proposal,
@@ -91,30 +90,6 @@ export async function sendOnboardingChat(input: {
 
 export async function loadOnboardingHistory(sessionId: string): Promise<OnboardingTurn[]> {
   return apiGet<OnboardingTurn[]>(`/api/agent/onboarding-history?session_id=${encodeURIComponent(sessionId)}`);
-}
-
-export async function draftOnboardingProposal(input: {
-  sessionId: string;
-  householdName: string;
-  personName: string;
-  timezone: string;
-  activityLevel: string;
-  targets: Required<Nutrients>;
-  notes?: string;
-  sourceText?: string;
-}): Promise<Proposal> {
-  return apiPost<Proposal>("/api/agent/onboarding-proposal", {
-    session_id: input.sessionId,
-    household_name: input.householdName,
-    person: {
-      name: input.personName,
-      timezone: input.timezone,
-      activity_level: input.activityLevel,
-    },
-    targets: input.targets,
-    notes: input.notes,
-    source_text: input.sourceText,
-  });
 }
 
 export async function loadChatHistory(personId: string): Promise<AgentChatTurn[]> {

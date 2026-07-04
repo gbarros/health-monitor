@@ -2683,30 +2683,27 @@ class HttpApiContractTest(unittest.TestCase):
                 "message": "Quero começar com 2000 kcal e 150g de proteína.",
             },
         )
-        proposal = api.handle(
-            "POST",
-            "/api/agent/onboarding-proposal",
-            {
-                "session_id": "session-1",
-                "household_name": "Casa",
-                "person": {
-                    "name": "Gabriel",
-                    "timezone": "America/Sao_Paulo",
-                    "activity_level": "moderate",
-                },
-                "targets": {
-                    "calories_kcal": 2000,
-                    "protein_g": 150,
-                    "carbs_g": 180,
-                    "fat_g": 70,
-                    "fiber_g": 30,
-                    "sodium_mg": 2300,
-                },
-                "notes": "Setup inicial",
-                "source_text": "conversa livre",
+        proposal = api.service.draft_onboarding_proposal(
+            session_id="session-1",
+            household_name="Casa",
+            household_id=None,
+            person={
+                "name": "Gabriel",
+                "timezone": "America/Sao_Paulo",
+                "activity_level": "moderate",
             },
-        ).body
-        applied = api.handle("POST", f"/api/proposals/{proposal['id']}/confirm", None).body
+            targets={
+                "calories_kcal": 2000,
+                "protein_g": 150,
+                "carbs_g": 180,
+                "fat_g": 70,
+                "fiber_g": 30,
+                "sodium_mg": 2300,
+            },
+            notes="Setup inicial",
+            source_text="conversa livre",
+        )
+        applied = api.handle("POST", f"/api/proposals/{proposal.id}/confirm", None).body
         people = api.handle(
             "GET",
             f"/api/people?household_id={applied['payload']['created_household_id']}",
@@ -2718,7 +2715,7 @@ class HttpApiContractTest(unittest.TestCase):
             None,
         ).body
 
-        self.assertEqual(proposal["proposal_type"], "profile_setup")
+        self.assertEqual(proposal.proposal_type, "profile_setup")
         self.assertEqual(applied["status"], "applied")
         self.assertEqual(applied["person_id"], applied["payload"]["created_person_id"])
         self.assertEqual(people[0]["name"], "Gabriel")
