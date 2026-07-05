@@ -147,10 +147,11 @@ class DailyDriverApplicationSliceTest(unittest.TestCase):
             aliases=["queijo"],
         )
 
-        proposal = service.propose_text_meal(
+        proposal = service.draft_structured_meal_proposal(
             person_id=person.id,
-            logged_at_local="2026-07-01T10:00:00",
-            text="100g queijo",
+            day=date(2026, 7, 1),
+            time_text="10:00",
+            items=[{"phrase": "queijo", "quantity_g": 100}],
             agent_settings={"model_profile": "ollama-local", "max_tool_loops": 4},
         )
 

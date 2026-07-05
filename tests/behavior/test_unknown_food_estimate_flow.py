@@ -48,11 +48,13 @@ class UnknownFoodEstimateFlowTest(unittest.TestCase):
             timezone="America/Sao_Paulo",
         )
 
-        proposal = service.propose_text_meal(
+        proposal = service.draft_structured_meal_proposal(
             person_id=person.id,
-            logged_at_local="2026-07-01T20:00:00",
-            text="300g KFC Double Crunch combo",
+            day=date(2026, 7, 1),
+            time_text="20:00",
+            items=[{"phrase": "kfc double crunch combo", "quantity_g": 300}],
             agent_settings={"external_lookup": True},
+            source_text="300g KFC Double Crunch combo",
         )
         pending = proposal.payload["estimated_food_versions"][0]
         applied = service.confirm_proposal(proposal.id)
@@ -132,11 +134,13 @@ class UnknownFoodEstimateFlowTest(unittest.TestCase):
             timezone="America/Sao_Paulo",
         )
 
-        proposal = service.propose_text_meal(
+        proposal = service.draft_structured_meal_proposal(
             person_id=person.id,
-            logged_at_local="2026-07-01T20:00:00",
-            text="300g KFC Double Crunch combo",
+            day=date(2026, 7, 1),
+            time_text="20:00",
+            items=[{"phrase": "kfc double crunch combo", "quantity_g": 300}],
             agent_settings={"external_lookup": True, "research_lookup": True},
+            source_text="300g KFC Double Crunch combo",
         )
         pending = proposal.payload["estimated_food_versions"][0]
         tool_calls = service.agent_tool_calls_for_run(proposal.source_agent_run_id or "")
@@ -197,11 +201,13 @@ class UnknownFoodEstimateFlowTest(unittest.TestCase):
             timezone="America/Sao_Paulo",
         )
 
-        proposal = service.propose_text_meal(
+        proposal = service.draft_structured_meal_proposal(
             person_id=person.id,
-            logged_at_local="2026-07-01T20:00:00",
-            text="300g KFC Double Crunch combo",
+            day=date(2026, 7, 1),
+            time_text="20:00",
+            items=[{"phrase": "kfc double crunch combo", "quantity_g": 300}],
             agent_settings={"external_lookup": True, "research_lookup": False},
+            source_text="300g KFC Double Crunch combo",
         )
         tool_calls = service.agent_tool_calls_for_run(proposal.source_agent_run_id or "")
 
@@ -242,11 +248,13 @@ class UnknownFoodEstimateFlowTest(unittest.TestCase):
             timezone="America/Sao_Paulo",
         )
 
-        proposal = service.propose_text_meal(
+        proposal = service.draft_structured_meal_proposal(
             person_id=person.id,
-            logged_at_local="2026-07-01T20:00:00",
-            text="300g KFC Double Crunch combo",
+            day=date(2026, 7, 1),
+            time_text="20:00",
+            items=[{"phrase": "kfc double crunch combo", "quantity_g": 300}],
             agent_settings={"model_profile": "ollama-local", "external_lookup": True},
+            source_text="300g KFC Double Crunch combo",
         )
 
         self.assertEqual(proposal.proposal_type, "diary_entries_with_estimates")
@@ -289,11 +297,13 @@ class UnknownFoodEstimateFlowTest(unittest.TestCase):
             name="Gabriel",
             timezone="America/Sao_Paulo",
         )
-        proposal = service.propose_text_meal(
+        proposal = service.draft_structured_meal_proposal(
             person_id=person.id,
-            logged_at_local="2026-07-01T20:00:00",
-            text="300g KFC Double Crunch combo",
+            day=date(2026, 7, 1),
+            time_text="20:00",
+            items=[{"phrase": "kfc double crunch combo", "quantity_g": 300}],
             agent_settings={"external_lookup": True},
+            source_text="300g KFC Double Crunch combo",
         )
 
         applied = service.confirm_proposal(proposal.id)
@@ -332,11 +342,13 @@ class UnknownFoodEstimateFlowTest(unittest.TestCase):
             name="Gabriel",
             timezone="America/Sao_Paulo",
         )
-        proposal = service.propose_text_meal(
+        proposal = service.draft_structured_meal_proposal(
             person_id=person.id,
-            logged_at_local="2026-07-01T20:00:00",
-            text="300g KFC Double Crunch combo",
+            day=date(2026, 7, 1),
+            time_text="20:00",
+            items=[{"phrase": "kfc double crunch combo", "quantity_g": 300}],
             agent_settings={"external_lookup": True},
+            source_text="300g KFC Double Crunch combo",
         )
 
         service.reject_proposal(proposal.id)

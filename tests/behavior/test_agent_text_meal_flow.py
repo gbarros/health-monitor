@@ -11,7 +11,7 @@ from health_monitor.persistence.sqlite_state import SQLiteStateRepository
 
 
 class AgentTextMealFlowTest(unittest.TestCase):
-    def test_multi_item_text_meal_creates_audited_proposal_without_mutation(self) -> None:
+    def test_structured_meal_creates_audited_proposal_without_mutation(self) -> None:
         service = HealthMonitorService()
         household = service.create_household(name="Casa")
         person = service.create_person(
@@ -39,21 +39,26 @@ class AgentTextMealFlowTest(unittest.TestCase):
             serving_size_g=50,
         )
 
-        proposal = service.propose_text_meal(
+        proposal = service.draft_structured_meal_proposal(
             person_id=person.id,
-            logged_at_local="2026-07-01T09:00:00",
-            text="10am, 50g queijo, 2 ovos",
+            day=date(2026, 7, 1),
+            time_text="10:00",
+            items=[
+                {"phrase": "queijo", "quantity_g": 50, "source_text": "50g queijo"},
+                {"phrase": "ovo", "quantity_g": 100, "source_text": "2 ovos"},
+            ],
             agent_settings={
                 "model_profile": "ollama-local",
                 "effort": "medium",
                 "max_tool_loops": 4,
                 "external_lookup": False,
             },
+            source_text="10am, 50g queijo, 2 ovos",
         )
         run = service.get_agent_run(proposal.source_agent_run_id or "")
 
         self.assertEqual(proposal.status, "draft")
-        self.assertEqual(proposal.summary, "2 diary entries drafted from text meal")
+        self.assertEqual(proposal.summary, "2 diary entries drafted from structured meal items")
         self.assertEqual(len(proposal.entries), 2)
         self.assertEqual(proposal.entries[0].quantity_g, 50)
         self.assertEqual(proposal.entries[1].quantity_g, 100)
@@ -72,7 +77,7 @@ class AgentTextMealFlowTest(unittest.TestCase):
             Nutrients(312.5, 24.5, 2.4, 22.75),
         )
 
-    def test_unsupported_unit_creates_clarification_proposal_without_mutation(self) -> None:
+    def test_draft_meal_entry_can_be_edited_before_confirmation(self) -> None:
         service = HealthMonitorService()
         household = service.create_household(name="Casa")
         person = service.create_person(
@@ -89,181 +94,11 @@ class AgentTextMealFlowTest(unittest.TestCase):
             source="label_scan",
             aliases=["queijo"],
         )
-
-        proposal = service.propose_text_meal(
+        proposal = service.draft_structured_meal_proposal(
             person_id=person.id,
-            logged_at_local="2026-07-01T10:00:00",
-            text="10am, 1 fatia queijo",
-            agent_settings={"external_lookup": False},
-        )
-        run = service.get_agent_run(proposal.source_agent_run_id or "")
-
-        self.assertEqual(proposal.status, "needs_clarification")
-        self.assertEqual(proposal.entries, ())
-        self.assertEqual(proposal.payload["missing_fields"], ["quantity_g"])
-        self.assertEqual(proposal.payload["unresolved_items"][0]["unit"], "fatia")
-        self.assertIn("grams", proposal.summary.casefold())
-        self.assertEqual(run.status, "needs_clarification")
-        self.assertEqual(service.day_summary(person.id, date(2026, 7, 1)).totals, Nutrients())
-
-    def test_unparseable_weird_meal_text_creates_clarification_proposal_without_mutation(self) -> None:
-        service = HealthMonitorService()
-        household = service.create_household(name="Casa")
-        person = service.create_person(
-            household_id=household.id,
-            name="Gabriel",
-            timezone="America/Sao_Paulo",
-        )
-
-        proposal = service.propose_text_meal(
-            person_id=person.id,
-            logged_at_local="2026-07-01T10:00:00",
-            text="lá pelas 10 comi só meio queijo",
-            agent_settings={"external_lookup": False},
-        )
-        run = service.get_agent_run(proposal.source_agent_run_id or "")
-
-        self.assertEqual(proposal.status, "needs_clarification")
-        self.assertEqual(proposal.entries, ())
-        self.assertEqual(proposal.payload["missing_fields"], ["parseable_food_item"])
-        self.assertEqual(
-            proposal.payload["unresolved_items"][0]["quantity_basis"],
-            "unparseable_text",
-        )
-        self.assertEqual(run.status, "needs_clarification")
-        self.assertEqual(service.day_summary(person.id, date(2026, 7, 1)).totals, Nutrients())
-
-    def test_ambiguous_local_food_requires_clarification_without_mutation(self) -> None:
-        service = HealthMonitorService()
-        household = service.create_household(name="Casa")
-        person = service.create_person(
-            household_id=household.id,
-            name="Gabriel",
-            timezone="America/Sao_Paulo",
-        )
-        service.create_food_with_version(
-            household_id=household.id,
-            name="Iogurte Natural",
-            brand="Batavo",
-            version_label="natural label",
-            nutrients_per_100g=Nutrients(calories_kcal=80, protein_g=5, carbs_g=9, fat_g=2),
-            source="label_scan",
-            aliases=["iogurte"],
-        )
-        service.create_food_with_version(
-            household_id=household.id,
-            name="Iogurte Protein",
-            brand="Batavo",
-            version_label="protein label",
-            nutrients_per_100g=Nutrients(calories_kcal=70, protein_g=10, carbs_g=6, fat_g=1),
-            source="label_scan",
-            aliases=["iogurte"],
-        )
-
-        proposal = service.propose_text_meal(
-            person_id=person.id,
-            logged_at_local="2026-07-01T10:00:00",
-            text="100g iogurte",
-            agent_settings={"external_lookup": False},
-        )
-        run = service.get_agent_run(proposal.source_agent_run_id or "")
-
-        self.assertEqual(proposal.status, "needs_clarification")
-        self.assertEqual(proposal.entries, ())
-        self.assertEqual(proposal.payload["missing_fields"], ["food_version_id"])
-        self.assertEqual(proposal.payload["unresolved_items"][0]["phrase"], "iogurte")
-        self.assertEqual(
-            [candidate["food_name"] for candidate in proposal.payload["unresolved_items"][0]["candidates"]],
-            ["Iogurte Natural", "Iogurte Protein"],
-        )
-        self.assertIn("which food", proposal.summary.casefold())
-        self.assertEqual(run.status, "needs_clarification")
-        self.assertEqual(service.day_summary(person.id, date(2026, 7, 1)).totals, Nutrients())
-
-    def test_ambiguous_food_clarification_can_be_resolved_to_draft_proposal(self) -> None:
-        service = HealthMonitorService()
-        household = service.create_household(name="Casa")
-        person = service.create_person(
-            household_id=household.id,
-            name="Gabriel",
-            timezone="America/Sao_Paulo",
-        )
-        _, natural = service.create_food_with_version(
-            household_id=household.id,
-            name="Iogurte Natural",
-            brand="Batavo",
-            version_label="natural label",
-            nutrients_per_100g=Nutrients(calories_kcal=80, protein_g=5, carbs_g=9, fat_g=2),
-            source="label_scan",
-            aliases=["iogurte"],
-        )
-        _, protein = service.create_food_with_version(
-            household_id=household.id,
-            name="Iogurte Protein",
-            brand="Batavo",
-            version_label="protein label",
-            nutrients_per_100g=Nutrients(calories_kcal=70, protein_g=10, carbs_g=6, fat_g=1),
-            source="label_scan",
-            aliases=["iogurte"],
-        )
-        clarification = service.propose_text_meal(
-            person_id=person.id,
-            logged_at_local="2026-07-01T10:00:00",
-            text="100g iogurte",
-            agent_settings={"external_lookup": False},
-        )
-
-        resolved = service.resolve_text_meal_food_clarification(
-            proposal_id=clarification.id,
-            unresolved_index=0,
-            food_version_id=protein.id,
-        )
-        superseded = service.get_proposal(clarification.id)
-        applied = service.confirm_proposal(resolved.id)
-        summary = service.day_summary(person.id, date(2026, 7, 1))
-
-        self.assertEqual(superseded.status, "superseded")
-        self.assertEqual(superseded.payload["superseded_by_proposal_id"], resolved.id)
-        self.assertEqual(resolved.status, "draft")
-        self.assertEqual(resolved.entries[0].food_version_id, protein.id)
-        self.assertEqual(resolved.entries[0].quantity_g, 100)
-        self.assertEqual(resolved.totals.rounded(), Nutrients(70, 10, 6, 1))
-        self.assertEqual(resolved.payload["resolved_from_proposal_id"], clarification.id)
-        self.assertEqual(applied.status, "applied")
-        self.assertEqual(summary.totals.rounded(), Nutrients(70, 10, 6, 1))
-        self.assertNotEqual(resolved.entries[0].food_version_id, natural.id)
-        with self.assertRaisesRegex(ValueError, "superseded"):
-            service.resolve_text_meal_food_clarification(
-                proposal_id=clarification.id,
-                unresolved_index=0,
-                food_version_id=natural.id,
-            )
-        with self.assertRaisesRegex(ValueError, "superseded"):
-            service.confirm_proposal(clarification.id)
-        with self.assertRaisesRegex(ValueError, "cannot reject superseded proposal"):
-            service.reject_proposal(clarification.id)
-
-    def test_draft_text_meal_entry_can_be_edited_before_confirmation(self) -> None:
-        service = HealthMonitorService()
-        household = service.create_household(name="Casa")
-        person = service.create_person(
-            household_id=household.id,
-            name="Gabriel",
-            timezone="America/Sao_Paulo",
-        )
-        service.create_food_with_version(
-            household_id=household.id,
-            name="Queijo Minas",
-            brand=None,
-            version_label="current",
-            nutrients_per_100g=Nutrients(calories_kcal=315, protein_g=23, carbs_g=2.6, fat_g=23.5),
-            source="label_scan",
-            aliases=["queijo"],
-        )
-        proposal = service.propose_text_meal(
-            person_id=person.id,
-            logged_at_local="2026-07-01T10:00:00",
-            text="100g queijo",
+            day=date(2026, 7, 1),
+            time_text="10:00",
+            items=[{"phrase": "queijo", "quantity_g": 100}],
             agent_settings={"external_lookup": False},
         )
 
@@ -283,7 +118,7 @@ class AgentTextMealFlowTest(unittest.TestCase):
         self.assertEqual(summary.totals.rounded(), Nutrients(157.5, 11.5, 1.3, 11.75))
         self.assertEqual(summary.meals["snack"][0].quantity_g, 50)
 
-    def test_draft_text_meal_entry_food_match_can_be_replaced_before_confirmation(self) -> None:
+    def test_draft_meal_entry_food_match_can_be_replaced_before_confirmation(self) -> None:
         service = HealthMonitorService()
         household = service.create_household(name="Casa")
         person = service.create_person(
@@ -309,10 +144,11 @@ class AgentTextMealFlowTest(unittest.TestCase):
             source="label_scan",
             aliases=["leite proteico"],
         )
-        proposal = service.propose_text_meal(
+        proposal = service.draft_structured_meal_proposal(
             person_id=person.id,
-            logged_at_local="2026-07-01T10:00:00",
-            text="100g leite",
+            day=date(2026, 7, 1),
+            time_text="10:00",
+            items=[{"phrase": "leite", "quantity_g": 100}],
             agent_settings={"external_lookup": False},
         )
 
@@ -332,7 +168,7 @@ class AgentTextMealFlowTest(unittest.TestCase):
         self.assertEqual(summary.meals["breakfast"][0].food_name, "Leite mais proteico")
         self.assertEqual(summary.totals.rounded(), Nutrients(50, 10, 4, 0.5))
 
-    def test_explicit_text_meal_amendment_supersedes_original(self) -> None:
+    def test_structured_meal_amendment_supersedes_original(self) -> None:
         service = HealthMonitorService()
         household = service.create_household(name="Casa")
         person = service.create_person(
@@ -368,18 +204,23 @@ class AgentTextMealFlowTest(unittest.TestCase):
             aliases=["frango"],
         )
 
-        original = service.propose_text_meal(
+        original = service.draft_structured_meal_proposal(
             person_id=person.id,
-            logged_at_local="2026-07-01T12:00:00",
-            text="Almoço: 150g arroz\n100g feijão",
+            day=date(2026, 7, 1),
+            time_text="12:00",
+            meal_type="lunch",
+            items=[
+                {"phrase": "arroz", "quantity_g": 150},
+                {"phrase": "feijão", "quantity_g": 100},
+            ],
             agent_settings={"external_lookup": False},
         )
-        amended = service.propose_text_meal(
+        amended = service.amend_structured_meal_proposal(
+            proposal_id=original.id,
             person_id=person.id,
-            logged_at_local="2026-07-01T12:15:00",
-            text="esqueci 113g de frango",
-            amend_proposal_id=original.id,
+            add=[{"phrase": "frango", "quantity_g": 113}],
             agent_settings={"external_lookup": False},
+            source_text="esqueci 113g de frango",
         )
         superseded = service.get_proposal(original.id)
         applied = service.confirm_proposal(amended.id)
@@ -395,7 +236,7 @@ class AgentTextMealFlowTest(unittest.TestCase):
         self.assertEqual(len(summary.meals["lunch"]), 3)
         self.assertEqual(summary.meals["lunch"][2].food_name, "Frango")
 
-    def test_explicit_text_meal_amendment_can_subtract_from_open_draft(self) -> None:
+    def test_structured_meal_amendment_can_subtract_from_open_draft(self) -> None:
         service = HealthMonitorService()
         household = service.create_household(name="Casa")
         person = service.create_person(
@@ -412,91 +253,31 @@ class AgentTextMealFlowTest(unittest.TestCase):
             source="reference",
             aliases=["frango"],
         )
-        original = service.propose_text_meal(
+        original = service.draft_structured_meal_proposal(
             person_id=person.id,
-            logged_at_local="2026-07-01T12:00:00",
-            text="200g frango",
+            day=date(2026, 7, 1),
+            time_text="12:00",
+            items=[{"phrase": "frango", "quantity_g": 200}],
             agent_settings={"external_lookup": False},
         )
 
-        amended = service.propose_text_meal(
+        amended = service.amend_structured_meal_proposal(
+            proposal_id=original.id,
             person_id=person.id,
-            logged_at_local="2026-07-01T12:05:00",
-            text="-50g frango",
-            amend_proposal_id=original.id,
+            remove=[{"phrase": "frango", "quantity_g": 50}],
             agent_settings={"external_lookup": False},
+            source_text="-50g frango",
         )
 
         self.assertEqual(service.get_proposal(original.id).status, "superseded")
         self.assertEqual(len(amended.entries), 1)
         self.assertEqual(amended.entries[0].quantity_g, 150)
-        self.assertEqual(amended.totals.rounded(), Nutrients(calories_kcal=247.5, protein_g=46.5, carbs_g=0, fat_g=5.4))
-
-    def test_same_breakfast_as_yesterday_copies_structured_entries_as_proposal(self) -> None:
-        service = HealthMonitorService()
-        household = service.create_household(name="Casa")
-        person = service.create_person(
-            household_id=household.id,
-            name="Gabriel",
-            timezone="America/Sao_Paulo",
-        )
-        _, cheese = service.create_food_with_version(
-            household_id=household.id,
-            name="Queijo Minas",
-            brand=None,
-            version_label="current",
-            nutrients_per_100g=Nutrients(calories_kcal=315, protein_g=23, carbs_g=2.6, fat_g=23.5),
-            source="label_scan",
-            aliases=["queijo"],
-        )
-        _, egg = service.create_food_with_version(
-            household_id=household.id,
-            name="Ovo",
-            brand=None,
-            version_label="large egg",
-            nutrients_per_100g=Nutrients(calories_kcal=155, protein_g=13, carbs_g=1.1, fat_g=11),
-            source="reference",
-            aliases=["ovo"],
-            serving_size_g=50,
-        )
-        first = service.log_diary_entry(
-            person_id=person.id,
-            logged_at_local="2026-07-01T09:00:00",
-            food_version_id=cheese.id,
-            quantity_g=50,
-            source="manual",
-            meal_type="breakfast",
-        )
-        second = service.log_diary_entry(
-            person_id=person.id,
-            logged_at_local="2026-07-01T09:05:00",
-            food_version_id=egg.id,
-            quantity_g=100,
-            source="manual",
-            meal_type="breakfast",
+        self.assertEqual(
+            amended.totals.rounded(),
+            Nutrients(calories_kcal=247.5, protein_g=46.5, carbs_g=0, fat_g=5.4),
         )
 
-        proposal = service.propose_text_meal(
-            person_id=person.id,
-            logged_at_local="2026-07-02T09:00:00",
-            text="same breakfast as yesterday",
-            agent_settings={"external_lookup": False},
-        )
-        before = service.day_summary(person.id, date(2026, 7, 2))
-        applied = service.confirm_proposal(proposal.id)
-        after = service.day_summary(person.id, date(2026, 7, 2))
-
-        self.assertEqual(proposal.status, "draft")
-        self.assertEqual(proposal.summary, "2 diary entries copied from breakfast on 2026-07-01")
-        self.assertEqual([entry.food_version_id for entry in proposal.entries], [cheese.id, egg.id])
-        self.assertEqual([entry.quantity_g for entry in proposal.entries], [50, 100])
-        self.assertEqual(proposal.evidence[0]["source_entry_id"], first.id)
-        self.assertEqual(proposal.evidence[1]["source_entry_id"], second.id)
-        self.assertEqual(before.totals, Nutrients())
-        self.assertEqual(applied.status, "applied")
-        self.assertEqual(after.totals.rounded(), Nutrients(312.5, 24.5, 2.4, 22.75))
-
-    def test_repeat_meal_api_service_wrapper_copies_structured_entries_as_proposal(self) -> None:
+    def test_repeat_meal_service_wrapper_copies_structured_entries_as_proposal(self) -> None:
         service = HealthMonitorService()
         household = service.create_household(name="Casa")
         person = service.create_person(
@@ -558,10 +339,11 @@ class AgentTextMealFlowTest(unittest.TestCase):
                 source="label_scan",
                 aliases=["queijo"],
             )
-            proposal = first.propose_text_meal(
+            proposal = first.draft_structured_meal_proposal(
                 person_id=person.id,
-                logged_at_local="2026-07-01T10:00:00",
-                text="100g queijo",
+                day=date(2026, 7, 1),
+                time_text="10:00",
+                items=[{"phrase": "queijo", "quantity_g": 100}],
                 agent_settings={"model_profile": "ollama-local"},
             )
 

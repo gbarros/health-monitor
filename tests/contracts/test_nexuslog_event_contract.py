@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from datetime import date
 from io import StringIO
 
 from health_monitor.api.http_api import HttpApi
@@ -97,11 +98,13 @@ class NexusLogEventContractTest(unittest.TestCase):
                 "aliases": ["queijo"],
             },
         ).body
-        proposal = api.service.propose_text_meal(
+        proposal = api.service.draft_structured_meal_proposal(
             person_id=person["id"],
-            logged_at_local="2026-07-01T10:00:00",
-            text="100g queijo",
+            day=date(2026, 7, 1),
+            time_text="10:00",
+            items=[{"phrase": "queijo", "quantity_g": 100}],
             agent_settings={"model_profile": "deterministic-test"},
+            source_text="100g queijo",
         )
         api.handle("POST", f"/api/proposals/{proposal.id}/confirm", {})
         api.handle(

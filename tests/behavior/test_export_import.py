@@ -137,11 +137,13 @@ class ExportImportTest(unittest.TestCase):
             name="Gabriel",
             timezone="America/Sao_Paulo",
         )
-        proposal = source.propose_text_meal(
+        proposal = source.draft_structured_meal_proposal(
             person_id=person.id,
-            logged_at_local="2026-07-01T20:00:00",
-            text="300g KFC Double Crunch combo",
+            day=date(2026, 7, 1),
+            time_text="20:00",
+            items=[{"phrase": "kfc double crunch combo", "quantity_g": 300}],
             agent_settings={"external_lookup": True},
+            source_text="300g KFC Double Crunch combo",
         )
 
         exported = source.export_data()
@@ -224,10 +226,11 @@ class ExportImportTest(unittest.TestCase):
 
     def test_export_import_preserves_proposal_audit_timestamps(self) -> None:
         source, person_id = self.build_populated_service()
-        proposal = source.propose_text_meal(
+        proposal = source.draft_structured_meal_proposal(
             person_id=person_id,
-            logged_at_local="2026-07-02T10:00:00",
-            text="50g queijo",
+            day=date(2026, 7, 2),
+            time_text="10:00",
+            items=[{"phrase": "queijo", "quantity_g": 50}],
             agent_settings={"external_lookup": False},
         )
         applied = source.confirm_proposal(proposal.id)
@@ -244,7 +247,7 @@ class ExportImportTest(unittest.TestCase):
         )
         self.assertIsNone(restored.rejected_at)
 
-    def test_export_import_preserves_superseded_clarification_link(self) -> None:
+    def test_export_import_preserves_superseded_amendment_link(self) -> None:
         source = HealthMonitorService()
         household = source.create_household(name="Casa")
         person = source.create_person(
@@ -254,15 +257,6 @@ class ExportImportTest(unittest.TestCase):
         )
         source.create_food_with_version(
             household_id=household.id,
-            name="Iogurte Natural",
-            brand="Batavo",
-            version_label="natural",
-            nutrients_per_100g=Nutrients(80, 5, 9, 2),
-            source="label_scan",
-            aliases=["iogurte"],
-        )
-        _, protein = source.create_food_with_version(
-            household_id=household.id,
             name="Iogurte Protein",
             brand="Batavo",
             version_label="protein",
@@ -270,25 +264,28 @@ class ExportImportTest(unittest.TestCase):
             source="label_scan",
             aliases=["iogurte"],
         )
-        clarification = source.propose_text_meal(
+        original = source.draft_structured_meal_proposal(
             person_id=person.id,
-            logged_at_local="2026-07-02T10:00:00",
-            text="100g iogurte",
+            day=date(2026, 7, 2),
+            time_text="10:00",
+            items=[{"phrase": "iogurte", "quantity_g": 100}],
             agent_settings={"external_lookup": False},
         )
-        resolved = source.resolve_text_meal_food_clarification(
-            proposal_id=clarification.id,
-            unresolved_index=0,
-            food_version_id=protein.id,
+        amended = source.amend_structured_meal_proposal(
+            proposal_id=original.id,
+            person_id=person.id,
+            add=[{"phrase": "iogurte", "quantity_g": 50}],
+            agent_settings={"external_lookup": False},
+            source_text="acrescentar 50g iogurte",
         )
 
         exported = source.export_data()
         target = HealthMonitorService()
         target.import_data(exported)
-        restored = target.get_proposal(clarification.id)
+        restored = target.get_proposal(original.id)
 
         self.assertEqual(restored.status, "superseded")
-        self.assertEqual(restored.payload["superseded_by_proposal_id"], resolved.id)
+        self.assertEqual(restored.payload["superseded_by_proposal_id"], amended.id)
 
     def test_import_refuses_to_overwrite_non_empty_service(self) -> None:
         source, _ = self.build_populated_service()

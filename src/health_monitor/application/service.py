@@ -338,6 +338,14 @@ class ParsedRecipeIngredient:
 
 
 @dataclass(frozen=True)
+class ParsedMealItem:
+    phrase: str
+    quantity_g: float
+    source_text: str
+    evidence: dict[str, object]
+
+
+@dataclass(frozen=True)
 class ParsedRecipe:
     name: str
     yield_g: float | None
@@ -970,6 +978,11 @@ class HealthMonitorService:
                 phrase=phrase,
             )
         if resolution is None and phrase is not None:
+            resolution = self._resolve_phrase_by_food_name(
+                household_id=household_id,
+                phrase=phrase,
+            )
+        if resolution is None and phrase is not None:
             resolution = self.resolver.resolve_phrase(phrase, person_id=person_id)
         if resolution is None:
             raise ValueError("food reference could not be resolved")
@@ -1018,6 +1031,33 @@ class HealthMonitorService:
             food_version_id=version.id,
             reason="alias_recently_logged_version",
             confidence=0.98,
+        )
+
+    def _resolve_phrase_by_food_name(
+        self,
+        *,
+        household_id: str,
+        phrase: str,
+    ) -> FoodResolution | None:
+        normalized = phrase.casefold().strip()
+        matches = [
+            food
+            for food in self.catalog.foods.values()
+            if food.household_id == household_id
+            and not food.archived
+            and food.default_version_id is not None
+            and food.name.casefold().strip() == normalized
+        ]
+        if len(matches) != 1:
+            return None
+        version = self.catalog.get_version(matches[0].default_version_id or "")
+        if version.archived:
+            return None
+        return FoodResolution(
+            food_id=matches[0].id,
+            food_version_id=version.id,
+            reason="exact_food_name",
+            confidence=0.97,
         )
 
     def lookup_food_candidates(
@@ -2495,7 +2535,8 @@ class HealthMonitorService:
             totals += resolved.version.nutrients_per_100g.scale(quantity_g / 100)
             evidence.append(
                 {
-                    "source_type": source_type,
+                    "source_type": resolved.evidence_source_type,
+                    "proposal_source_type": source_type,
                     "source_text": str(item.get("source_text") or phrase),
                     "phrase": phrase,
                     "food_id": resolved.version.food_id,
@@ -2504,6 +2545,7 @@ class HealthMonitorService:
                     "quantity_g": quantity_g,
                     "resolution_reason": resolved.resolution_reason,
                     "confidence": resolved.confidence,
+                    **resolved.evidence_source_details,
                 }
             )
         return entries, evidence, totals, estimated_food_versions
@@ -2531,201 +2573,6 @@ class HealthMonitorService:
         if len(cleaned_time) == 5:
             cleaned_time = f"{cleaned_time}:00"
         return self._parse_person_datetime(f"{day.isoformat()}T{cleaned_time}", person)
-
-    def propose_text_meal(
-        self,
-        *,
-        person_id: str,
-        logged_at_local: str,
-        text: str,
-        agent_settings: dict[str, Any] | None = None,
-        amend_proposal_id: str | None = None,
-    ) -> CreateDiaryEntriesProposal:
-        settings = self._agent_settings(agent_settings)
-        self._ensure_model_available(settings, replay_message=text)
-        person = self._require_person(person_id)
-        logged_at = self._parse_person_datetime(logged_at_local, person)
-        run = AgentRun(
-            id=self._next_id("agent_run"),
-            person_id=person_id,
-            input_text=text,
-            settings=settings,
-            status="started",
-            **self._run_metadata(settings),
-        )
-        self.agent_runs[run.id] = run
-
-        amendment_target_id = amend_proposal_id
-        if amendment_target_id is not None:
-            proposal = self._create_amended_text_meal_proposal(
-                proposal_id=amendment_target_id,
-                person_id=person_id,
-                text=text,
-                run=run,
-                logged_at=logged_at,
-                settings=settings,
-            )
-            self._persist()
-            return proposal
-
-        repeated_meal = parse_repeated_meal_reference(text, default_logged_at=logged_at)
-        if repeated_meal is not None:
-            source_day, meal_type = repeated_meal
-            proposal = self._create_repeated_meal_proposal(
-                person_id=person_id,
-                text=text,
-                run=run,
-                target_logged_at=logged_at,
-                source_day=source_day,
-                meal_type=meal_type,
-            )
-            self._persist()
-            return proposal
-        try:
-            parsed_logged_at, items = parse_text_meal_items(text, default_logged_at=logged_at)
-        except ValueError as exc:
-            proposal = self._create_text_meal_clarification_proposal(
-                person_id=person_id,
-                text=text,
-                run=run,
-                logged_at=logged_at,
-                unresolved_items=(
-                    ParsedMealItem(
-                        phrase=text.casefold().strip(),
-                        quantity_g=0,
-                        source_text=text,
-                        evidence={
-                            "quantity_basis": "unparseable_text",
-                            "parse_error": str(exc),
-                        },
-                    ),
-                ),
-                missing_fields=("parseable_food_item",),
-                summary="Need a clearer food and quantity before logging this meal.",
-            )
-            self._record_agent_tool_call(
-                run=run,
-                tool_name="parse_text_meal",
-                input_summary="text meal parse",
-                output_summary="needs clarification",
-                status="failed",
-                error=str(exc),
-            )
-            self._persist()
-            return proposal
-        unsupported_items = [
-            item
-            for item in items
-            if item.evidence.get("quantity_basis") == "unsupported_unit"
-        ]
-        if unsupported_items:
-            proposal = self._create_text_meal_clarification_proposal(
-                person_id=person_id,
-                text=text,
-                run=run,
-                logged_at=parsed_logged_at,
-                unresolved_items=unsupported_items,
-            )
-            self._persist()
-            return proposal
-        entries: list[DiaryEntry] = []
-        evidence: list[dict[str, object]] = []
-        estimated_food_versions: list[dict[str, object]] = []
-        totals = Nutrients()
-        for item in items:
-            ambiguity = self._ambiguous_local_food_reference(
-                household_id=person.household_id,
-                person_id=person.id,
-                phrase=item.phrase,
-            )
-            if ambiguity is not None:
-                proposal = self._create_text_meal_clarification_proposal(
-                    person_id=person_id,
-                    text=text,
-                    run=run,
-                    logged_at=parsed_logged_at,
-                    unresolved_items=(item,),
-                    missing_fields=("food_version_id",),
-                    summary="Need to know which food to use before logging this meal.",
-                    candidate_overrides={item.phrase: ambiguity.candidates},
-                )
-                self._persist()
-                return proposal
-            resolved = self._resolve_meal_item_food(
-                person=person,
-                run=run,
-                phrase=item.phrase,
-                settings=settings,
-            )
-            if resolved.pending_version is not None:
-                estimated_food_versions.append(resolved.pending_version)
-            version = resolved.version
-            food_version_id = resolved.food_version_id
-            source = resolved.source
-            resolution_reason = resolved.resolution_reason
-            confidence = resolved.confidence
-            evidence_source_type = resolved.evidence_source_type
-            evidence_source_details = resolved.evidence_source_details
-            quantity_g = item.quantity_g
-            if item.evidence.get("quantity_basis") == "serving_count":
-                if version.serving_size_g is None:
-                    proposal = self._create_text_meal_clarification_proposal(
-                        person_id=person_id,
-                        text=text,
-                        run=run,
-                        logged_at=parsed_logged_at,
-                        unresolved_items=(item,),
-                    )
-                    self._persist()
-                    return proposal
-                quantity_g = float(item.evidence["serving_count"]) * version.serving_size_g
-            entry = DiaryEntry(
-                id=self._next_id("diary_entry"),
-                person_id=person_id,
-                logged_at=parsed_logged_at,
-                meal_type=infer_meal_type(parsed_logged_at),
-                food_version_id=food_version_id,
-                quantity_g=quantity_g,
-                source=source,
-            )
-            entries.append(entry)
-            totals += version.nutrients_per_100g.scale(quantity_g / 100)
-            evidence.append(
-                {
-                    "source_type": evidence_source_type,
-                    "source_text": item.source_text,
-                    "phrase": item.phrase,
-                    "quantity_g": quantity_g,
-                    "resolution_reason": resolution_reason,
-                    "confidence": confidence,
-                    "food_version_id": food_version_id,
-                    **evidence_source_details,
-                    **item.evidence,
-                }
-            )
-        proposal_type = "diary_entries_with_estimates" if estimated_food_versions else "diary_entries"
-        proposal = self.proposals.create(
-            CreateDiaryEntriesProposal(
-                id=self._next_id("proposal"),
-                person_id=person_id,
-                entries=tuple(entries),
-                proposal_type=proposal_type,
-                summary=f"{len(entries)} diary entries drafted from text meal",
-                payload={"estimated_food_versions": estimated_food_versions},
-                totals=totals,
-                evidence=tuple(evidence),
-                source_agent_run_id=run.id,
-            )
-        )
-        self.agent_runs[run.id] = replace(
-            run,
-            status="proposal_created",
-            proposal_id=proposal.id,
-            tool_loop_count=len(self.agent_tool_calls_for_run(run.id)),
-            fallback_reason=self._current_fallback_reason(run),
-        )
-        self._persist()
-        return proposal
 
     def _resolve_meal_item_food(
         self,
@@ -2925,230 +2772,6 @@ class HealthMonitorService:
             },
         )
 
-    def _create_amended_text_meal_proposal(
-        self,
-        *,
-        proposal_id: str,
-        person_id: str,
-        text: str,
-        run: AgentRun,
-        logged_at: datetime,
-        settings: dict[str, Any] | None = None,
-    ) -> CreateDiaryEntriesProposal:
-        settings = self._agent_settings(settings)
-        original = self.proposals.proposals[proposal_id]
-        pending_versions = {
-            str(item["food_version_id"]): dict(item)
-            for item in original.payload.get("estimated_food_versions", [])
-        }
-        if original.person_id != person_id:
-            raise ValueError("proposal belongs to a different person")
-        if original.status != "draft":
-            raise ValueError("only draft proposals can be amended")
-        if original.proposal_type not in {"diary_entries", "diary_entries_with_estimates"}:
-            raise ValueError(f"proposal type cannot be amended as a meal: {original.proposal_type}")
-
-        additions_text, removals = parse_text_meal_amendment(text)
-        updated_entries = [
-            DiaryEntry(
-                id=self._next_id("diary_entry"),
-                person_id=entry.person_id,
-                logged_at=entry.logged_at,
-                meal_type=entry.meal_type,
-                food_version_id=entry.food_version_id,
-                quantity_g=entry.quantity_g,
-                source=entry.source,
-                deleted_at=entry.deleted_at,
-            )
-            for entry in original.entries
-        ]
-        evidence = [dict(item) for item in original.evidence]
-        warnings: list[str] = []
-
-        for removal in removals:
-            match_index = next(
-                (
-                    index
-                    for index, entry in enumerate(updated_entries)
-                    if self._proposal_entry_matches_phrase(
-                        entry, removal.phrase, pending_versions=pending_versions
-                    )
-                ),
-                None,
-            )
-            if match_index is None:
-                warnings.append(f"Could not find an open proposal item matching '{removal.phrase}'.")
-                continue
-            entry = updated_entries[match_index]
-            remaining_quantity = entry.quantity_g - removal.quantity_g
-            if remaining_quantity <= 0:
-                removed = updated_entries.pop(match_index)
-                evidence.append(
-                    {
-                        "source_type": "text_meal_amendment",
-                        "source_text": removal.source_text,
-                        "action": "remove_entry",
-                        "food_version_id": removed.food_version_id,
-                        "quantity_g": removed.quantity_g,
-                        "confidence": 0.85,
-                    }
-                )
-            else:
-                updated_entries[match_index] = DiaryEntry(
-                    id=entry.id,
-                    person_id=entry.person_id,
-                    logged_at=entry.logged_at,
-                    meal_type=entry.meal_type,
-                    food_version_id=entry.food_version_id,
-                    quantity_g=remaining_quantity,
-                    source=entry.source,
-                    deleted_at=entry.deleted_at,
-                )
-                evidence.append(
-                    {
-                        "source_type": "text_meal_amendment",
-                        "source_text": removal.source_text,
-                        "action": "subtract_quantity",
-                        "food_version_id": entry.food_version_id,
-                        "quantity_g": removal.quantity_g,
-                        "remaining_quantity_g": remaining_quantity,
-                        "confidence": 0.85,
-                    }
-                )
-
-        added_items: list[ParsedMealItem] = []
-        if additions_text:
-            try:
-                _, added_items = parse_text_meal_items(additions_text, default_logged_at=logged_at)
-            except ValueError as exc:
-                proposal = self._create_text_meal_clarification_proposal(
-                    person_id=person_id,
-                    text=text,
-                    run=run,
-                    logged_at=logged_at,
-                    unresolved_items=(
-                        ParsedMealItem(
-                            phrase=text.casefold().strip(),
-                            quantity_g=0,
-                            source_text=text,
-                            evidence={
-                                "quantity_basis": "unparseable_amendment",
-                                "parse_error": str(exc),
-                            },
-                        ),
-                    ),
-                    missing_fields=("parseable_food_item",),
-                    summary="Need a clearer food and quantity before amending this meal.",
-                )
-                return proposal
-
-        person = self._require_person(person_id)
-        new_pending_versions: list[dict[str, object]] = []
-        for item in added_items:
-            if item.evidence.get("quantity_basis") != "grams":
-                proposal = self._create_text_meal_clarification_proposal(
-                    person_id=person_id,
-                    text=text,
-                    run=run,
-                    logged_at=logged_at,
-                    unresolved_items=(item,),
-                    summary="Need grams before amending this meal.",
-                )
-                return proposal
-            ambiguity = self._ambiguous_local_food_reference(
-                household_id=person.household_id,
-                person_id=person_id,
-                phrase=item.phrase,
-            )
-            if ambiguity is not None:
-                proposal = self._create_text_meal_clarification_proposal(
-                    person_id=person_id,
-                    text=text,
-                    run=run,
-                    logged_at=logged_at,
-                    unresolved_items=(item,),
-                    missing_fields=("food_version_id",),
-                    summary="Need to know which food to use before amending this meal.",
-                    candidate_overrides={item.phrase: ambiguity.candidates},
-                )
-                return proposal
-            resolved = self._resolve_meal_item_food(
-                person=person,
-                run=run,
-                phrase=item.phrase,
-                settings=settings,
-            )
-            if resolved.pending_version is not None:
-                new_pending_versions.append(resolved.pending_version)
-            entry = DiaryEntry(
-                id=self._next_id("diary_entry"),
-                person_id=person_id,
-                logged_at=logged_at,
-                meal_type=original.entries[0].meal_type if original.entries else infer_meal_type(logged_at),
-                food_version_id=resolved.food_version_id,
-                quantity_g=item.quantity_g,
-                source="agent_amendment_proposal",
-            )
-            updated_entries.append(entry)
-            evidence.append(
-                {
-                    "source_type": "text_meal_amendment",
-                    "source_text": item.source_text,
-                    "action": "add_entry",
-                    "phrase": item.phrase,
-                    "food_id": resolved.version.food_id,
-                    "food_name": resolved.food_name,
-                    "food_version_id": resolved.food_version_id,
-                    "quantity_g": item.quantity_g,
-                    "resolution_reason": resolved.resolution_reason,
-                    "confidence": resolved.confidence,
-                    **item.evidence,
-                }
-            )
-
-        if not updated_entries:
-            raise ValueError("amendment would leave the proposal empty")
-
-        referenced_version_ids = {entry.food_version_id for entry in updated_entries}
-        payload = {
-            **original.payload,
-            "estimated_food_versions": [
-                pending
-                for pending in (
-                    *original.payload.get("estimated_food_versions", []),
-                    *new_pending_versions,
-                )
-                if str(pending["food_version_id"]) in referenced_version_ids
-            ],
-            "amended_from_proposal_id": original.id,
-            "raw_amendment_text": text,
-            "amendment_warnings": warnings,
-        }
-        totals = self._proposal_entries_total(tuple(updated_entries), payload=payload)
-        proposal_type = "diary_entries_with_estimates" if payload.get("estimated_food_versions") else "diary_entries"
-        amended = self.proposals.create(
-            CreateDiaryEntriesProposal(
-                id=self._next_id("proposal"),
-                person_id=person_id,
-                entries=tuple(updated_entries),
-                proposal_type=proposal_type,
-                summary=f"{len(updated_entries)} diary entries drafted after meal amendment",
-                payload=payload,
-                totals=totals,
-                evidence=tuple(evidence),
-                source_agent_run_id=run.id,
-            )
-        )
-        self.proposals.supersede(original.id, superseded_by_proposal_id=amended.id)
-        self.agent_runs[run.id] = replace(
-            run,
-            status="proposal_created",
-            proposal_id=amended.id,
-            tool_loop_count=len(self.agent_tool_calls_for_run(run.id)),
-            fallback_reason=self._current_fallback_reason(run),
-        )
-        return amended
-
     def _proposal_entry_matches_phrase(
         self,
         entry: DiaryEntry,
@@ -3223,67 +2846,6 @@ class HealthMonitorService:
         if len(candidates) <= 1:
             return None
         return AmbiguousFoodReference(phrase=phrase, candidates=tuple(candidates))
-
-    def _create_text_meal_clarification_proposal(
-        self,
-        *,
-        person_id: str,
-        text: str,
-        run: AgentRun,
-        logged_at: datetime,
-        unresolved_items: tuple[ParsedMealItem, ...] | list[ParsedMealItem],
-        missing_fields: tuple[str, ...] = ("quantity_g",),
-        summary: str = "Need grams or serving size before logging this meal.",
-        candidate_overrides: dict[str, tuple[dict[str, object], ...]] | None = None,
-    ) -> CreateDiaryEntriesProposal:
-        unresolved_payload = [
-            {
-                "source_text": item.source_text,
-                "phrase": item.phrase,
-                "unit": item.evidence.get("unit"),
-                "quantity": item.evidence.get("unit_quantity", item.quantity_g),
-                "quantity_basis": item.evidence.get("quantity_basis"),
-                **(
-                    {"candidates": list(candidate_overrides[item.phrase])}
-                    if candidate_overrides is not None and item.phrase in candidate_overrides
-                    else {}
-                ),
-            }
-            for item in unresolved_items
-        ]
-        proposal = self.proposals.create(
-            CreateDiaryEntriesProposal(
-                id=self._next_id("proposal"),
-                person_id=person_id,
-                entries=(),
-                proposal_type="diary_entries",
-                status="needs_clarification",
-                summary=summary,
-                payload={
-                    "logged_at_local": logged_at.isoformat(),
-                    "raw_text": text,
-                    "missing_fields": list(missing_fields),
-                    "unresolved_items": unresolved_payload,
-                },
-                evidence=(
-                    {
-                        "source_type": "text_meal",
-                        "raw_text": text,
-                        "needs_clarification": True,
-                        "unresolved_items": unresolved_payload,
-                    },
-                ),
-                source_agent_run_id=run.id,
-            )
-        )
-        self.agent_runs[run.id] = replace(
-            run,
-            status="needs_clarification",
-            proposal_id=proposal.id,
-            tool_loop_count=len(self.agent_tool_calls_for_run(run.id)),
-            fallback_reason=self._current_fallback_reason(run),
-        )
-        return proposal
 
     def _create_repeated_meal_proposal(
         self,
@@ -4977,55 +4539,6 @@ def parse_single_gram_food_reference(text: str) -> tuple[float, str]:
     return quantity, phrase
 
 
-def parse_text_meal_items(text: str, *, default_logged_at: datetime) -> tuple[datetime, list[ParsedMealItem]]:
-    fragments = [
-        fragment.strip()
-        for fragment in re.split(r"[,;\n]\s*|\s+/\s+", strip_meal_heading(text))
-        if fragment.strip()
-    ]
-    if not fragments:
-        raise ValueError("text meal is empty")
-
-    logged_at = default_logged_at
-    first_time = parse_time_prefix(fragments[0], default_logged_at=default_logged_at)
-    if first_time is not None:
-        logged_at = first_time
-        fragments = fragments[1:]
-
-    items: list[ParsedMealItem] = []
-    for fragment in fragments:
-        removal = parse_text_meal_removal(fragment)
-        if removal is not None:
-            # A "-33g ossos e pele" line discounts waste from the item just listed.
-            if not items or items[-1].evidence.get("quantity_basis") != "grams":
-                raise ValueError(f"quantity discount without a weighable preceding item: {fragment}")
-            last = items[-1]
-            remaining = last.quantity_g - removal.quantity_g
-            if remaining <= 0:
-                raise ValueError(f"quantity discount removes the whole preceding item: {fragment}")
-            items[-1] = ParsedMealItem(
-                phrase=last.phrase,
-                quantity_g=remaining,
-                source_text=f"{last.source_text} ({fragment})",
-                evidence={
-                    **last.evidence,
-                    "quantity_discount_g": removal.quantity_g,
-                    "quantity_discount_phrase": removal.phrase,
-                    "quantity_discount_source_text": fragment,
-                },
-            )
-            continue
-        items.append(parse_text_meal_item(fragment))
-    if not items:
-        raise ValueError("text meal has no food items")
-    return logged_at, items
-
-
-_MEAL_HEADING = (
-    r"\s*(?:café da manhã|cafe da manha|café|cafe|breakfast|almoço|almoco|lunch|jantar|janta|dinner|lanche|snack)\s*:"
-)
-
-
 def default_range_logged_at(text: str, *, today: date) -> datetime:
     normalized = text.casefold().strip()
     hour = 12
@@ -5036,91 +4549,6 @@ def default_range_logged_at(text: str, *, today: date) -> datetime:
     elif re.match(r"\s*(?:jantar|janta|dinner)\s*:", normalized):
         hour = 20
     return datetime.combine(today, datetime.min.time()).replace(hour=hour)
-
-
-def parse_text_meal_amendment(text: str) -> tuple[str, list[ParsedMealRemoval]]:
-    additions: list[str] = []
-    removals: list[ParsedMealRemoval] = []
-    fragments = [
-        fragment.strip()
-        for fragment in re.split(r"[,;\n]\s*|\s+/\s+", strip_meal_heading(text))
-        if fragment.strip()
-    ]
-    for fragment in fragments:
-        cleaned = fragment.strip()
-        if re.fullmatch(
-            r"(?:ah|opa|oi|ok|blz|beleza|valeu|obrigad[oa]|obg|ent[aã]o|tamb[eé]m|foi mal|desculpa)[!.…]*",
-            cleaned,
-            re.I,
-        ):
-            continue
-        removal = parse_text_meal_removal(cleaned)
-        if removal is not None:
-            removals.append(removal)
-            continue
-        addition = re.sub(
-            r"^\s*(?:ah[,!]?\s+|opa[,!]?\s+|tamb[eé]m\s+)?"
-            r"(?:\+|adicione|adiciona|acrescenta|acrescente|add|inclui|incluir|inclua"
-            r"|coloca(?:r)?|bota(?:r)?|faltou|(?:tinha\s+|tava\s+)?esquec(?:i|ido|eu)(?:\s+de)?)"
-            r"(?:\s+(?:incluir|adicionar|acrescentar|colocar|botar|por|pôr|registrar|anotar))?"
-            r"(?:\s*:)?\s+",
-            "",
-            cleaned,
-            flags=re.I,
-        ).strip()
-        addition = re.sub(
-            r"^(\d+(?:[,.]\d+)?\s*g(?:ramas?)?)\s+de\s+",
-            r"\1 ",
-            addition,
-            flags=re.I,
-        )
-        if addition:
-            additions.append(addition)
-    return ", ".join(additions), removals
-
-
-def parse_text_meal_removal(fragment: str) -> ParsedMealRemoval | None:
-    patterns = (
-        r"^\s*-\s*(\d+(?:[,.]\d+)?)\s*g(?:ramas?)?\s+(.+)$",
-        r"^\s*(?:remove|remova|retira|retire|subtrai|subtraia)\s+(\d+(?:[,.]\d+)?)\s*g(?:ramas?)?\s+(?:de\s+)?(.+)$",
-    )
-    for pattern in patterns:
-        match = re.fullmatch(pattern, fragment, re.I)
-        if match is None:
-            continue
-        return ParsedMealRemoval(
-            phrase=normalize_food_phrase(match.group(2)),
-            quantity_g=float(match.group(1).replace(",", ".")),
-            source_text=fragment,
-        )
-    return None
-
-
-def strip_meal_heading(text: str) -> str:
-    return re.sub(f"^{_MEAL_HEADING}\\s*", "", text, flags=re.I)
-
-
-def parse_repeated_meal_reference(
-    text: str,
-    *,
-    default_logged_at: datetime,
-) -> tuple[date, str] | None:
-    match = re.fullmatch(
-        r"\s*(?:same|mesm[ao])\s+(breakfast|lunch|dinner|snack|late|café da manhã|cafe da manha|café|cafe|almoço|almoco|jantar|lanche)\s+(?:as|de|do|da)\s+(yesterday|ontem|today|hoje|\d{4}-\d{2}-\d{2})\s*",
-        text,
-        re.I,
-    )
-    if match is None:
-        return None
-    meal_type = normalize_meal_type(match.group(1))
-    day_text = match.group(2).casefold()
-    if day_text in {"yesterday", "ontem"}:
-        source_day = default_logged_at.date() - timedelta(days=1)
-    elif day_text in {"today", "hoje"}:
-        source_day = default_logged_at.date()
-    else:
-        source_day = date.fromisoformat(day_text)
-    return source_day, meal_type
 
 
 def normalize_meal_type(value: str) -> str:
