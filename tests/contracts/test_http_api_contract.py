@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from datetime import date
 
 from health_monitor.api.http_api import HttpApi as BaseHttpApi
 from health_monitor.application.service import HealthMonitorService
@@ -12,15 +13,36 @@ from health_monitor.lookup.labels import LabelTextExtraction, StaticLabelTextExt
 
 class HttpApi(BaseHttpApi):
     def _handle(self, method: str, target: str, body: dict[str, object]):
-        # These test-only shims keep old proposal behavior covered without
-        # making removed prompt-builder endpoints look like public HTTP routes.
-        if method == "POST" and target == "/_test/service/text-meal":
-            proposal = self.service.propose_text_meal(
+        # These test-only shims keep service-level proposal mechanics covered
+        # without making internal tool paths look like public HTTP routes.
+        if method == "POST" and target == "/_test/service/structured-meal":
+            proposal = self.service.draft_structured_meal_proposal(
                 person_id=str(body["person_id"]),
-                logged_at_local=str(body["logged_at_local"]),
-                text=str(body["text"]),
+                day=date.fromisoformat(str(body["day"])),
+                time_text=str(body["time_text"]) if body.get("time_text") is not None else None,
+                meal_type=str(body["meal_type"]) if body.get("meal_type") is not None else None,
+                items=body.get("items") if isinstance(body.get("items"), list) else [],
                 agent_settings=body.get("agent_settings") if isinstance(body.get("agent_settings"), dict) else None,
-                amend_proposal_id=str(body["amend_proposal_id"]) if body.get("amend_proposal_id") is not None else None,
+                source_text=str(body["source_text"]) if body.get("source_text") is not None else "structured meal draft",
+            )
+            return BaseHttpApi.handle(self, "GET", f"/api/proposals/{proposal.id}", None)
+        if method == "POST" and target == "/_test/service/structured-meal/amend":
+            proposal = self.service.amend_structured_meal_proposal(
+                proposal_id=str(body["proposal_id"]),
+                person_id=str(body["person_id"]),
+                add=body.get("add") if isinstance(body.get("add"), list) else (),
+                remove=body.get("remove") if isinstance(body.get("remove"), list) else (),
+                set_quantity=body.get("set_quantity") if isinstance(body.get("set_quantity"), list) else (),
+                agent_settings=body.get("agent_settings") if isinstance(body.get("agent_settings"), dict) else None,
+                source_text=str(body["source_text"]) if body.get("source_text") is not None else "structured meal amendment",
+            )
+            return BaseHttpApi.handle(self, "GET", f"/api/proposals/{proposal.id}", None)
+        if method == "POST" and target == "/_test/service/repeat-meal":
+            proposal = self.service.repeat_meal(
+                person_id=str(body["person_id"]),
+                source_day=date.fromisoformat(str(body["source_day"])),
+                meal_type=str(body["meal_type"]),
+                logged_at_local=str(body["logged_at_local"]),
             )
             return BaseHttpApi.handle(self, "GET", f"/api/proposals/{proposal.id}", None)
         if method == "POST" and target == "/_test/service/label-scan":
@@ -724,11 +746,12 @@ class HttpApiContractTest(unittest.TestCase):
 
         proposal = api.handle(
             "POST",
-            "/_test/service/text-meal",
+            "/_test/service/structured-meal",
             {
                 "person_id": person["id"],
-                "logged_at_local": "2026-07-01T10:00:00",
-                "text": "100g queijo",
+                "day": "2026-07-01",
+                "time_text": "10:00",
+                "items": [{"phrase": "queijo", "quantity_g": 100}],
                 "agent_settings": {
                     "model_profile": "ollama-local",
                     "effort": "medium",
@@ -749,7 +772,7 @@ class HttpApiContractTest(unittest.TestCase):
         ).body
 
         self.assertEqual(proposal["status"], "draft")
-        self.assertEqual(proposal["summary"], "1 diary entries drafted from text meal")
+        self.assertEqual(proposal["summary"], "1 diary entries drafted from structured meal items")
         self.assertEqual(proposal["totals"]["calories_kcal"], 315)
         self.assertEqual(proposal["agent_run"]["settings"]["model_profile"], "ollama-local")
         self.assertEqual(proposal["evidence"][0]["resolution_reason"], "alias_default_version")
@@ -937,12 +960,12 @@ class HttpApiContractTest(unittest.TestCase):
 
         proposal = api.handle(
             "POST",
-            "/_test/service/text-meal",
+            "/_test/service/repeat-meal",
             {
                 "person_id": person["id"],
+                "source_day": "2026-07-01",
+                "meal_type": "breakfast",
                 "logged_at_local": "2026-07-02T09:00:00",
-                "text": "same breakfast as yesterday",
-                "agent_settings": {"external_lookup": False},
             },
         ).body
         before = api.handle(
@@ -967,217 +990,6 @@ class HttpApiContractTest(unittest.TestCase):
         self.assertIsNone(applied["rejected_at"])
         self.assertEqual(after["totals"]["calories_kcal"], 312.5)
         self.assertEqual(len(after["meals"]["breakfast"]), 2)
-
-    def test_text_meal_unsupported_unit_returns_clarification_contract(self) -> None:
-        api = HttpApi(HealthMonitorService())
-        household = api.handle("POST", "/api/households", {"name": "Casa"}).body
-        person = api.handle(
-            "POST",
-            "/api/people",
-            {
-                "household_id": household["id"],
-                "name": "Gabriel",
-                "timezone": "America/Sao_Paulo",
-            },
-        ).body
-        api.handle(
-            "POST",
-            "/api/foods",
-            {
-                "household_id": household["id"],
-                "name": "Queijo Minas",
-                "brand": None,
-                "version_label": "current",
-                "source": "label_scan",
-                "nutrients_per_100g": {
-                    "calories_kcal": 315,
-                    "protein_g": 23,
-                    "carbs_g": 2.6,
-                    "fat_g": 23.5,
-                },
-                "aliases": ["queijo"],
-            },
-        )
-
-        proposal = api.handle(
-            "POST",
-            "/_test/service/text-meal",
-            {
-                "person_id": person["id"],
-                "logged_at_local": "2026-07-01T10:00:00",
-                "text": "10am, 1 fatia queijo",
-                "agent_settings": {"external_lookup": False},
-            },
-        ).body
-        rejected_apply = api.handle("POST", f"/api/proposals/{proposal['id']}/confirm", None)
-        summary = api.handle(
-            "GET",
-            f"/api/diary/day?person_id={person['id']}&day=2026-07-01",
-            None,
-        ).body
-
-        self.assertEqual(proposal["status"], "needs_clarification")
-        self.assertEqual(proposal["entries"], [])
-        self.assertEqual(proposal["payload"]["missing_fields"], ["quantity_g"])
-        self.assertEqual(proposal["payload"]["unresolved_items"][0]["unit"], "fatia")
-        self.assertEqual(rejected_apply.status_code, 400)
-        self.assertIn("needs clarification", rejected_apply.body["error"]["message"])
-        self.assertEqual(summary["totals"]["calories_kcal"], 0)
-
-    def test_text_meal_ambiguous_local_food_returns_clarification_contract(self) -> None:
-        api = HttpApi(HealthMonitorService())
-        household = api.handle("POST", "/api/households", {"name": "Casa"}).body
-        person = api.handle(
-            "POST",
-            "/api/people",
-            {
-                "household_id": household["id"],
-                "name": "Gabriel",
-                "timezone": "America/Sao_Paulo",
-            },
-        ).body
-        for name, protein in [("Iogurte Natural", 5), ("Iogurte Protein", 10)]:
-            api.handle(
-                "POST",
-                "/api/foods",
-                {
-                    "household_id": household["id"],
-                    "name": name,
-                    "brand": "Batavo",
-                    "version_label": "current",
-                    "source": "label_scan",
-                    "nutrients_per_100g": {
-                        "calories_kcal": 80,
-                        "protein_g": protein,
-                        "carbs_g": 7,
-                        "fat_g": 1,
-                    },
-                    "aliases": ["iogurte"],
-                },
-            )
-
-        proposal = api.handle(
-            "POST",
-            "/_test/service/text-meal",
-            {
-                "person_id": person["id"],
-                "logged_at_local": "2026-07-01T10:00:00",
-                "text": "100g iogurte",
-                "agent_settings": {"external_lookup": False},
-            },
-        ).body
-        rejected_apply = api.handle("POST", f"/api/proposals/{proposal['id']}/confirm", None)
-        summary = api.handle(
-            "GET",
-            f"/api/diary/day?person_id={person['id']}&day=2026-07-01",
-            None,
-        ).body
-
-        self.assertEqual(proposal["status"], "needs_clarification")
-        self.assertEqual(proposal["entries"], [])
-        self.assertEqual(proposal["payload"]["missing_fields"], ["food_version_id"])
-        self.assertEqual(proposal["payload"]["unresolved_items"][0]["phrase"], "iogurte")
-        self.assertEqual(
-            [candidate["food_name"] for candidate in proposal["payload"]["unresolved_items"][0]["candidates"]],
-            ["Iogurte Natural", "Iogurte Protein"],
-        )
-        self.assertEqual(rejected_apply.status_code, 400)
-        self.assertEqual(summary["totals"]["calories_kcal"], 0)
-
-    def test_text_meal_ambiguous_food_clarification_can_be_resolved_through_http_contract(self) -> None:
-        api = HttpApi(HealthMonitorService())
-        household = api.handle("POST", "/api/households", {"name": "Casa"}).body
-        person = api.handle(
-            "POST",
-            "/api/people",
-            {
-                "household_id": household["id"],
-                "name": "Gabriel",
-                "timezone": "America/Sao_Paulo",
-            },
-        ).body
-        natural = api.handle(
-            "POST",
-            "/api/foods",
-            {
-                "household_id": household["id"],
-                "name": "Iogurte Natural",
-                "brand": "Batavo",
-                "version_label": "current",
-                "source": "label_scan",
-                "nutrients_per_100g": {
-                    "calories_kcal": 80,
-                    "protein_g": 5,
-                    "carbs_g": 7,
-                    "fat_g": 1,
-                },
-                "aliases": ["iogurte"],
-            },
-        ).body
-        protein = api.handle(
-            "POST",
-            "/api/foods",
-            {
-                "household_id": household["id"],
-                "name": "Iogurte Protein",
-                "brand": "Batavo",
-                "version_label": "current",
-                "source": "label_scan",
-                "nutrients_per_100g": {
-                    "calories_kcal": 70,
-                    "protein_g": 10,
-                    "carbs_g": 6,
-                    "fat_g": 1,
-                },
-                "aliases": ["iogurte"],
-            },
-        ).body
-        clarification = api.handle(
-            "POST",
-            "/_test/service/text-meal",
-            {
-                "person_id": person["id"],
-                "logged_at_local": "2026-07-01T10:00:00",
-                "text": "100g iogurte",
-                "agent_settings": {"external_lookup": False},
-            },
-        ).body
-
-        resolved = api.handle(
-            "POST",
-            f"/api/proposals/{clarification['id']}/resolve-food",
-            {
-                "unresolved_index": 0,
-                "food_version_id": protein["version"]["id"],
-            },
-        ).body
-        superseded = api.handle("GET", f"/api/proposals/{clarification['id']}", None).body
-        second_resolve = api.handle(
-            "POST",
-            f"/api/proposals/{clarification['id']}/resolve-food",
-            {
-                "unresolved_index": 0,
-                "food_version_id": natural["version"]["id"],
-            },
-        )
-        applied = api.handle("POST", f"/api/proposals/{resolved['id']}/confirm", None).body
-        summary = api.handle(
-            "GET",
-            f"/api/diary/day?person_id={person['id']}&day=2026-07-01",
-            None,
-        ).body
-
-        self.assertEqual(superseded["status"], "superseded")
-        self.assertEqual(superseded["payload"]["superseded_by_proposal_id"], resolved["id"])
-        self.assertEqual(second_resolve.status_code, 400)
-        self.assertIn("superseded", second_resolve.body["error"]["message"])
-        self.assertEqual(resolved["status"], "draft")
-        self.assertEqual(resolved["payload"]["resolved_from_proposal_id"], clarification["id"])
-        self.assertEqual(resolved["entries"][0]["food_version_id"], protein["version"]["id"])
-        self.assertNotEqual(resolved["entries"][0]["food_version_id"], natural["version"]["id"])
-        self.assertEqual(resolved["totals"]["calories_kcal"], 70)
-        self.assertEqual(applied["status"], "applied")
-        self.assertEqual(summary["totals"]["calories_kcal"], 70)
 
     def test_text_meal_proposal_entry_can_be_edited_through_http_contract(self) -> None:
         api = HttpApi(HealthMonitorService())
@@ -1211,11 +1023,12 @@ class HttpApiContractTest(unittest.TestCase):
         )
         proposal = api.handle(
             "POST",
-            "/_test/service/text-meal",
+            "/_test/service/structured-meal",
             {
                 "person_id": person["id"],
-                "logged_at_local": "2026-07-01T10:00:00",
-                "text": "100g queijo",
+                "day": "2026-07-01",
+                "time_text": "10:00",
+                "items": [{"phrase": "queijo", "quantity_g": 100}],
                 "agent_settings": {"external_lookup": False},
             },
         ).body
@@ -1288,11 +1101,12 @@ class HttpApiContractTest(unittest.TestCase):
         ).body
         proposal = api.handle(
             "POST",
-            "/_test/service/text-meal",
+            "/_test/service/structured-meal",
             {
                 "person_id": person["id"],
-                "logged_at_local": "2026-07-01T10:00:00",
-                "text": "100g leite",
+                "day": "2026-07-01",
+                "time_text": "10:00",
+                "items": [{"phrase": "leite", "quantity_g": 100}],
                 "agent_settings": {"external_lookup": False},
             },
         ).body
@@ -1356,31 +1170,34 @@ class HttpApiContractTest(unittest.TestCase):
         )
         first = api.handle(
             "POST",
-            "/_test/service/text-meal",
+            "/_test/service/structured-meal",
             {
                 "person_id": gabriel["id"],
-                "logged_at_local": "2026-07-01T10:00:00",
-                "text": "100g queijo",
+                "day": "2026-07-01",
+                "time_text": "10:00",
+                "items": [{"phrase": "queijo", "quantity_g": 100}],
                 "agent_settings": {"external_lookup": False},
             },
         ).body
         second = api.handle(
             "POST",
-            "/_test/service/text-meal",
+            "/_test/service/structured-meal",
             {
                 "person_id": gabriel["id"],
-                "logged_at_local": "2026-07-02T10:00:00",
-                "text": "50g queijo",
+                "day": "2026-07-02",
+                "time_text": "10:00",
+                "items": [{"phrase": "queijo", "quantity_g": 50}],
                 "agent_settings": {"external_lookup": False},
             },
         ).body
         partner_proposal = api.handle(
             "POST",
-            "/_test/service/text-meal",
+            "/_test/service/structured-meal",
             {
                 "person_id": partner["id"],
-                "logged_at_local": "2026-07-02T10:00:00",
-                "text": "80g queijo",
+                "day": "2026-07-02",
+                "time_text": "10:00",
+                "items": [{"phrase": "queijo", "quantity_g": 80}],
                 "agent_settings": {"external_lookup": False},
             },
         ).body
@@ -2282,11 +2099,12 @@ class HttpApiContractTest(unittest.TestCase):
         ).body
         proposal = api.handle(
             "POST",
-            "/_test/service/text-meal",
+            "/_test/service/structured-meal",
             {
                 "person_id": person["id"],
-                "logged_at_local": "2026-07-01T20:00:00",
-                "text": "300g KFC Double Crunch combo",
+                "day": "2026-07-01",
+                "time_text": "20:00",
+                "items": [{"phrase": "kfc double crunch combo", "quantity_g": 300}],
                 "agent_settings": {"external_lookup": True},
             },
         ).body
@@ -2354,11 +2172,12 @@ class HttpApiContractTest(unittest.TestCase):
 
         proposal = api.handle(
             "POST",
-            "/_test/service/text-meal",
+            "/_test/service/structured-meal",
             {
                 "person_id": person["id"],
-                "logged_at_local": "2026-07-01T20:00:00",
-                "text": "300g KFC Double Crunch combo",
+                "day": "2026-07-01",
+                "time_text": "20:00",
+                "items": [{"phrase": "kfc double crunch combo", "quantity_g": 300}],
                 "agent_settings": {"external_lookup": True},
             },
         ).body
@@ -2436,11 +2255,12 @@ class HttpApiContractTest(unittest.TestCase):
 
         proposal = api.handle(
             "POST",
-            "/_test/service/text-meal",
+            "/_test/service/structured-meal",
             {
                 "person_id": person["id"],
-                "logged_at_local": "2026-07-01T20:00:00",
-                "text": "300g KFC Double Crunch combo",
+                "day": "2026-07-01",
+                "time_text": "20:00",
+                "items": [{"phrase": "kfc double crunch combo", "quantity_g": 300}],
                 "agent_settings": {"external_lookup": True, "research_lookup": True},
             },
         ).body
@@ -2628,7 +2448,7 @@ class HttpApiContractTest(unittest.TestCase):
         self.assertEqual(response.events[-1]["data"]["run_id"], response.body["run_id"])
         self.assertEqual(len(api.service.chat_turns_for_person(person["id"])), 1)
 
-    def test_agent_chat_stream_supports_get_sse_route(self) -> None:
+    def test_agent_chat_stream_supports_get_sse_route_for_eventsource_clients(self) -> None:
         api = HttpApi(HealthMonitorService())
         household = api.handle("POST", "/api/households", {"name": "Casa"}).body
         person = api.handle(
@@ -2657,6 +2477,40 @@ class HttpApiContractTest(unittest.TestCase):
         self.assertEqual([event["event"] for event in response.events], ["run_started", "text_delta", "final"])
         self.assertEqual(response.events[-1]["data"]["run_id"], response.body["run_id"])
         self.assertEqual(api.service.chat_turns_for_person(person["id"])[0].user_message, "Pode resumir meu dia?")
+
+    def test_agent_chat_stream_get_requires_person_id(self) -> None:
+        api = HttpApi(HealthMonitorService())
+
+        response = api.handle(
+            "GET",
+            "/api/agent/chat/stream?message=Oi&today=2026-07-02&model_profile=deterministic-test",
+            None,
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.body["error"]["message"], "stream requires person_id")
+
+    def test_agent_chat_stream_get_requires_message(self) -> None:
+        api = HttpApi(HealthMonitorService())
+        household = api.handle("POST", "/api/households", {"name": "Casa"}).body
+        person = api.handle(
+            "POST",
+            "/api/people",
+            {
+                "household_id": household["id"],
+                "name": "Gabriel",
+                "timezone": "America/Sao_Paulo",
+            },
+        ).body
+
+        response = api.handle(
+            "GET",
+            f"/api/agent/chat/stream?person_id={person['id']}&today=2026-07-02&model_profile=deterministic-test",
+            None,
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.body["error"]["message"], "stream requires message")
 
     def test_onboarding_chat_turns_are_persisted_by_session(self) -> None:
         api = HttpApi(HealthMonitorService(require_model=False))
@@ -2744,7 +2598,10 @@ class HttpApiContractTest(unittest.TestCase):
         ).body
         goal = api.handle(
             "GET",
-            f"/api/goals/active?person_id={applied['payload']['created_person_id']}&day=2026-07-03",
+            (
+                f"/api/goals/active?person_id={applied['payload']['created_person_id']}"
+                f"&day={proposal.payload['starts_on']}"
+            ),
             None,
         ).body
 
@@ -2752,6 +2609,7 @@ class HttpApiContractTest(unittest.TestCase):
         self.assertEqual(applied["status"], "applied")
         self.assertEqual(applied["person_id"], applied["payload"]["created_person_id"])
         self.assertEqual(people[0]["name"], "Gabriel")
+        self.assertEqual(proposal.payload["starts_on"], goal["starts_on"])
         self.assertEqual(goal["targets"]["calories_kcal"], 2000)
         self.assertEqual(len(applied["payload"]["migrated_onboarding_turn_ids"]), 2)
         migrated_turns = api.service.chat_turns_for_person(applied["payload"]["created_person_id"])

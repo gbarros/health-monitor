@@ -564,7 +564,8 @@ class HttpApi:
             return HttpResponse(201, agent_chat_response_to_dict(response, self.service))
 
         if method in {"GET", "POST"} and path == "/api/agent/chat/stream":
-            # EventSource-friendly streaming path for chat replies.
+            # EventSource-friendly streaming path for chat replies. GET exists
+            # for browser EventSource clients, so attachments stay POST-only.
             stream_input = body if method == "POST" else query
             if "person_id" not in stream_input or not stream_input["person_id"]:
                 raise ValueError("stream requires person_id")
