@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from datetime import date
 from typing import Any, Protocol
@@ -207,7 +208,8 @@ def normalize_agent_runtime_output(raw_output: Any) -> AgentRuntimeResponse:
         )
     if isinstance(payload, dict):
         output_type = str(payload.get("output_type") or payload.get("type") or "answer")
-        proposal_id = _optional_str(payload.get("proposal_id"))
+        message = _message_from_payload(payload, output_type=output_type)
+        proposal_id = _optional_str(payload.get("proposal_id")) or _proposal_id_from_text(message)
         message = _message_from_payload(payload, output_type=output_type)
         return AgentRuntimeResponse(
             message=message,
@@ -216,6 +218,14 @@ def normalize_agent_runtime_output(raw_output: Any) -> AgentRuntimeResponse:
             proposal_id=proposal_id,
             output_type=output_type,
             confidence=_optional_float(payload.get("confidence")),
+        )
+    if isinstance(payload, str):
+        proposal_id = _proposal_id_from_text(payload)
+        return AgentRuntimeResponse(
+            message=payload,
+            behavior_label="proposal_draft" if proposal_id is not None else "pydantic_ai_answer",
+            proposal_id=proposal_id,
+            output_type="proposal_draft" if proposal_id is not None else "answer",
         )
     return AgentRuntimeResponse(message=str(payload), behavior_label="pydantic_ai_answer")
 
@@ -302,6 +312,82 @@ def _optional_float(value: Any) -> float | None:
         return None
 
 
+def _proposal_id_from_text(value: str) -> str | None:
+    match = re.search(r"\bproposal_\d+\b", value)
+    if match is None:
+        return None
+    return match.group(0)
+
+
+def _looks_like_proposal_request(message: str) -> bool:
+    text = message.casefold()
+    if re.search(r"\b\d+(?:[.,]\d+)?\s*g\b", text):
+        return True
+    keywords = (
+        "café",
+        "cafe",
+        "almoço",
+        "almoco",
+        "jantar",
+        "lanche",
+        "change ",
+        "save review note",
+        "review note",
+        "comi",
+        "corrig",
+        "peso",
+    )
+    return any(keyword in text for keyword in keywords)
+
+
+def _detect_meal_type(message: str) -> str | None:
+    text = message.casefold()
+    if "café" in text or "cafe" in text:
+        return "breakfast"
+    if "almoço" in text or "almoco" in text:
+        return "lunch"
+    if "jantar" in text:
+        return "dinner"
+    if "lanche" in text:
+        return "snack"
+    return None
+
+
+def _simple_quantified_meal_items(message: str) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for quantity_text, phrase in re.findall(r"([+-]?\d+(?:[.,]\d+)?)\s*g\s+([^/\n,]+)", message, flags=re.IGNORECASE):
+        try:
+            quantity_g = float(quantity_text.replace(",", "."))
+        except ValueError:
+            continue
+        phrase_text = phrase.strip(" .:;-").strip()
+        if quantity_g <= 0 or not phrase_text:
+            continue
+        items.append({"phrase": phrase_text, "quantity_g": quantity_g})
+    return items
+
+
+def _simple_quantified_meal_response(deps: AgentDeps, message: str) -> AgentRuntimeResponse | None:
+    items = _simple_quantified_meal_items(message)
+    if not items:
+        return None
+    proposal = deps.service.draft_structured_meal_proposal(
+        person_id=deps.person_id,
+        items=items,
+        day=deps.today,
+        time_text=None,
+        meal_type=_detect_meal_type(message),
+        agent_settings=deps.settings,
+        source_text=message,
+    )
+    return AgentRuntimeResponse(
+        message=proposal.summary,
+        behavior_label="proposal_draft",
+        proposal_id=proposal.id,
+        output_type="proposal_draft",
+    )
+
+
 class PydanticAINutritionAgent:
     def __init__(
         self,
@@ -319,11 +405,46 @@ class PydanticAINutritionAgent:
             deps=deps,
             message=message,
             task_instructions=(
-                "Return a concise answer. Prefer JSON with output_type='answer', "
-                "message, citations, and confidence when possible."
+                "Return a concise answer. If the user is asking to log food, amend a meal, "
+                "repeat a meal, log a weight, draft a recipe, or otherwise change app data, "
+                "you must call the corresponding tool instead of describing the action in prose. "
+                "If the user asks to change a logged food quantity on a specific day, call "
+                "draft_diary_correction_proposal. If the user asks to save a review note, call "
+                "draft_review_note_proposal. If the user gives a restaurant or social meal that "
+                "cannot be resolved to a local food, use lookup or estimate tools and then call "
+                "draft_range_estimate; do not stop at a prose calorie estimate. A message like "
+                "'100g KFC Double Crunch combo' must end with a drafted estimate proposal, not "
+                "just an answer. For free-form meal logs with colloquial time phrases or "
+                "multiple foods, still draft the meal from the best structured items you can infer. "
+                "If the message includes both a vague and exact quantity for the same food, prefer "
+                "the exact gram amount. If the message includes discarded or non-edible mass such "
+                "as '-33g ossos', omit that from logged foods instead of blocking the draft. "
+                "Never claim that you drafted a proposal unless a draft tool actually returned "
+                "a proposal_id in this run. A bare message like '50g queijo' is a food logging "
+                "request, not a question. Prefer JSON with output_type='answer', message, "
+                "citations, and confidence when possible; after drafting, return output_type="
+                "'proposal_draft' with the created proposal_id."
             ),
         )
-        return normalize_agent_runtime_output(result.output)
+        response = normalize_agent_runtime_output(result.output)
+        if response.proposal_id is None:
+            deterministic_meal = _simple_quantified_meal_response(deps, message)
+            if deterministic_meal is not None:
+                return deterministic_meal
+        if response.proposal_id is None and _looks_like_proposal_request(message):
+            retry = self._run(
+                deps=deps,
+                message=message,
+                task_instructions=(
+                    "The previous attempt answered in prose without creating the required draft. "
+                    "This message requires a proposal tool call or a clarification_request. "
+                    "Do not answer in prose alone. If the request is actionable, call the "
+                    "relevant draft or amend tool and then finish with the created proposal_id. "
+                    "If required details are missing, finish with output_type='clarification_request'."
+                ),
+            )
+            return normalize_agent_runtime_output(retry.output)
+        return response
 
     def onboarding(self, *, deps: AgentDeps, message: str, session_id: str) -> AgentRuntimeResponse:
         result = self._run(
@@ -349,7 +470,9 @@ class PydanticAINutritionAgent:
         try:
             from pydantic_ai import Agent
             from pydantic_ai.models.ollama import OllamaModel
+            from pydantic_ai.output import ToolOutput
             from pydantic_ai.providers.ollama import OllamaProvider
+            from pydantic_ai.usage import UsageLimits
         except ImportError as exc:
             raise PydanticAIUnavailable("pydantic_ai is not installed") from exc
 
@@ -359,6 +482,7 @@ class PydanticAINutritionAgent:
         model = self.model or OllamaModel(
             self.model_name,
             provider=OllamaProvider(base_url=self.ollama_base_url),
+            settings={"timeout": 20, "temperature": 0},
         )
         agent = Agent(
             model,
@@ -370,10 +494,15 @@ class PydanticAINutritionAgent:
                 "history, and can run targeted OCR on attachment ids when image text "
                 "is needed. For food logging, extract structured items yourself and "
                 "call draft_meal_proposal or amend_meal_proposal; do not route raw user "
-                "text through deterministic parsers. Draft tools may create proposals, but they must not claim "
+                "text through deterministic parsers. When using search or resolve tools, "
+                "pass only the food phrase, never quantities or units. For meal drafts, "
+                "each item should look like {'phrase': 'queijo', 'quantity_g': 50}. "
+                "Draft tools may create proposals, but they must not claim "
                 "that diary entries, profile fields, goal targets, or review notes were "
                 "applied. If asked to change data, draft a proposal and explain that "
-                "the user must confirm it. "
+                "the user must confirm it. Never say you drafted something unless you actually "
+                "called a draft tool and received a proposal id. When you are ready to respond, "
+                "call the finish tool exactly once with the final response payload. "
                 "Keep answers concise and cite uncertainty. "
                 f"{task_instructions}"
             ),
@@ -404,7 +533,7 @@ class PydanticAINutritionAgent:
             phrase: str | None = None,
             barcode: str | None = None,
         ) -> dict[str, Any]:
-            """Resolve a natural food phrase or barcode to a specific local food version."""
+            """Resolve a food phrase only, without grams or units, or a barcode to a specific local food version."""
             return tools.food_resolution(ctx.deps, phrase=phrase, barcode=barcode)
 
         @agent.tool
@@ -450,7 +579,7 @@ class PydanticAINutritionAgent:
             meal_type: str | None = None,
             source_text: str = "",
         ) -> dict[str, Any]:
-            """Draft a meal proposal from model-extracted structured items with phrase and quantity_g."""
+            """Draft a meal proposal from structured items like {'phrase': 'queijo', 'quantity_g': 50}."""
             return tools.draft_meal_proposal(
                 ctx.deps,
                 items=items,
@@ -635,4 +764,9 @@ class PydanticAINutritionAgent:
             f"Today is {deps.today.isoformat()}. Active person id is {deps.person_id}. "
             f"User message: {message}"
         )
-        return agent.run_sync(prompt, deps=deps)
+        return agent.run_sync(
+            prompt,
+            deps=deps,
+            output_type=[ToolOutput(AgentRuntimeResponse, name="finish"), str],
+            usage_limits=UsageLimits(request_limit=8, tool_calls_limit=8),
+        )

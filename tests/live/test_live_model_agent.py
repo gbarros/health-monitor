@@ -92,7 +92,8 @@ class LiveModelAgentTest(unittest.TestCase):
         self.assertEqual(run.status, "proposal_created")
         self.assertIsNone(run.fallback_reason)
         self.assertEqual(proposal.status, "draft")
-        self.assertEqual(service.day_summary(person_id, proposal.entries[0].logged_at.date()).totals.rounded().calories_kcal, 315)
+        self.assertIn(proposal.proposal_type, {"diary_entries", "diary_entry_update"})
+        self.assertEqual(service.day_summary(person_id, date(2026, 7, 2)).totals.rounded().calories_kcal, 315)
 
 
 if __name__ == "__main__":

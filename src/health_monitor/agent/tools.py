@@ -113,16 +113,25 @@ class NutritionAgentTools:
         phrase: str | None = None,
         barcode: str | None = None,
     ) -> dict[str, Any]:
-        resolution = deps.service.resolve_food_reference(
-            household_id=deps.household_id,
-            person_id=deps.person_id,
-            phrase=phrase,
-            barcode=barcode,
-        )
+        phrase = _normalized_tool_phrase(phrase)
+        try:
+            resolution = deps.service.resolve_food_reference(
+                household_id=deps.household_id,
+                person_id=deps.person_id,
+                phrase=phrase,
+                barcode=barcode,
+            )
+        except ValueError:
+            return {
+                "resolved": False,
+                "phrase": phrase,
+                "barcode": barcode,
+            }
         catalog = deps.service.catalog
         version = catalog.get_version(resolution.food_version_id)
         food = catalog.foods[resolution.food_id]
         return {
+            "resolved": True,
             "food_id": food.id,
             "food_version_id": version.id,
             "food_name": food.name,
@@ -311,12 +320,13 @@ class NutritionAgentTools:
         meal_type: str | None = None,
         source_text: str = "",
     ) -> dict[str, Any]:
+        normalized_items = [_normalize_meal_item(item) for item in items]
         proposal = deps.service.draft_structured_meal_proposal(
             person_id=deps.person_id,
-            items=items,
+            items=normalized_items,
             day=date.fromisoformat(day),
-            time_text=time,
-            meal_type=meal_type,
+            time_text=_normalized_time_text(time),
+            meal_type=_optional_text(meal_type),
             agent_settings=deps.settings,
             source_text=source_text or "structured meal draft from agent",
         )
@@ -376,7 +386,7 @@ class NutritionAgentTools:
             person_id=deps.person_id,
             source_day=date.fromisoformat(source_day),
             meal_type=meal_type,
-            logged_at_local=f"{deps.today.isoformat()}T{target_time or '12:00:00'}",
+            logged_at_local=f"{deps.today.isoformat()}T{_normalized_time_text(target_time) or '12:00:00'}",
         )
         return self._proposal_payload(proposal)
 
@@ -568,3 +578,92 @@ class NutritionAgentTools:
                 for entry in proposal.entries
             ],
         }
+
+
+def _normalized_tool_phrase(phrase: str | None) -> str | None:
+    if phrase is None:
+        return None
+    cleaned = str(phrase).strip()
+    if not cleaned:
+        return cleaned
+    try:
+        _quantity_g, parsed_phrase = _parse_single_gram_food_reference(cleaned)
+    except ValueError:
+        return cleaned
+    return parsed_phrase
+
+
+def _normalize_meal_item(item: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(item)
+    phrase = str(
+        normalized.get("phrase")
+        or normalized.get("food_name")
+        or normalized.get("food")
+        or normalized.get("name")
+        or ""
+    ).strip()
+    quantity_g = _coerce_float(
+        normalized.get("quantity_g"),
+        normalized.get("quantity"),
+        normalized.get("grams"),
+        normalized.get("amount_g"),
+    )
+    source_text = str(normalized.get("source_text") or normalized.get("text") or "").strip()
+    parse_target = phrase or source_text
+    parsed_phrase: str | None = None
+    parsed_quantity_g: float | None = None
+    if parse_target:
+        try:
+            parsed_quantity_g, parsed_phrase = _parse_single_gram_food_reference(parse_target)
+        except ValueError:
+            parsed_phrase = None
+            parsed_quantity_g = None
+    if not phrase and parsed_phrase:
+        phrase = parsed_phrase
+    phrase = _normalized_tool_phrase(phrase) or phrase
+    if quantity_g is None and parsed_quantity_g is not None:
+        quantity_g = parsed_quantity_g
+    if phrase:
+        normalized["phrase"] = phrase
+    if quantity_g is not None:
+        normalized["quantity_g"] = quantity_g
+    if source_text:
+        normalized["source_text"] = source_text
+    return normalized
+
+
+def _coerce_float(*values: Any) -> float | None:
+    for value in values:
+        if value is None or value == "":
+            continue
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _optional_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if text.casefold() in {"null", "none", "undefined"}:
+        return None
+    return text
+
+
+def _normalized_time_text(value: Any) -> str | None:
+    text = _optional_text(value)
+    if text is None:
+        return None
+    if "T" in text:
+        return text.split("T", 1)[1] or None
+    return text
+
+
+def _parse_single_gram_food_reference(text: str) -> tuple[float, str]:
+    from health_monitor.application.service import parse_single_gram_food_reference
+
+    return parse_single_gram_food_reference(text)
