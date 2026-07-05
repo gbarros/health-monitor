@@ -92,6 +92,21 @@ All C0–C4 work sits unstaged/staged in the working tree, violating the one-com
 ### G9 — MINOR: latency UX
 Meal drafts took 1–3+ minutes on a 9B model with zero feedback (see G5). After G5, also consider: default `max_tool_loops` lower for meal intents, and surfacing the "Tarefas" background path more prominently when a run exceeds ~15s.
 
+## Gate 2 findings — re-run 2026-07-05 (major progress; 3 items remain)
+
+**Fixed and verified live:** G1 — conversational onboarding completes end-to-end (single free-text message → complete `profile_setup` proposal with sensible defaults → confirm creates household+person+goal, goal active on the right day, conversation migrated into chat history). G2 — session history now composed into the agent message (`_onboarding_context_message`). G3 — the pre-flight probe was removed; two concurrent chat sends both processed with no false "model unavailable". G6 — frontend omits `model_profile`, backend default `ornith:9b`; worked out of the box. G7 — `make dev-api` boots. G8 — work committed. Tests 247 green, build clean.
+
+**Remaining — fix these three, then re-gate:**
+
+### N1 — Ollama connection failures are misfiled as `agent_error`
+With Ollama stopped, a chat/onboarding send returns 500 `agent_error: "pydantic_ai failed: Connection error."` — no outbox capture, no replay. A connection error to the model host is the *definition* of `model_unavailable`. Fix: in the runtime failure handlers, walk the exception chain (`httpx.ConnectError` / `ConnectionError` / `OSError`) and raise `ModelUnavailableError` for connection-class failures; everything else stays `agent_error`. Behavior test with a stubbed agent raising a wrapped `ConnectError`.
+
+### N2 — BLOCKER: first meal on an empty food library exceeds the tool-call limit
+Reproduced twice (solo and under load): on a fresh household (no foods — exactly the post-onboarding state), "Almoço: 74g arroz, 139g feijão preto" fails with `tool_calls_limit of 8 (tool_calls=10)`. The model pre-resolves each item with read tools before drafting, burning the budget; `draft_meal_proposal` already resolves internally. Fix (combined): (a) tool descriptions + task instructions must say explicitly "call draft_meal_proposal directly with the items; it resolves foods, do NOT call food_resolution/lookup per item first"; (b) raise the effective call limit for meal-shaped work (e.g. limit = max(12, 2×items+4)); (c) add a live eval: fresh empty household → first meal message → proposal drafted. This is the first thing a new user does after onboarding — it cannot fail.
+
+### N3 — G5 not actually fixed: streaming is still buffered
+Measured: `run_started` at T0, then silence for the whole run, then `tool_call` + `text_delta` + `final` all in the same second (plus a duplicated `run_started`). The generator now exists but everything after the first event is emitted post-completion. Fix as G5 specified: yield SSE frames as the run progresses — at minimum, per-tool `tool_call` events live during execution. Acceptance is measured, not asserted: timestamps of received events must span the run duration.
+
 ## Phase C5 — Live acceptance gate (reviewer-led; implementer prepares)
 
 Implementer prepares, reviewer (Claude, with Gabriel) executes:
