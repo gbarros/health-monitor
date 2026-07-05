@@ -28,7 +28,6 @@ Pull the model tags used by the current live gates before running them locally:
 
 ```bash
 ollama pull ornith:9b
-ollama pull qwen3.6:latest
 ollama pull glm-ocr:latest
 ```
 
@@ -58,7 +57,7 @@ Local state is written to `data/local/health-monitor.sqlite3`, which is ignored 
 Unknown foods in text meal proposals can use the local Ollama-compatible estimator:
 
 ```bash
-OLLAMA_BASE_URL=http://127.0.0.1:11434 OLLAMA_MODEL=gemma4:e4b make dev-api
+OLLAMA_BASE_URL=http://127.0.0.1:11434 OLLAMA_MODEL=ornith:9b make dev-api
 ```
 
 Set `FOOD_ESTIMATOR=none` to disable model estimates. Estimated foods still go through proposals and only become reusable library entries after confirmation.
@@ -66,7 +65,7 @@ Set `FOOD_ESTIMATOR=none` to disable model estimates. Estimated foods still go t
 Nutrition label images can use an Ollama vision model to extract table text when no text is pasted:
 
 ```bash
-LABEL_TEXT_EXTRACTOR=ollama OLLAMA_VISION_MODEL=qwen3.6:latest make dev-api
+LABEL_TEXT_EXTRACTOR=ollama OLLAMA_OCR_MODEL=glm-ocr:latest make dev-api
 ```
 
 Set `LABEL_TEXT_EXTRACTOR=none` to require pasted table/OCR text. Extracted label text, source, confidence, warnings, and image attachment metadata are preserved on the proposal before any food version is saved.
@@ -74,7 +73,7 @@ Set `LABEL_TEXT_EXTRACTOR=none` to require pasted table/OCR text. Extracted labe
 Before alpha use, run the Ollama preflight against the models you intend to use:
 
 ```bash
-OLLAMA_BASE_URL=http://127.0.0.1:11434 OLLAMA_MODEL=ornith:9b LIVE_MODEL_NAME=ornith:9b OLLAMA_VISION_MODEL=qwen3.6:latest make smoke-ollama PYTHON=.venv/bin/python
+OLLAMA_BASE_URL=http://127.0.0.1:11434 OLLAMA_MODEL=ornith:9b LIVE_MODEL_NAME=ornith:9b OLLAMA_OCR_MODEL=glm-ocr:latest make smoke-ollama PYTHON=.venv/bin/python
 ```
 
 Food source lookup can query the local library first and Open Food Facts for packaged foods:

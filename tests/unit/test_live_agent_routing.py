@@ -45,11 +45,16 @@ class FailingAgent:
 
 
 class FakeOnboardingAgent:
+    last_deps_household_id: str | None = None
+    last_message: str | None = None
+
     def __init__(self, *, model_name: str, ollama_base_url: str) -> None:
         self.model_name = model_name
         self.ollama_base_url = ollama_base_url
 
     def onboarding(self, *, deps, message: str, session_id: str) -> AgentRuntimeResponse:
+        FakeOnboardingAgent.last_deps_household_id = deps.household_id
+        FakeOnboardingAgent.last_message = message
         proposal = deps.service.draft_onboarding_proposal(
             session_id=session_id,
             household_name="Casa",
@@ -324,6 +329,101 @@ class LiveAgentRoutingTest(unittest.TestCase):
         self.assertEqual(proposal.proposal_type, "profile_setup")
         self.assertEqual(proposal.payload["person"]["timezone"], "America/Sao_Paulo")
         self.assertEqual(service.onboarding_turns_for_session("session-1"), (turn,))
+
+    def test_new_household_onboarding_does_not_pass_placeholder_household_id(self) -> None:
+        service = HealthMonitorService(
+            agent_runtime="pydantic-ai",
+            agent_model="ornith:9b",
+            require_model=True,
+            model_health_checker=lambda: True,
+        )
+        FakeOnboardingAgent.last_deps_household_id = None
+        FakeOnboardingAgent.last_message = None
+
+        with patch("health_monitor.application.service.PydanticAINutritionAgent", FakeOnboardingAgent):
+            first = service.onboarding_chat(
+                session_id="session-2",
+                message="Meu nome é Gabriel.",
+            )
+            second = service.onboarding_chat(
+                session_id="session-2",
+                message="Quero 2000 kcal e 150g de proteína.",
+            )
+
+        self.assertEqual(FakeOnboardingAgent.last_deps_household_id, "")
+        self.assertIn("Meu nome é Gabriel", FakeOnboardingAgent.last_message or "")
+        self.assertIn("Quero 2000 kcal", FakeOnboardingAgent.last_message or "")
+        self.assertEqual(first.household_id, None)
+        self.assertEqual(second.proposal_id, "proposal_2")
+
+    def test_scripted_onboarding_agent_drafts_new_household_through_deps(self) -> None:
+        service = HealthMonitorService()
+        requested_tools: list[str] = []
+        prompts: list[str] = []
+
+        def scripted_model(messages: list[Any], agent_info: AgentInfo) -> ModelResponse:
+            requested_tools[:] = [tool.name for tool in agent_info.function_tools]
+            prompts.append(repr(messages))
+            proposal_id = proposal_id_from_tool_returns(messages, "draft_onboarding_proposal")
+            if proposal_id is None:
+                return ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            "draft_onboarding_proposal",
+                            {
+                                "session_id": "session-3",
+                                "household_name": "Casa",
+                                "household_id": None,
+                                "person": {"name": "Gabriel", "timezone": "America/Sao_Paulo"},
+                                "targets": {"calories_kcal": 2000, "protein_g": 150},
+                                "source_text": "Meu nome é Gabriel. Quero 2000 kcal e 150g de proteína.",
+                            },
+                        )
+                    ]
+                )
+            return ModelResponse(
+                parts=[
+                    TextPart(
+                        (
+                            '{"output_type":"proposal_draft",'
+                            f'"proposal_id":"{proposal_id}",'
+                            '"summary":"Proposta inicial pronta."}'
+                        )
+                    )
+                ]
+            )
+
+        agent = PydanticAINutritionAgent(
+            model_name="function-test",
+            ollama_base_url="http://127.0.0.1:11434",
+            model=FunctionModel(scripted_model),
+        )
+        response = agent.onboarding(
+            deps=AgentDeps(
+                service=service,
+                person_id="onboarding:session-3",
+                household_id="",
+                today=date(2026, 7, 2),
+                settings={"agent_runtime": "pydantic-ai"},
+                source_config={},
+            ),
+            session_id="session-3",
+            message=(
+                "No existing household id.\n"
+                "Prior onboarding turns:\n"
+                "User: Meu nome é Gabriel.\n"
+                "Assistant: Qual sua meta?\n"
+                "Current user message: Quero 2000 kcal e 150g de proteína."
+            ),
+        )
+
+        self.assertIn("draft_onboarding_proposal", requested_tools)
+        self.assertNotIn("onboarding-household:", "".join(prompts))
+        self.assertIn("Meu nome é Gabriel", "".join(prompts))
+        self.assertEqual(response.proposal_id, "proposal_1")
+        proposal = service.get_proposal(response.proposal_id or "")
+        self.assertIsNone(proposal.payload["household_id"])
+        self.assertEqual(proposal.payload["household_name"], "Casa")
 
 
 def scripted_agent_answer(

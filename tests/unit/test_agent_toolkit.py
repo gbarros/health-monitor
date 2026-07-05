@@ -120,7 +120,7 @@ class NutritionAgentToolsTest(unittest.TestCase):
         deps = AgentDeps(
             service=service,
             person_id="onboarding:session-1",
-            household_id="onboarding-household:session-1",
+            household_id="",
             today=date(2026, 7, 2),
             settings={"agent_runtime": "pydantic-ai", "model_name": "qwen3"},
             source_config={},
@@ -141,6 +141,26 @@ class NutritionAgentToolsTest(unittest.TestCase):
         self.assertEqual(result["proposal_type"], "profile_setup")
         self.assertEqual(proposal.payload["person"]["name"], "Gabriel")
         self.assertEqual(proposal.payload["targets"]["calories_kcal"], 2000)
+
+    def test_onboarding_tool_rejects_placeholder_household_id(self) -> None:
+        service = HealthMonitorService()
+        deps = AgentDeps(
+            service=service,
+            person_id="onboarding:session-1",
+            household_id="",
+            today=date(2026, 7, 2),
+            settings={"agent_runtime": "pydantic-ai", "model_name": "qwen3"},
+            source_config={},
+        )
+
+        with self.assertRaisesRegex(ValueError, "placeholder onboarding household ids"):
+            NutritionAgentTools().draft_onboarding_proposal(
+                deps,
+                session_id="session-1",
+                household_id="onboarding-household:session-1",
+                person={"name": "Gabriel", "timezone": "America/Sao_Paulo"},
+                targets={"calories_kcal": 2000, "protein_g": 150},
+            )
 
     def test_ocr_tool_extracts_label_text_from_attachment(self) -> None:
         service = HealthMonitorService(

@@ -5,7 +5,6 @@ import hashlib
 import json
 import re
 import time
-import urllib.request
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable, Sequence
@@ -29,6 +28,14 @@ class ModelUnavailableError(RuntimeError):
     Carries the original user message so clients can offer a replay once the
     model is back.
     """
+
+    def __init__(self, message: str, *, replay_message: str | None = None) -> None:
+        super().__init__(message)
+        self.replay_message = replay_message
+
+
+class AgentExecutionError(RuntimeError):
+    """The agent runtime was reachable but failed while executing tools or validation."""
 
     def __init__(self, message: str, *, replay_message: str | None = None) -> None:
         super().__init__(message)
@@ -1751,21 +1758,12 @@ class HealthMonitorService:
         )
 
     def _model_available(self) -> bool:
+        if self.model_health_checker is None:
+            return True
         now = time.monotonic()
-        if self._model_health_cache is not None and now - self._model_health_cache[0] < 10:
+        if self._model_health_cache is not None and now - self._model_health_cache[0] < 60:
             return self._model_health_cache[1]
-        if self.model_health_checker is not None:
-            available = bool(self.model_health_checker())
-        else:
-            try:
-                request = urllib.request.urlopen(
-                    f"{self.ollama_base_url.rstrip('/')}/api/tags", timeout=1.5
-                )
-                with request as response:
-                    json.loads(response.read().decode("utf-8"))
-                available = True
-            except Exception:
-                available = False
+        available = bool(self.model_health_checker())
         self._model_health_cache = (now, available)
         return available
 
@@ -1991,7 +1989,7 @@ class HealthMonitorService:
                 fallback_reason=fallback_reason,
             )
             if self.require_model:
-                raise ModelUnavailableError(fallback_reason, replay_message=message)
+                raise AgentExecutionError(fallback_reason, replay_message=message)
             return None
 
         if response.proposal_id is not None:
@@ -3508,7 +3506,7 @@ class HealthMonitorService:
             household = self._require_household(household_id)
             resolved_household_id = household.id
         else:
-            resolved_household_id = f"onboarding-household:{session_id}"
+            resolved_household_id = ""
         assistant_message = (
             "Vou configurar o diário por conversa. Diga seu nome, fuso horário, "
             "objetivo e qualquer meta inicial que você já queira propor."
@@ -3534,7 +3532,11 @@ class HealthMonitorService:
                             "ocr_enabled": self.label_text_extractor is not None,
                         },
                     ),
-                    message=message,
+                    message=self._onboarding_context_message(
+                        session_id=session_id,
+                        current_message=message,
+                        household_id=household_id,
+                    ),
                     session_id=session_id,
                 )
                 assistant_message = response.message
@@ -3544,7 +3546,7 @@ class HealthMonitorService:
                     raise ModelUnavailableError(str(exc), replay_message=message) from exc
             except Exception as exc:
                 if self.require_model:
-                    raise ModelUnavailableError(f"pydantic_ai failed: {exc}", replay_message=message) from exc
+                    raise AgentExecutionError(f"pydantic_ai failed: {exc}", replay_message=message) from exc
         turn = OnboardingTurn(
             id=self._next_id("onboarding_turn"),
             session_id=session_id,
@@ -3556,6 +3558,23 @@ class HealthMonitorService:
         self.onboarding_turns[turn.id] = turn
         self._persist()
         return turn
+
+    def _onboarding_context_message(
+        self,
+        *,
+        session_id: str,
+        current_message: str,
+        household_id: str | None,
+    ) -> str:
+        lines = [f"Existing household id: {household_id}" if household_id else "No existing household id."]
+        prior_turns = self.onboarding_turns_for_session(session_id)
+        if prior_turns:
+            lines.append("Prior onboarding turns:")
+            for turn in prior_turns:
+                lines.append(f"User: {turn.user_message}")
+                lines.append(f"Assistant: {turn.assistant_message}")
+        lines.append(f"Current user message: {current_message}")
+        return "\n".join(lines)
 
     def draft_onboarding_proposal(
         self,

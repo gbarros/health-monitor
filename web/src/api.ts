@@ -218,7 +218,7 @@ export async function enqueueAgentChatJob(input: {
       person_id: input.personId,
       message: input.message,
       today: input.today ?? todayIso(),
-      agent_settings: input.settings,
+      agent_settings: agentSettingsPayload(input.settings),
       attachment_ids: input.attachmentIds?.length ? input.attachmentIds : undefined,
     },
   });
@@ -381,7 +381,7 @@ export async function sendAgentChat(input: {
       message: input.message,
       today: input.today ?? todayIso(),
       intent: input.intent,
-      agent_settings: input.settings,
+      agent_settings: agentSettingsPayload(input.settings),
       attachment_ids: input.attachmentIds?.length ? input.attachmentIds : undefined,
     }),
     signal: input.signal,
@@ -408,7 +408,7 @@ export async function* streamAgentChatEvents(input: StreamAgentChatInput): Async
       message: input.message,
       today: input.today ?? todayIso(),
       intent: input.intent,
-      agent_settings: input.settings,
+      agent_settings: agentSettingsPayload(input.settings),
       attachment_ids: input.attachmentIds?.length ? input.attachmentIds : undefined,
     }),
     signal: input.signal,
@@ -507,10 +507,18 @@ export async function uploadDataUrlAttachment(input: {
 export function defaultAgentSettings(): AgentSettings {
   return {
     agent_runtime: "pydantic-ai",
-    model_profile: "ornith:9b",
+    model_profile: "",
     effort: "medium",
     max_tool_loops: 6,
     research_lookup: true,
+  };
+}
+
+function agentSettingsPayload(settings: AgentSettings): Omit<AgentSettings, "model_profile"> & { model_profile?: string } {
+  const modelProfile = settings.model_profile.trim();
+  return {
+    ...settings,
+    model_profile: modelProfile || undefined,
   };
 }
 

@@ -2442,10 +2442,11 @@ class HttpApiContractTest(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual([event["event"] for event in response.events], ["run_started", "text_delta", "final"])
-        self.assertEqual(response.events[0]["data"]["run_id"], response.body["run_id"])
-        self.assertEqual(response.events[1]["data"]["text"], response.body["message"])
-        self.assertEqual(response.events[-1]["data"]["run_id"], response.body["run_id"])
+        events = tuple(response.iter_events())
+        self.assertEqual([event["event"] for event in events], ["run_started", "run_started", "text_delta", "final"])
+        self.assertEqual(events[0]["data"]["status"], "started")
+        self.assertEqual(events[1]["data"]["run_id"], events[-1]["data"]["run_id"])
+        self.assertEqual(events[2]["data"]["text"], events[-1]["data"]["message"])
         self.assertEqual(len(api.service.chat_turns_for_person(person["id"])), 1)
 
     def test_agent_chat_stream_supports_get_sse_route_for_eventsource_clients(self) -> None:
@@ -2474,8 +2475,10 @@ class HttpApiContractTest(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual([event["event"] for event in response.events], ["run_started", "text_delta", "final"])
-        self.assertEqual(response.events[-1]["data"]["run_id"], response.body["run_id"])
+        events = tuple(response.iter_events())
+        self.assertEqual([event["event"] for event in events], ["run_started", "run_started", "text_delta", "final"])
+        self.assertEqual(events[0]["data"]["status"], "started")
+        self.assertEqual(events[1]["data"]["run_id"], events[-1]["data"]["run_id"])
         self.assertEqual(api.service.chat_turns_for_person(person["id"])[0].user_message, "Pode resumir meu dia?")
 
     def test_agent_chat_stream_get_requires_person_id(self) -> None:

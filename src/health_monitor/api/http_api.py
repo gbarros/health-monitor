@@ -3,12 +3,13 @@ from __future__ import annotations
 import base64
 from dataclasses import dataclass
 from datetime import date
-from typing import Any
+from typing import Any, Callable, Iterable
 from urllib.parse import parse_qs, urlparse
 
 from health_monitor.application.service import (
     AgentChatResponse,
     AgentChatTurn,
+    AgentExecutionError,
     AttachmentObject,
     BackgroundJob,
     DaySummary,
@@ -44,6 +45,12 @@ class HttpResponse:
 @dataclass(frozen=True)
 class HttpStreamResponse(HttpResponse):
     events: tuple[dict[str, Any], ...]
+    event_iter: Callable[[], Iterable[dict[str, Any]]] | None = None
+
+    def iter_events(self) -> Iterable[dict[str, Any]]:
+        if self.event_iter is not None:
+            return self.event_iter()
+        return iter(self.events)
 
 
 class HttpApi:
@@ -64,6 +71,17 @@ class HttpApi:
                 body={
                     "error": {
                         "type": "model_unavailable",
+                        "message": str(exc),
+                        "replay_message": exc.replay_message,
+                    }
+                },
+            )
+        except AgentExecutionError as exc:
+            response = HttpResponse(
+                status_code=500,
+                body={
+                    "error": {
+                        "type": "agent_error",
                         "message": str(exc),
                         "replay_message": exc.replay_message,
                     }
@@ -576,36 +594,36 @@ class HttpApi:
             stream_settings = stream_input.get("agent_settings")
             if stream_settings is None and method == "GET" and query.get("model_profile"):
                 stream_settings = {"model_profile": query["model_profile"]}
-            response = self.service.chat(
-                person_id=str(stream_input["person_id"]),
-                message=str(stream_input["message"]),
-                today=date.fromisoformat(str(stream_input["today"])) if stream_input.get("today") else date.today(),
-                agent_settings=stream_settings,
-                attachment_ids=stream_input.get("attachment_ids") if method == "POST" else None,
-                intent=str(stream_input["intent"]) if stream_input.get("intent") is not None else None,
-            )
-            final = agent_chat_response_to_dict(response, self.service)
-            tool_events = tuple(
-                {
-                    "event": "tool_call",
-                    "data": {
-                        "name": call.tool_name,
-                        "status": call.status,
-                        "input_summary": call.input_summary,
-                        "output_summary": call.output_summary,
-                    },
-                }
-                for call in self.service.agent_tool_calls_for_run(response.run_id)
-            )
+            def stream_events() -> Iterable[dict[str, Any]]:
+                yield {"event": "run_started", "data": {"status": "started"}}
+                response = self.service.chat(
+                    person_id=str(stream_input["person_id"]),
+                    message=str(stream_input["message"]),
+                    today=date.fromisoformat(str(stream_input["today"])) if stream_input.get("today") else date.today(),
+                    agent_settings=stream_settings,
+                    attachment_ids=stream_input.get("attachment_ids") if method == "POST" else None,
+                    intent=str(stream_input["intent"]) if stream_input.get("intent") is not None else None,
+                )
+                final = agent_chat_response_to_dict(response, self.service)
+                yield {"event": "run_started", "data": {"run_id": response.run_id}}
+                for call in self.service.agent_tool_calls_for_run(response.run_id):
+                    yield {
+                        "event": "tool_call",
+                        "data": {
+                            "name": call.tool_name,
+                            "status": call.status,
+                            "input_summary": call.input_summary,
+                            "output_summary": call.output_summary,
+                        },
+                    }
+                yield {"event": "text_delta", "data": {"text": response.message}}
+                yield {"event": "final", "data": final}
+
             return HttpStreamResponse(
                 status_code=200,
-                body=final,
-                events=(
-                    {"event": "run_started", "data": {"run_id": response.run_id}},
-                    *tool_events,
-                    {"event": "text_delta", "data": {"text": response.message}},
-                    {"event": "final", "data": final},
-                ),
+                body={},
+                events=(),
+                event_iter=stream_events,
             )
 
         if method == "POST" and path == "/api/agent/onboarding-chat":

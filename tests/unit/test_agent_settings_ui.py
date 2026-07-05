@@ -17,7 +17,8 @@ class AgentSettingsUiTest(unittest.TestCase):
         self.assertIn("agent_runtime", manual_inputs)
         self.assertIn("model_profile", manual_inputs)
         self.assertIn('agent_runtime: "pydantic-ai"', api)
-        self.assertIn('model_profile: "qwen3.6:latest"', api)
+        self.assertIn('model_profile: ""', api)
+        self.assertIn("model_profile: modelProfile || undefined", api)
         self.assertIn("research_lookup: true", api)
 
 

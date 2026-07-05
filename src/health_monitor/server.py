@@ -108,7 +108,7 @@ class HealthMonitorRequestHandler(BaseHTTPRequestHandler):
             self.send_header("cache-control", "no-cache")
             self.send_header("access-control-allow-origin", "*")
             self.end_headers()
-            for event in response.events:
+            for event in response.iter_events():
                 payload = json.dumps(event["data"], ensure_ascii=False).encode("utf-8")
                 self.wfile.write(f"event: {event['event']}\n".encode("utf-8"))
                 self.wfile.write(b"data: ")

@@ -18,7 +18,7 @@ class AppConfig:
     require_model: bool = True
     food_estimator: str = "ollama"
     ollama_base_url: str = "http://127.0.0.1:11434"
-    ollama_model: str = "gemma4:e4b"
+    ollama_model: str = "ornith:9b"
     label_text_extractor: str = "ollama"
     ocr_model: str = "glm-ocr:latest"
     openfoodfacts_enabled: bool = True
@@ -54,7 +54,7 @@ def load_config() -> AppConfig:
         ollama_base_url=os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434"),
         ollama_model=os.environ.get(
             "OLLAMA_MODEL",
-            os.environ.get("DEFAULT_MODEL_PROFILE", "gemma4:e4b"),
+            os.environ.get("DEFAULT_MODEL_PROFILE", "ornith:9b"),
         ),
         label_text_extractor=os.environ.get("LABEL_TEXT_EXTRACTOR", "ollama"),
         ocr_model=os.environ.get("OCR_MODEL", os.environ.get("OLLAMA_OCR_MODEL", "glm-ocr:latest")),

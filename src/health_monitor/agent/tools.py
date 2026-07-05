@@ -543,6 +543,8 @@ class NutritionAgentTools:
         notes: str | None = None,
         source_text: str = "",
     ) -> dict[str, Any]:
+        if household_id and str(household_id).startswith("onboarding-household:"):
+            raise ValueError("placeholder onboarding household ids are not valid")
         proposal = deps.service.draft_onboarding_proposal(
             session_id=session_id,
             household_name=household_name,

@@ -31,14 +31,7 @@ seed-scratch-db:
 
 dev-api:
 	@if [ "$${AGENT_RUNTIME:-pydantic-ai}" = "pydantic-ai" ] && [ "$${REQUIRE_MODEL:-true}" != "false" ]; then \
-		$(PYTHON) - <<'PY' || (echo 'pip install pydantic-ai with `make setup` (or your venv pip) before running dev-api' >&2; exit 1)\n\
-import importlib\n\
-import sys\n\
-try:\n\
-    importlib.import_module(\"pydantic_ai\")\n\
-except Exception as exc:\n\
-    raise SystemExit(str(exc))\n\
-PY\n\
+		$(PYTHON) -c "import pydantic_ai" || (echo 'pip install pydantic-ai with `make setup` (or your venv pip) before running dev-api' >&2; exit 1); \
 	else \
 		true; \
 	fi

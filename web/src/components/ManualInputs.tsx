@@ -61,7 +61,7 @@ export function ContextPanel({
           <input
             value={settings.model_profile}
             onChange={(event) => onSettingsChange({ ...settings, model_profile: event.target.value })}
-            placeholder="qwen3.6:latest"
+            placeholder="server default"
           />
         </label>
         <label className="field">
