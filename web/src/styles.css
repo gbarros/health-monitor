@@ -894,30 +894,9 @@ h3 {
   font-size: 14px;
 }
 
-.clarification-picker {
-  display: grid;
-  gap: 10px;
-}
-
 .clarification-candidates {
   display: grid;
   gap: 6px;
-}
-
-.clarification-candidate {
-  all: unset;
-  display: grid;
-  gap: 2px;
-  cursor: pointer;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 8px 10px;
-  box-sizing: border-box;
-}
-
-.clarification-candidate span {
-  color: var(--muted);
-  font-size: 12px;
 }
 
 .proposal-details {

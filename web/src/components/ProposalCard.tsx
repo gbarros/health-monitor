@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { Proposal, ProposalCandidate, ProposalEntry, UnresolvedItem } from "../types";
+import type { Proposal, ProposalEntry } from "../types";
 
 export function ProposalCard({
   proposal,
@@ -7,7 +7,6 @@ export function ProposalCard({
   onConfirm,
   onReject,
   onEntryQuantityChange,
-  onResolveClarification,
   onOpenSupersedingProposal,
   showDetails = true,
 }: {
@@ -16,14 +15,12 @@ export function ProposalCard({
   onConfirm: (proposal: Proposal) => void;
   onReject: (proposal: Proposal) => void;
   onEntryQuantityChange?: (proposal: Proposal, entry: ProposalEntry, quantityG: number) => void;
-  onResolveClarification?: (proposal: Proposal, unresolvedIndex: number, candidate: ProposalCandidate) => void;
   onOpenSupersedingProposal?: (proposalId: string) => void;
   showDetails?: boolean;
 }) {
   const entries = proposal.entries ?? [];
   const canConfirm = proposal.status === "draft";
   const canReject = proposal.status === "draft" || proposal.status === "needs_clarification";
-  const unresolvedItems = (proposal.payload?.["unresolved_items"] as UnresolvedItem[] | undefined) ?? [];
   const supersededBy = proposal.payload?.["superseded_by_proposal_id"];
   return (
     <section className="proposal-card" aria-label="Proposta de registro">
@@ -38,14 +35,6 @@ export function ProposalCard({
         </div>
         <span className={`status-pill status-pill--${proposal.status}`}>{proposal.status}</span>
       </div>
-
-      {proposal.status === "needs_clarification" && unresolvedItems.length ? (
-        <ClarificationPicker
-          items={unresolvedItems}
-          busy={busy}
-          onPick={(index, candidate) => onResolveClarification?.(proposal, index, candidate)}
-        />
-      ) : null}
 
       {entries.length ? (
         <div className="proposal-entry-list">
@@ -89,50 +78,6 @@ export function ProposalCard({
 
       {showDetails ? <ProposalDetails proposal={proposal} /> : null}
     </section>
-  );
-}
-
-function ClarificationPicker({
-  items,
-  busy,
-  onPick,
-}: {
-  items: UnresolvedItem[];
-  busy: boolean;
-  onPick: (unresolvedIndex: number, candidate: ProposalCandidate) => void;
-}) {
-  return (
-    <div className="clarification-picker">
-      {items.map((item, index) =>
-        item.candidates?.length ? (
-          <div key={`${item.phrase ?? index}`} className="clarification-item">
-            <p className="proposal-card__meta">
-              {item.source_text ?? item.phrase ?? "Item"}: escolha o alimento correto
-            </p>
-            <div className="clarification-candidates">
-              {item.candidates.map((candidate) => (
-                <button
-                  key={candidate.food_version_id}
-                  type="button"
-                  className="clarification-candidate"
-                  disabled={busy}
-                  onClick={() => onPick(index, candidate)}
-                >
-                  <strong>{candidate.food_name}</strong>
-                  <span>
-                    {[candidate.brand, candidate.version_label].filter(Boolean).join(" · ")}
-                    {candidate.nutrients_per_100g?.calories_kcal != null
-                      ? ` · ${Math.round(candidate.nutrients_per_100g.calories_kcal)} kcal/100g`
-                      : ""}
-                    {candidate.confidence != null ? ` · ${Math.round(candidate.confidence * 100)}%` : ""}
-                  </span>
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : null,
-      )}
-    </div>
   );
 }
 

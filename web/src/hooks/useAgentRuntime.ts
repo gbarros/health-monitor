@@ -16,7 +16,7 @@ import { useMemo } from "react";
 import {
   ApiError,
   enqueueAgentChatJob,
-  streamAgentChat,
+  streamAgentChatEvents,
   uploadDataUrlAttachment,
 } from "../api";
 import type { AgentChatStreamEvent } from "../api";
@@ -53,21 +53,24 @@ export function useAgentRuntime(context: RuntimeContext) {
 
   const adapter = useMemo<ChatModelAdapter>(() => {
     return {
-      async run(options: ChatModelRunOptions): Promise<ChatModelRunResult> {
+      async *run(options: ChatModelRunOptions): AsyncGenerator<ChatModelRunResult, void> {
         const lastMessage = options.messages.at(-1);
         if (!lastMessage || lastMessage.role !== "user") {
-          return { content: [] };
+          yield { content: [] };
+          return;
         }
 
         if (!personId) {
-          return assistantText(
+          yield assistantText(
             "Create a profile first. The first screen accepts a normal message with household, person, timezone, and target details.",
           );
+          return;
         }
 
         const text = textFromContent(lastMessage.content);
         if (!text && !messageHasUploadableAttachment(lastMessage.content)) {
-          return assistantText("Escreva uma refeição, pergunta, correção ou anexe uma foto de rótulo.");
+          yield assistantText("Escreva uma refeição, pergunta, correção ou anexe uma foto de rótulo.");
+          return;
         }
 
         try {
@@ -88,41 +91,61 @@ export function useAgentRuntime(context: RuntimeContext) {
               attachmentIds,
             });
             onJobQueued(job);
-            return assistantText("Na fila do worker… acompanhe em Tarefas.");
+            yield completeResult(assistantText("Na fila do worker… acompanhe em Tarefas."));
+            return;
           }
 
-          const streamed = await streamAgentChat({
+          const events: AgentChatStreamEvent[] = [];
+          let finalResponse: AgentChatResponse | null = null;
+          for await (const event of streamAgentChatEvents({
             personId,
             message: text,
             settings,
             today,
             attachmentIds,
             signal: options.abortSignal,
-          });
-          const response = streamed.final;
-          onAgentResponse(response);
-          if (response.proposal) {
-            onProposal(response.proposal);
-            return assistantProposal(response.proposal, chatReply(response, streamed.events));
+          })) {
+            events.push(event);
+            if (event.event === "final" && isAgentChatResponse(event.data)) {
+              finalResponse = event.data;
+              continue;
+            }
+            const partial = streamingReply(events);
+            if (partial) {
+              yield assistantText(partial);
+            }
           }
-          return assistantText(chatReply(response, streamed.events));
+          if (finalResponse == null) {
+            throw new Error("Resposta final ausente no stream do agente.");
+          }
+          onAgentResponse(finalResponse);
+          if (finalResponse.proposal) {
+            onProposal(finalResponse.proposal);
+            yield completeResult(assistantProposal(finalResponse.proposal, chatReply(finalResponse, events)));
+            return;
+          }
+          yield completeResult(assistantText(chatReply(finalResponse, events)));
+          return;
         } catch (error) {
           if (error instanceof ApiError && error.type === "model_unavailable") {
             onSendFailed(error.replayMessage ?? text, "model_unavailable");
-            return assistantText(
+            yield completeResult(assistantText(
               "⚠️ Modelo local indisponível — sua mensagem não foi processada nem registrada. " +
                 "Quando o modelo voltar, toque em Reenviar.",
-            );
+            ));
+            return;
           }
           if (error instanceof TypeError) {
             onSendFailed(text, "network");
-            return assistantText(
+            yield completeResult(assistantText(
               "⚠️ Sem conexão — sua mensagem não foi enviada. Quando a conexão voltar, toque em Reenviar.",
-            );
+            ));
+            return;
           }
           const message = error instanceof Error ? error.message : "Unknown agent error";
           onRuntimeError(message);
-          return assistantText(`Não consegui completar esse pedido.\n\n${message}`);
+          yield completeResult(assistantText(`Não consegui completar esse pedido.\n\n${message}`));
+          return;
         }
       },
     };
@@ -153,6 +176,13 @@ export function useAgentRuntime(context: RuntimeContext) {
 function assistantText(text: string): ChatModelRunResult {
   return {
     content: [{ type: "text", text }],
+  };
+}
+
+function completeResult(result: ChatModelRunResult): ChatModelRunResult {
+  return {
+    ...result,
+    status: { type: "complete", reason: "stop" },
   };
 }
 
@@ -202,6 +232,21 @@ function chatReply(response: AgentChatResponse, events: readonly AgentChatStream
   return lines.join("\n");
 }
 
+function streamingReply(events: readonly AgentChatStreamEvent[]): string {
+  const lines = toolProgressLines(events);
+  const text = events
+    .filter((event): event is AgentChatStreamEvent & { data: Record<string, unknown> } => event.event === "text_delta" && isObject(event.data))
+    .map((event) => String(event.data["text"] ?? ""))
+    .join("");
+  if (lines.length && text) {
+    return `${lines.join("\n")}\n\n${text}`;
+  }
+  if (lines.length) {
+    return lines.join("\n");
+  }
+  return text;
+}
+
 function toolProgressLines(events: readonly AgentChatStreamEvent[]): string[] {
   const toolCalls = events.filter(
     (event): event is AgentChatStreamEvent & { data: Record<string, unknown> } =>
@@ -222,6 +267,10 @@ function toolProgressLines(events: readonly AgentChatStreamEvent[]): string[] {
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function isAgentChatResponse(value: unknown): value is AgentChatResponse {
+  return isObject(value) && typeof value["run_id"] === "string" && typeof value["message"] === "string";
 }
 
 function proposalReply(proposal: Proposal, intro: string): string {

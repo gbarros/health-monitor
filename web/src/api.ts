@@ -141,17 +141,6 @@ export async function loadProposal(proposalId: string): Promise<Proposal> {
   return apiGet<Proposal>(`/api/proposals/${encodeURIComponent(proposalId)}`);
 }
 
-export async function resolveProposalClarification(input: {
-  proposalId: string;
-  unresolvedIndex: number;
-  foodVersionId: string;
-}): Promise<Proposal> {
-  return apiPost<Proposal>(`/api/proposals/${encodeURIComponent(input.proposalId)}/resolve-food`, {
-    unresolved_index: input.unresolvedIndex,
-    food_version_id: input.foodVersionId,
-  });
-}
-
 export async function updateProposalEntry(input: {
   proposalId: string;
   entryId: string;
@@ -400,7 +389,7 @@ export async function sendAgentChat(input: {
   return decodeResponse<AgentChatResponse>(response);
 }
 
-export async function streamAgentChat(input: {
+type StreamAgentChatInput = {
   personId: string;
   message: string;
   settings: AgentSettings;
@@ -408,7 +397,9 @@ export async function streamAgentChat(input: {
   intent?: AgentChatIntent;
   attachmentIds?: string[];
   signal?: AbortSignal;
-}): Promise<StreamAgentChatResult> {
+};
+
+export async function* streamAgentChatEvents(input: StreamAgentChatInput): AsyncGenerator<AgentChatStreamEvent, void> {
   const response = await fetch("/api/agent/chat/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -423,13 +414,12 @@ export async function streamAgentChat(input: {
     signal: input.signal,
   });
   if (!response.ok || response.body == null) {
-    return { final: await decodeResponse<AgentChatResponse>(response), events: [] };
+    yield { event: "final", data: await decodeResponse<AgentChatResponse>(response) };
+    return;
   }
   const decoder = new TextDecoder();
   const reader = response.body.getReader();
   let buffer = "";
-  let final: AgentChatResponse | null = null;
-  const events: AgentChatStreamEvent[] = [];
   while (true) {
     const { done, value } = await reader.read();
     if (done) {
@@ -439,15 +429,18 @@ export async function streamAgentChat(input: {
     const chunks = buffer.split("\n\n");
     buffer = chunks.pop() ?? "";
     for (const chunk of chunks) {
-      const event = parseSseEvent(chunk);
-      events.push(event);
-      if (event.event === "final") {
-        final = event.data as AgentChatResponse;
-      }
+      yield parseSseEvent(chunk);
     }
   }
   if (buffer.trim()) {
-    const event = parseSseEvent(buffer);
+    yield parseSseEvent(buffer);
+  }
+}
+
+export async function streamAgentChat(input: StreamAgentChatInput): Promise<StreamAgentChatResult> {
+  let final: AgentChatResponse | null = null;
+  const events: AgentChatStreamEvent[] = [];
+  for await (const event of streamAgentChatEvents(input)) {
     events.push(event);
     if (event.event === "final") {
       final = event.data as AgentChatResponse;
@@ -514,7 +507,7 @@ export async function uploadDataUrlAttachment(input: {
 export function defaultAgentSettings(): AgentSettings {
   return {
     agent_runtime: "pydantic-ai",
-    model_profile: "qwen3.6:latest",
+    model_profile: "ornith:9b",
     effort: "medium",
     max_tool_loops: 6,
     research_lookup: true,

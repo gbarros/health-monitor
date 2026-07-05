@@ -21,7 +21,6 @@ import {
   loadWeightTrend,
   logWeight,
   rejectProposal,
-  resolveProposalClarification,
   restoreDiaryEntry,
   sendAgentChat,
   STORAGE_KEYS,
@@ -55,7 +54,6 @@ import type {
   OnboardingTurn,
   Person,
   Proposal,
-  ProposalCandidate,
   ProposalEntry,
   WeightEntry,
 } from "./types";
@@ -383,28 +381,6 @@ function App() {
     onError: (error) => showToast(error instanceof Error ? error.message : "Não foi possível enviar ao agente."),
   });
 
-  const clarificationResolve = useMutation({
-    mutationFn: ({
-      proposal,
-      unresolvedIndex,
-      candidate,
-    }: {
-      proposal: Proposal;
-      unresolvedIndex: number;
-      candidate: ProposalCandidate;
-    }) =>
-      resolveProposalClarification({
-        proposalId: proposal.id,
-        unresolvedIndex,
-        foodVersionId: candidate.food_version_id,
-      }),
-    onSuccess: async (proposal) => {
-      upsertProposal(proposal);
-      await invalidateDailyReadModels();
-    },
-    onError: (error) => showToast(error instanceof Error ? error.message : "Não foi possível resolver a proposta."),
-  });
-
   const onJobQueued = useCallback(
     (job: BackgroundJob) => {
       queryClient.setQueryData<BackgroundJob[]>(queryKeys.jobs(selectedPersonId), (current = []) => [
@@ -591,9 +567,6 @@ function App() {
               onUpdateProposalEntry={(proposal, entry, quantityG) =>
                 proposalEntryUpdate.mutate({ proposal, entry, quantityG })
               }
-              onResolveClarification={(proposal, unresolvedIndex, candidate) =>
-                clarificationResolve.mutate({ proposal, unresolvedIndex, candidate })
-              }
               onDayChange={setSelectedDay}
             />
           ) : (
@@ -737,14 +710,11 @@ function App() {
       {proposalInboxOpen ? (
         <ProposalInbox
           proposals={proposalsQuery.data ?? []}
-          busy={proposalDecision.isPending || proposalEntryUpdate.isPending || clarificationResolve.isPending}
+          busy={proposalDecision.isPending || proposalEntryUpdate.isPending}
           onClose={() => setProposalInboxOpen(false)}
           onConfirm={(proposal) => proposalDecision.mutate({ proposal, decision: "confirm" })}
           onReject={(proposal) => proposalDecision.mutate({ proposal, decision: "reject" })}
           onUpdateEntry={(proposal, entry, quantityG) => proposalEntryUpdate.mutate({ proposal, entry, quantityG })}
-          onResolveClarification={(proposal, unresolvedIndex, candidate) =>
-            clarificationResolve.mutate({ proposal, unresolvedIndex, candidate })
-          }
         />
       ) : null}
 
@@ -826,7 +796,6 @@ function ChatWorkspace({
   onConfirmProposal,
   onRejectProposal,
   onUpdateProposalEntry,
-  onResolveClarification,
   onDayChange,
 }: {
   householdId: string | null;
@@ -856,7 +825,6 @@ function ChatWorkspace({
   onConfirmProposal: (proposal: Proposal) => void;
   onRejectProposal: (proposal: Proposal) => void;
   onUpdateProposalEntry: (proposal: Proposal, entry: ProposalEntry, quantityG: number) => void;
-  onResolveClarification: (proposal: Proposal, unresolvedIndex: number, candidate: ProposalCandidate) => void;
   onDayChange: (day: string) => void;
 }) {
   const runtime = useAgentRuntime({
@@ -881,7 +849,6 @@ function ChatWorkspace({
         onConfirm={onConfirmProposal}
         onReject={onRejectProposal}
         onUpdateEntry={onUpdateProposalEntry}
-        onResolveClarification={onResolveClarification}
       />
       <section className="chat-column" aria-label="Conversa">
         <DaySummaryStrip personId={personId} day={today} onDayChange={onDayChange} />
@@ -907,7 +874,6 @@ function ChatWorkspace({
           onConfirm={onConfirmProposal}
           onReject={onRejectProposal}
           onUpdateEntry={onUpdateProposalEntry}
-          onResolveClarification={onResolveClarification}
         />
       </section>
     </AssistantRuntimeProvider>
@@ -1411,14 +1377,12 @@ function ProposalToolRenderer({
   onConfirm,
   onReject,
   onUpdateEntry,
-  onResolveClarification,
 }: {
   proposals: Proposal[];
   busy: boolean;
   onConfirm: (proposal: Proposal) => void;
   onReject: (proposal: Proposal) => void;
   onUpdateEntry: (proposal: Proposal, entry: ProposalEntry, quantityG: number) => void;
-  onResolveClarification: (proposal: Proposal, unresolvedIndex: number, candidate: ProposalCandidate) => void;
 }) {
   const proposalById = useMemo(() => new Map(proposals.map((proposal) => [proposal.id, proposal])), [proposals]);
   const tool = useMemo(
@@ -1438,12 +1402,11 @@ function ProposalToolRenderer({
             onConfirm={onConfirm}
             onReject={onReject}
             onEntryQuantityChange={onUpdateEntry}
-            onResolveClarification={onResolveClarification}
           />
         );
       },
     }),
-    [busy, onConfirm, onReject, onResolveClarification, onUpdateEntry, proposalById],
+    [busy, onConfirm, onReject, onUpdateEntry, proposalById],
   );
   useAssistantToolUI(tool);
   return null;
@@ -1488,14 +1451,12 @@ function DraftProposalDock({
   onConfirm,
   onReject,
   onUpdateEntry,
-  onResolveClarification,
 }: {
   proposal?: Proposal;
   busy: boolean;
   onConfirm: (proposal: Proposal) => void;
   onReject: (proposal: Proposal) => void;
   onUpdateEntry: (proposal: Proposal, entry: ProposalEntry, quantityG: number) => void;
-  onResolveClarification: (proposal: Proposal, unresolvedIndex: number, candidate: ProposalCandidate) => void;
 }) {
   if (!proposal) {
     return null;
@@ -1508,7 +1469,6 @@ function DraftProposalDock({
         onConfirm={onConfirm}
         onReject={onReject}
         onEntryQuantityChange={onUpdateEntry}
-        onResolveClarification={onResolveClarification}
       />
     </section>
   );
@@ -2058,7 +2018,6 @@ function OnboardingThreadWorkspace({
         onConfirm={onConfirmProposal}
         onReject={onRejectProposal}
         onUpdateEntry={() => undefined}
-        onResolveClarification={() => undefined}
       />
       <ChatInterface
         welcomeMessage={

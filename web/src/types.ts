@@ -111,26 +111,6 @@ export type AgentRun = {
   tool_calls: AgentToolCall[];
 };
 
-export type ProposalCandidate = {
-  food_id: string;
-  food_version_id: string;
-  food_name: string;
-  brand?: string | null;
-  version_label: string;
-  nutrients_per_100g?: Nutrients;
-  confidence?: number;
-  reason?: string;
-};
-
-export type UnresolvedItem = {
-  source_text?: string;
-  phrase?: string;
-  unit?: string | null;
-  quantity?: number;
-  quantity_basis?: string | null;
-  candidates?: ProposalCandidate[];
-};
-
 export type Proposal = {
   id: string;
   person_id: string;

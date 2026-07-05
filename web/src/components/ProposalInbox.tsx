@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import type { Proposal, ProposalCandidate, ProposalEntry } from "../types";
+import type { Proposal, ProposalEntry } from "../types";
 import { ProposalCard } from "./ProposalCard";
 
 const STATUS_LABELS: Record<string, string> = {
@@ -17,7 +17,6 @@ export function ProposalInbox({
   onConfirm,
   onReject,
   onUpdateEntry,
-  onResolveClarification,
 }: {
   proposals: Proposal[];
   busy: boolean;
@@ -25,7 +24,6 @@ export function ProposalInbox({
   onConfirm: (proposal: Proposal) => void;
   onReject: (proposal: Proposal) => void;
   onUpdateEntry: (proposal: Proposal, entry: ProposalEntry, quantityG: number) => void;
-  onResolveClarification: (proposal: Proposal, unresolvedIndex: number, candidate: ProposalCandidate) => void;
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const byId = useMemo(() => new Map(proposals.map((proposal) => [proposal.id, proposal])), [proposals]);
@@ -59,7 +57,6 @@ export function ProposalInbox({
             onConfirm={onConfirm}
             onReject={onReject}
             onEntryQuantityChange={onUpdateEntry}
-            onResolveClarification={onResolveClarification}
             onOpenSupersedingProposal={(proposalId) => setSelectedId(proposalId)}
           />
         ) : sorted.length === 0 ? (
