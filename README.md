@@ -24,6 +24,14 @@ Live-model gates are explicit because they call Ollama-compatible models:
 LIVE_MODEL_TESTS=true LIVE_MODEL_NAME=ornith:9b make test-live-model
 ```
 
+Pull the model tags used by the current live gates before running them locally:
+
+```bash
+ollama pull ornith:9b
+ollama pull qwen3.6:latest
+ollama pull glm-ocr:latest
+```
+
 Cloud model evals are opt-in and should be used sparingly:
 
 ```bash
@@ -76,6 +84,23 @@ OPENFOODFACTS_ENABLED=true make dev-api
 ```
 
 Set `OPENFOODFACTS_ENABLED=false` to keep lookup fully local.
+
+## Scratch Walkthrough DB
+
+Seed a disposable SQLite file for reviewer-led walkthroughs so the Gabriel acceptance flow does not touch real data:
+
+```bash
+SQLITE_PATH=data/scratch/health-monitor.sqlite3 make seed-scratch-db
+SQLITE_PATH=data/scratch/health-monitor.sqlite3 make dev-api
+```
+
+The seed creates one household, one Gabriel profile, an active goal, and a small food library plus yesterday's breakfast for repeat-meal checks.
+
+Run the live-model eval gate against the same machine after the seed is ready:
+
+```bash
+LIVE_MODEL_TESTS=true LIVE_MODEL_NAME=ornith:9b OLLAMA_BASE_URL=http://127.0.0.1:11434 make test-live-model
+```
 
 ## Local Web
 

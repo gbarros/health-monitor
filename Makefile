@@ -1,4 +1,4 @@
-.PHONY: test test-unit test-behavior test-live-model test-cloud-evals test-private-ocr-evals setup smoke-ollama dev-api dev-web web-install web-build agent-chat-ui-typecheck e2e-agent-chat-ui e2e e2e-private-week
+.PHONY: test test-unit test-behavior test-live-model test-cloud-evals test-private-ocr-evals setup smoke-ollama seed-scratch-db dev-api dev-web web-install web-build agent-chat-ui-typecheck e2e-agent-chat-ui e2e e2e-private-week
 
 PYTHON ?= $(shell [ -x .venv/bin/python ] && echo .venv/bin/python || echo python3)
 
@@ -25,6 +25,9 @@ smoke-ollama:
 
 setup:
 	$(PYTHON) -m pip install -e .
+
+seed-scratch-db:
+	PYTHONPATH=src $(PYTHON) scripts/seed_scratch_db.py --sqlite-path $${SQLITE_PATH:-data/scratch/health-monitor.sqlite3} --overwrite
 
 dev-api:
 	@if [ "$${AGENT_RUNTIME:-pydantic-ai}" = "pydantic-ai" ] && [ "$${REQUIRE_MODEL:-true}" != "false" ]; then \
