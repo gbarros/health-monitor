@@ -102,10 +102,46 @@ Meal drafts took 1–3+ minutes on a 9B model with zero feedback (see G5). After
 With Ollama stopped, a chat/onboarding send returns 500 `agent_error: "pydantic_ai failed: Connection error."` — no outbox capture, no replay. A connection error to the model host is the *definition* of `model_unavailable`. Fix: in the runtime failure handlers, walk the exception chain (`httpx.ConnectError` / `ConnectionError` / `OSError`) and raise `ModelUnavailableError` for connection-class failures; everything else stays `agent_error`. Behavior test with a stubbed agent raising a wrapped `ConnectError`.
 
 ### N2 — BLOCKER: first meal on an empty food library exceeds the tool-call limit
-Reproduced twice (solo and under load): on a fresh household (no foods — exactly the post-onboarding state), "Almoço: 74g arroz, 139g feijão preto" fails with `tool_calls_limit of 8 (tool_calls=10)`. The model pre-resolves each item with read tools before drafting, burning the budget; `draft_meal_proposal` already resolves internally. Fix (combined): (a) tool descriptions + task instructions must say explicitly "call draft_meal_proposal directly with the items; it resolves foods, do NOT call food_resolution/lookup per item first"; (b) raise the effective call limit for meal-shaped work (e.g. limit = max(12, 2×items+4)); (c) add a live eval: fresh empty household → first meal message → proposal drafted. This is the first thing a new user does after onboarding — it cannot fail.
+Reproduced twice (solo and under load): on a fresh household (no foods — exactly the post-onboarding state), "Almoço: 74g arroz, 139g feijão preto" fails with `tool_calls_limit of 8 (tool_calls=10)`. Root cause is behavioral, not a budget shortage: the model tries to *resolve* each item against the (empty) food library with read tools before drafting, burning the budget on lookups that will never match.
 
-### N3 — G5 not actually fixed: streaming is still buffered
-Measured: `run_started` at T0, then silence for the whole run, then `tool_call` + `text_delta` + `final` all in the same second (plus a duplicated `run_started`). The generator now exists but everything after the first event is emitted post-completion. Fix as G5 specified: yield SSE frames as the run progresses — at minimum, per-tool `tool_call` events live during execution. Acceptance is measured, not asserted: timestamps of received events must span the run duration.
+The fix is to lean into what the LLM is *for*. Everyday foods — rice, black beans, eggs — have stable, well-known nutrition the model already knows; it should state its own per-item estimate directly instead of hunting for a library match. Changes:
+- (a) **Instructions + tool descriptions — "infer, don't resolve":** the model must provide its best per-item nutrition estimate directly in `draft_meal_proposal` for everyday foods. Resolution/lookup tools are only for branded/labeled products, or when the user explicitly asks to match a previously-saved food. Do NOT call lookup per item first.
+- (b) **Call budget as a safety net only:** raise the effective limit for meal-shaped work (e.g. `max(12, 2×items+4)`) so a genuinely complex meal never clips. With (a), the common case won't come near it.
+- (c) **Live eval:** fresh empty household → "Almoço: 74g arroz, 139g feijão preto" → proposal drafted from the model's inferred nutrients, with **zero** per-item lookup calls. This is the first thing a new user does after onboarding — it cannot fail.
+
+### N3 — G5 not actually fixed: streaming is a structural (not config) bug
+Measured: `run_started` at T0, then silence for the whole run, then `tool_call` + `text_delta` + `final` all in the same second (plus a duplicated `run_started`).
+
+Diagnosis (do not re-investigate these — they are correct, leave them alone):
+- The SSE transport already flushes per event (`server.py` writes + `flush()`s each frame). Not the problem.
+- The bug is in `stream_events()` (`http_api.py`, `/api/agent/chat/stream`): it calls `self.service.chat(...)` — which runs the *entire* agent turn to completion — on one line, then replays the finished tool calls and full message as SSE frames. It is cosmetic streaming over a synchronous call. No config toggle changes this.
+
+Fix (structural): make the agent run emit events as it progresses.
+- Give the runtime a streaming path using pydantic-ai's `agent.iter()` / streaming API that surfaces `tool_call` (and, if feasible, `text_delta`) events *as they occur* during the run.
+- Give `service.chat` a generator variant (or a callback/event sink) the stream endpoint forwards; the non-streaming `chat()` can wrap it. Do not duplicate the run.
+- Remove the duplicated `run_started`.
+- Acceptance is **measured, not asserted**: a live test captures event arrival timestamps and confirms they span the run duration (tool events arrive before the final text, seconds apart), not all in one burst.
+
+## Gate 3 findings — re-run 2026-07-06 (VERDICT: NOT PASSED; N2 crash gone, quality + N1 + N3 remain)
+
+Verified against `64748b5` with the real `ornith:9b`, fresh empty scratch DB. 248 tests green, web build clean. The headline N2 crash is fixed — first meal on an empty library no longer hits `tool_calls_limit`; the model calls `draft_meal_proposal` directly with zero per-item read-tool calls. But the live run exposed four issues:
+
+### P1 — N1 was never implemented
+The commit only covers N2–N3. Reproduced live (server pointed at a dead Ollama port): chat returns **500 `agent_error: "pydantic_ai failed: Connection error."`** The generic `except Exception` handlers in `service.py` (`_try_pydantic_ai_chat` and the onboarding equivalent) still swallow connection errors. Implement N1 exactly as specified: walk the exception chain (`httpx.ConnectError` / `ConnectionError` / `OSError`) → `ModelUnavailableError`; behavior test with a stubbed agent raising a wrapped `ConnectError`.
+
+### P2 — BLOCKER: replay_message leaks the composed context, not the user's message
+Seen in the same N1 repro: the error's `replay_message` is the entire agent-context JSON blob (`"Agent context JSON:\n{...day_summaries...}\n\nUser message:\nalmoço: 100g arroz"`), not the user's original text. An outbox replay would re-send that stale composed prompt as if the user typed it. Replay must carry the **original user message only**; context is recomposed at replay time.
+
+### P3 — BLOCKER: first-meal nutrition quality — double draft, example parroting, dry-basis lookups
+"Almoço: 74g arroz, 139g feijão preto" on an empty library produced **two open draft proposals** for one message:
+- `proposal_1` (model estimates): both items got **130 kcal/100g — the literal example values from the system prompt** parroted onto feijão. Roughly right total (~277 kcal) by luck.
+- `proposal_2` (drafted again *without* estimates, so the per-item server-side fallback ran): "arroz" matched Open Food Facts **"Mini Biscoitos de Arroz Integral Camil" (388 kcal/100g rice crackers)**; feijão got a dry-basis 346 kcal/100g estimate labeled "cooked". Totals **768 kcal for a ~220 kcal meal** — 3.5× over.
+- The chat response pointed at `proposal_2` (the worse one); no superseding link between them.
+
+Fixes: (a) instructions: draft **once** — never call `draft_meal_proposal` twice for one message; if a second call happens anyway, the tool should supersede the first proposal; (b) the in-prompt example must not be parrotable — describe the shape, don't give plausible round numbers (or mark them `<your estimate>`); (c) meal items are **cooked/as-eaten by default** — estimates and external matches must be as-consumed basis; a generic phrase like "arroz" must never match a branded snack product (require phrase↔product-name similarity or skip OFF for generic staples and use the model estimate); (d) extend the live eval to assert exactly one proposal per message and totals within a sane band (e.g. 150–400 kcal for this meal).
+
+### P4 — N3 still not fixed: event sink is keyed to the wrong run
+The queue+thread SSE plumbing is right and the duplicate `run_started` is gone, but measured output is unchanged: `run_started` at T0, ~28s silence, then everything in one second. Root cause found in the tool-call trace: the sink is registered under the **outer** chat run (`agent_run_1`), but tool executions record against **inner** runs created by the draft tools (`agent_run_2`, `agent_run_3`) — so `_record_agent_tool_call` never finds the sink and no live event is ever emitted. Fix: resolve the sink for the whole request (e.g. register per-request/thread-local, or map inner runs to the originating request's sink). Acceptance unchanged: measured event timestamps must span the run.
 
 ## Phase C5 — Live acceptance gate (reviewer-led; implementer prepares)
 
