@@ -143,6 +143,13 @@ Fixes: (a) instructions: draft **once** — never call `draft_meal_proposal` twi
 ### P4 — N3 still not fixed: event sink is keyed to the wrong run
 The queue+thread SSE plumbing is right and the duplicate `run_started` is gone, but measured output is unchanged: `run_started` at T0, ~28s silence, then everything in one second. Root cause found in the tool-call trace: the sink is registered under the **outer** chat run (`agent_run_1`), but tool executions record against **inner** runs created by the draft tools (`agent_run_2`, `agent_run_3`) — so `_record_agent_tool_call` never finds the sink and no live event is ever emitted. Fix: resolve the sink for the whole request (e.g. register per-request/thread-local, or map inner runs to the originating request's sink). Acceptance unchanged: measured event timestamps must span the run.
 
+### Gate 3 resolution — fixed 2026-07-06 (P1–P4 verified live)
+
+All four fixed and re-verified against the real `ornith:9b` on fresh scratch DBs; 254 tests green.
+- **P1/P2**: `_is_connection_failure` walks the exception chain (`ConnectionError`/`OSError`/httpx-openai connection types by name); both chat and onboarding handlers reclassify to `ModelUnavailableError`. `replay_message` now always carries the user's original text (`_try_pydantic_ai_chat` takes an explicit `replay_message` param). Live: dead Ollama port → **503 `model_unavailable`, replay = "almoço: 100g arroz"**.
+- **P3**: prompts demand one `draft_meal_proposal` call, cooked/as-eaten basis, no reusable example numbers; `_phrase_matches_product_name` guards the meal-item fallback (generic staples can't match branded products — the rice-crackers match is rejected live); the fallback estimator prompt anchors cooked basis; duplicate drafts within one chat request are superseded (newest wins, link recorded). Live: exactly one open draft, **270 kcal** for the arroz+feijão meal (feijão 125 kcal/100g cooked), inside the 150–400 eval band now asserted in `tests/live`. Note: the 9B model still tends to draft twice; superseding makes this invisible to the user, but it remains a prompt-tuning candidate.
+- **P4**: event sinks (and draft tracking) are keyed by **person_id** for the request duration, so inner draft runs reach the sink. Live: tool_call SSE frames arrived at 8 distinct seconds spanning the 25s run (resolve → rejected-loose-match → estimate per item), then text+final.
+
 ## Phase C5 — Live acceptance gate (reviewer-led; implementer prepares)
 
 Implementer prepares, reviewer (Claude, with Gabriel) executes:

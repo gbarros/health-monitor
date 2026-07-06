@@ -180,7 +180,7 @@ class LiveAgentEvalCasesTest(unittest.TestCase):
                     else self.make_service()
                 )
                 result = run_case(service, person_id, case)
-                assert_invariants(self, service, person_id, result, case["expected_invariants"])
+                assert_invariants(self, service, person_id, result, case["expected_invariants"], case)
 
 
 def run_case(
@@ -206,14 +206,17 @@ def assert_invariants(
     person_id: str,
     result: dict[str, object],
     invariants: object,
+    case: dict[str, object] | None = None,
 ) -> None:
     names = [str(item) for item in invariants] if isinstance(invariants, list) else []
+    case = case or {}
     proposal = result.get("proposal")
     run = result["run"]
     if "no_direct_mutation" in names:
+        baseline = 0 if str(case.get("eval_kind")) == "empty_household_first_meal" else 315
         test.assertEqual(
             service.day_summary(person_id, date(2026, 7, 2)).totals.rounded().calories_kcal,
-            315,
+            baseline,
         )
     if "creates_diary_entry_update_proposal" in names:
         test.assertIsNotNone(proposal)
@@ -243,6 +246,26 @@ def assert_invariants(
         test.assertNotIn("resolve_food_reference", tool_names)
         test.assertNotIn("lookup_external_food", tool_names)
         test.assertNotIn("lookup_research_food", tool_names)
+    if "single_open_proposal" in names:
+        open_drafts = [
+            p
+            for p in service.proposals.proposals.values()
+            if p.person_id == person_id and p.status == "draft"
+        ]
+        test.assertEqual(
+            len(open_drafts),
+            1,
+            f"expected exactly one open draft, got {[p.id for p in open_drafts]}",
+        )
+    if "totals_within_sane_band" in names:
+        test.assertIsNotNone(proposal)
+        kcal = proposal.totals.rounded().calories_kcal
+        low = float(case.get("totals_kcal_min", 0))
+        high = float(case.get("totals_kcal_max", 10_000))
+        test.assertTrue(
+            low <= kcal <= high,
+            f"proposal totals {kcal} kcal outside sane band [{low}, {high}]",
+        )
     test.assertIn(getattr(run, "status"), {"answered", "proposal_created", "needs_clarification"})
 
 

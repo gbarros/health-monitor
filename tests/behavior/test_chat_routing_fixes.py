@@ -319,5 +319,146 @@ class RequireModelFlagTest(unittest.TestCase):
         self.assertIn("tool validation failed", response.body["error"]["message"])
 
 
+class GateThreeFixesTest(unittest.TestCase):
+    PYDANTIC_SETTINGS = {"agent_runtime": "pydantic-ai", "model_profile": "test-model"}
+
+    def test_connection_failure_is_model_unavailable_with_original_replay(self) -> None:
+        class ConnectionBrokenAgent:
+            def __init__(self, *, model_name: str, ollama_base_url: str) -> None:
+                pass
+
+            def answer(self, *, deps, message: str):
+                wrapper = RuntimeError("Connection error.")
+                wrapper.__cause__ = ConnectionError("connection refused")
+                raise wrapper
+
+        service, _, person_id = build_service(model_health_checker=lambda: True)
+        api = HttpApi(service)
+        with patch("health_monitor.application.service.PydanticAINutritionAgent", ConnectionBrokenAgent):
+            response = api.handle(
+                "POST",
+                "/api/agent/chat",
+                {
+                    "person_id": person_id,
+                    "message": "Almoço: 100g de arroz",
+                    "today": TODAY.isoformat(),
+                    "agent_settings": self.PYDANTIC_SETTINGS,
+                },
+            )
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.body["error"]["type"], "model_unavailable")
+        # Replay must carry the user's original text, never the composed context.
+        self.assertEqual(response.body["error"]["replay_message"], "Almoço: 100g de arroz")
+
+    def test_non_connection_agent_error_replay_is_original_user_message(self) -> None:
+        class BrokenAgent:
+            def __init__(self, *, model_name: str, ollama_base_url: str) -> None:
+                pass
+
+            def answer(self, *, deps, message: str):
+                raise ValueError("tool validation failed")
+
+        service, _, person_id = build_service(model_health_checker=lambda: True)
+        api = HttpApi(service)
+        with patch("health_monitor.application.service.PydanticAINutritionAgent", BrokenAgent):
+            response = api.handle(
+                "POST",
+                "/api/agent/chat",
+                {
+                    "person_id": person_id,
+                    "message": "Almoço: 100g de arroz",
+                    "today": TODAY.isoformat(),
+                    "agent_settings": self.PYDANTIC_SETTINGS,
+                },
+            )
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(response.body["error"]["type"], "agent_error")
+        self.assertEqual(response.body["error"]["replay_message"], "Almoço: 100g de arroz")
+
+    def test_generic_staple_phrase_rejects_branded_lookup_product(self) -> None:
+        match = HealthMonitorService._phrase_matches_product_name
+        self.assertFalse(match("arroz", "Mini Biscoitos de Arroz Integral Camil Natural"))
+        self.assertTrue(match("feijão preto", "Feijão Preto Camil"))
+        self.assertTrue(match("arroz", "Arroz branco cozido"))
+        self.assertFalse(match("arroz", "Biscoito Camil"))
+
+    def test_second_meal_draft_in_same_chat_request_supersedes_first(self) -> None:
+        service, _, person_id = build_service(model_health_checker=lambda: True)
+        # Simulate an active chat request the way service.chat() sets it up.
+        service._active_meal_draft_requests[person_id] = []
+        first = service.draft_structured_meal_proposal(
+            person_id=person_id,
+            items=[{"phrase": "arroz", "quantity_g": 74}],
+            day=TODAY,
+        )
+        second = service.draft_structured_meal_proposal(
+            person_id=person_id,
+            items=[{"phrase": "arroz", "quantity_g": 74}, {"phrase": "manga", "quantity_g": 100}],
+            day=TODAY,
+        )
+        service._active_meal_draft_requests.pop(person_id, None)
+        self.assertEqual(service.proposals.proposals[first.id].status, "superseded")
+        self.assertEqual(service.proposals.proposals[second.id].status, "draft")
+
+    def test_meal_draft_outside_chat_request_does_not_supersede(self) -> None:
+        service, _, person_id = build_service(model_health_checker=lambda: True)
+        first = service.draft_structured_meal_proposal(
+            person_id=person_id,
+            items=[{"phrase": "arroz", "quantity_g": 74}],
+            day=TODAY,
+        )
+        second = service.draft_structured_meal_proposal(
+            person_id=person_id,
+            items=[{"phrase": "manga", "quantity_g": 100}],
+            day=TODAY,
+        )
+        self.assertEqual(service.proposals.proposals[first.id].status, "draft")
+        self.assertEqual(service.proposals.proposals[second.id].status, "draft")
+
+    def test_stream_event_sink_receives_tool_calls_from_inner_draft_runs(self) -> None:
+        from health_monitor.application.service import AgentChatResponse
+
+        class DraftingAgent:
+            def __init__(self, *, model_name: str, ollama_base_url: str) -> None:
+                pass
+
+            def answer(self, *, deps, message: str):
+                proposal = deps.service.draft_structured_meal_proposal(
+                    person_id=deps.person_id,
+                    items=[{"phrase": "arroz", "quantity_g": 74}],
+                    day=TODAY,
+                    agent_settings=deps.settings,
+                    source_text="structured meal draft from agent",
+                )
+                return AgentChatResponse(
+                    run_id="inner",
+                    person_id=deps.person_id,
+                    message="drafted",
+                    behavior_label="proposal_draft",
+                    proposal_id=proposal.id,
+                )
+
+        service, _, person_id = build_service(model_health_checker=lambda: True)
+        events: list[dict] = []
+        with patch("health_monitor.application.service.PydanticAINutritionAgent", DraftingAgent):
+            service.chat(
+                person_id=person_id,
+                message="Almoço: 74g arroz",
+                today=TODAY,
+                agent_settings=self.PYDANTIC_SETTINGS,
+                stream_event_sink=events.append,
+            )
+        tool_events = [e for e in events if e.get("event") == "tool_call"]
+        self.assertTrue(tool_events, "sink received no tool_call events from inner runs")
+        names = {e["data"]["name"] for e in tool_events}
+        self.assertTrue(
+            names & {"resolve_food_reference", "estimate_food", "use_model_item_estimate"},
+            f"expected inner-run resolution events, got {names}",
+        )
+        # Sink is cleaned up after the request.
+        self.assertEqual(service._agent_event_sinks, {})
+        self.assertEqual(service._active_meal_draft_requests, {})
+
+
 if __name__ == "__main__":
     unittest.main()

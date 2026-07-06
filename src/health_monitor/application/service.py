@@ -5,6 +5,7 @@ import hashlib
 import json
 import re
 import time
+import unicodedata
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable, Sequence
@@ -40,6 +41,32 @@ class AgentExecutionError(RuntimeError):
     def __init__(self, message: str, *, replay_message: str | None = None) -> None:
         super().__init__(message)
         self.replay_message = replay_message
+
+
+_CONNECTION_ERROR_TYPE_NAMES = {
+    "ConnectError",
+    "ConnectTimeout",
+    "APIConnectionError",
+    "APITimeoutError",
+}
+
+
+def _is_connection_failure(exc: BaseException) -> bool:
+    """Walk the exception chain looking for a connection-class failure.
+
+    pydantic-ai wraps httpx.ConnectError in provider errors (e.g. openai
+    APIConnectionError), so the connection root sits behind __cause__ links.
+    """
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, (ConnectionError, OSError)):
+            return True
+        if type(current).__name__ in _CONNECTION_ERROR_TYPE_NAMES:
+            return True
+        current = current.__cause__ or current.__context__
+    return False
 
 
 AGENT_INTENT_TEMPLATES: dict[str, str] = {
@@ -396,7 +423,9 @@ class HealthMonitorService:
         self.proposals = ProposalService(self.diary)
         self.agent_runs: dict[str, AgentRun] = {}
         self.agent_tool_calls: dict[str, AgentToolCall] = {}
+        # Both keyed by person_id for the duration of one chat request.
         self._agent_event_sinks: dict[str, Callable[[dict[str, Any]], None]] = {}
+        self._active_meal_draft_requests: dict[str, list[str]] = {}
         self.chat_turns: dict[str, AgentChatTurn] = {}
         self.onboarding_turns: dict[str, OnboardingTurn] = {}
         self.review_notes: dict[str, ReviewNote] = {}
@@ -1207,6 +1236,31 @@ class HealthMonitorService:
         self._persist()
         return proposal
 
+    @staticmethod
+    def _phrase_matches_product_name(phrase: str, product_name: str) -> bool:
+        """True when a lookup product is a close match for the meal-item phrase.
+
+        Guards the meal-draft fallback: a generic staple like "arroz" must not
+        silently become a branded snack ("Mini Biscoitos de Arroz Integral...").
+        Every phrase token must appear in the product name, and the product
+        name may add at most two extra tokens (brand/qualifier), ignoring
+        Portuguese connectives.
+        """
+
+        def tokens(text: str) -> list[str]:
+            normalized = unicodedata.normalize("NFKD", text.casefold())
+            normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+            stopwords = {"de", "da", "do", "das", "dos", "com", "e", "em", "a", "o"}
+            return [t for t in re.findall(r"[a-z0-9]+", normalized) if t not in stopwords]
+
+        phrase_tokens = tokens(phrase)
+        product_tokens = tokens(product_name)
+        if not phrase_tokens or not product_tokens:
+            return False
+        if not set(phrase_tokens).issubset(set(product_tokens)):
+            return False
+        return len(product_tokens) <= len(phrase_tokens) + 2
+
     def _lookup_first_external_food_candidate(self, phrase: str) -> FoodLookupCandidate | None:
         if self.food_lookup_provider is None:
             return None
@@ -1925,7 +1979,11 @@ class HealthMonitorService:
         today: date,
         run: AgentRun,
         settings: dict[str, Any],
+        replay_message: str | None = None,
     ) -> AgentChatResponse | None:
+        # replay_message must be the user's ORIGINAL text; `message` is the
+        # composed context prompt and must never be replayed as user input.
+        replay_message = replay_message if replay_message is not None else message
         if settings.get("agent_runtime") != "pydantic-ai":
             return None
         metadata = self._run_metadata(settings)
@@ -1969,7 +2027,7 @@ class HealthMonitorService:
                 fallback_reason=fallback_reason,
             )
             if self.require_model:
-                raise ModelUnavailableError(fallback_reason, replay_message=message)
+                raise ModelUnavailableError(fallback_reason, replay_message=replay_message)
             return None
         except Exception as exc:
             fallback_reason = f"pydantic_ai failed: {exc}"
@@ -1990,7 +2048,11 @@ class HealthMonitorService:
                 fallback_reason=fallback_reason,
             )
             if self.require_model:
-                raise AgentExecutionError(fallback_reason, replay_message=message)
+                if _is_connection_failure(exc):
+                    raise ModelUnavailableError(
+                        fallback_reason, replay_message=replay_message
+                    ) from exc
+                raise AgentExecutionError(fallback_reason, replay_message=replay_message) from exc
             return None
 
         if response.proposal_id is not None:
@@ -2055,8 +2117,11 @@ class HealthMonitorService:
             **self._run_metadata(settings),
         )
         self.agent_runs[run.id] = run
+        # Keyed by person: draft tools spawn inner AgentRuns, so a run-id key
+        # would never match the runs that actually record tool calls.
         if stream_event_sink is not None:
-            self._agent_event_sinks[run.id] = stream_event_sink
+            self._agent_event_sinks[person_id] = stream_event_sink
+        self._active_meal_draft_requests[person_id] = []
 
         def finish(response: AgentChatResponse) -> AgentChatResponse:
             self._record_agent_chat_turn(
@@ -2085,6 +2150,7 @@ class HealthMonitorService:
                 today=today,
                 run=run,
                 settings=settings,
+                replay_message=message,
             )
             if pydantic_response is not None:
                 return finish(pydantic_response)
@@ -2108,7 +2174,8 @@ class HealthMonitorService:
             )
             return finish(response)
         finally:
-            self._agent_event_sinks.pop(run.id, None)
+            self._agent_event_sinks.pop(person_id, None)
+            self._active_meal_draft_requests.pop(person_id, None)
 
     def _create_range_estimate_proposal(
         self,
@@ -2322,6 +2389,16 @@ class HealthMonitorService:
                 source_agent_run_id=run.id,
             )
         )
+        # One user message must end in one open meal proposal. If the agent
+        # drafted more than once in this request, the newest draft supersedes
+        # the earlier ones instead of leaving conflicting open drafts.
+        tracked = self._active_meal_draft_requests.get(person_id)
+        if tracked is not None:
+            for previous_id in tracked:
+                previous = self.proposals.proposals.get(previous_id)
+                if previous is not None and previous.status == "draft":
+                    self.proposals.supersede(previous_id, superseded_by_proposal_id=proposal.id)
+            tracked.append(proposal.id)
         self.agent_runs[run.id] = replace(
             run,
             status="proposal_created",
@@ -2694,6 +2771,19 @@ class HealthMonitorService:
                 raise
 
         lookup_candidate = self._lookup_first_external_food_candidate(phrase)
+        if lookup_candidate is not None and not self._phrase_matches_product_name(
+            phrase, lookup_candidate.product_name
+        ):
+            self._record_agent_tool_call(
+                run=run,
+                tool_name="lookup_external_food",
+                input_summary=f"phrase={phrase}",
+                output_summary=(
+                    f"rejected loose match: {lookup_candidate.product_name}; "
+                    "falling back to model estimate"
+                ),
+            )
+            lookup_candidate = None
         if lookup_candidate is not None:
             self._record_agent_tool_call(
                 run=run,
@@ -3618,6 +3708,10 @@ class HealthMonitorService:
                     raise ModelUnavailableError(str(exc), replay_message=message) from exc
             except Exception as exc:
                 if self.require_model:
+                    if _is_connection_failure(exc):
+                        raise ModelUnavailableError(
+                            f"pydantic_ai failed: {exc}", replay_message=message
+                        ) from exc
                     raise AgentExecutionError(f"pydantic_ai failed: {exc}", replay_message=message) from exc
         turn = OnboardingTurn(
             id=self._next_id("onboarding_turn"),
@@ -3940,7 +4034,7 @@ class HealthMonitorService:
             completed_at=now,
         )
         self.agent_tool_calls[call.id] = call
-        sink = self._agent_event_sinks.get(run.id)
+        sink = self._agent_event_sinks.get(run.person_id)
         if sink is not None:
             sink(
                 {

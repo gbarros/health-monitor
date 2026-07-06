@@ -48,7 +48,10 @@ class OllamaFoodEstimator:
             "Return only compact JSON: {\"food_name\":string,\"calories_kcal\":number,"
             "\"protein_g\":number,\"carbs_g\":number,\"fat_g\":number,"
             "\"fiber_g\":number,\"sodium_mg\":number,\"confidence\":number,\"notes\":string}. "
-            f"Nutrition per 100g for {phrase}."
+            f"Nutrition per 100g for {phrase}, as typically eaten (cooked/prepared "
+            "basis). NEVER use dry or raw basis unless the phrase says dry/raw: "
+            "cooked rice is ~130 kcal/100g (not ~360 dry); cooked beans are "
+            "~90-140 kcal/100g (not ~340 dry)."
         )
         body = json.dumps(
             {
