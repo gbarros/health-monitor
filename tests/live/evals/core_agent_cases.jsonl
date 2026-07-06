@@ -4,3 +4,4 @@
 {"id":"weird_meal_time_phrase","eval_kind":"weird_meal_phrasing","prompt":"lá pelas 10 comi só meio queijo, 50g queijo","expected_invariants":["creates_diary_proposal_or_clarification","no_direct_mutation"]}
 {"id":"gabriel_acceptance_lunch_shape","eval_kind":"meal_logging","prompt":"Almoço: 74g arroz / 139g feijão / 113g sobrecoxa / -33g ossos","expected_invariants":["creates_diary_proposal_or_clarification","no_direct_mutation"]}
 {"id":"restaurant_estimate_phrase","eval_kind":"restaurant_or_social_estimate","prompt":"100g KFC Double Crunch combo","expected_invariants":["creates_diary_proposal_or_clarification","no_direct_mutation","confidence_is_visible"]}
+{"id":"empty_household_first_meal","eval_kind":"empty_household_first_meal","prompt":"Almoço: 74g arroz, 139g feijão preto","expected_invariants":["creates_diary_proposal_or_clarification","no_direct_mutation","uses_model_item_estimates","no_per_item_lookup_calls"]}

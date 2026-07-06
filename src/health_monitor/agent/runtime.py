@@ -416,6 +416,8 @@ class PydanticAINutritionAgent:
                 "'100g KFC Double Crunch combo' must end with a drafted estimate proposal, not "
                 "just an answer. For free-form meal logs with colloquial time phrases or "
                 "multiple foods, still draft the meal from the best structured items you can infer. "
+                "For everyday foods in meal logs, infer reasonable nutrients_per_100g values yourself "
+                "and call draft_meal_proposal directly; do not pre-resolve or lookup each item. "
                 "If the message includes both a vague and exact quantity for the same food, prefer "
                 "the exact gram amount. If the message includes discarded or non-edible mass such "
                 "as '-33g ossos', omit that from logged foods instead of blocking the draft. "
@@ -495,9 +497,14 @@ class PydanticAINutritionAgent:
                 "history, and can run targeted OCR on attachment ids when image text "
                 "is needed. For food logging, extract structured items yourself and "
                 "call draft_meal_proposal or amend_meal_proposal; do not route raw user "
-                "text through deterministic parsers. When using search or resolve tools, "
-                "pass only the food phrase, never quantities or units. For meal drafts, "
-                "each item should look like {'phrase': 'queijo', 'quantity_g': 50}. "
+                "text through deterministic parsers. For ordinary everyday foods, call "
+                "draft_meal_proposal directly with phrase, quantity_g, and your best "
+                "nutrients_per_100g estimate; draft_meal_proposal resolves or stores estimates. "
+                "Do not call resolve_food, lookup_food, or search_foods for each meal item first. "
+                "Use read lookup tools only for branded/labeled products, barcode matching, or "
+                "when the user asks to match a saved food. For meal drafts, each estimated item "
+                "should look like {'phrase': 'arroz', 'quantity_g': 74, 'nutrients_per_100g': "
+                "{'calories_kcal': 130, 'protein_g': 2.7, 'carbs_g': 28, 'fat_g': 0.3}}. "
                 "Draft tools may create proposals, but they must not claim "
                 "that diary entries, profile fields, goal targets, or review notes were "
                 "applied. If asked to change data, draft a proposal and explain that "
@@ -534,7 +541,7 @@ class PydanticAINutritionAgent:
             phrase: str | None = None,
             barcode: str | None = None,
         ) -> dict[str, Any]:
-            """Resolve a food phrase only, without grams or units, or a barcode to a specific local food version."""
+            """Resolve a saved/branded food phrase only; do not call for everyday meal items before drafting."""
             return tools.food_resolution(ctx.deps, phrase=phrase, barcode=barcode)
 
         @agent.tool
@@ -543,7 +550,7 @@ class PydanticAINutritionAgent:
             phrase: str | None = None,
             barcode: str | None = None,
         ) -> dict[str, Any]:
-            """Return local and configured external food lookup candidates."""
+            """Return lookup candidates for branded/labeled products; do not call for everyday meal items before drafting."""
             return tools.food_lookup(ctx.deps, phrase=phrase, barcode=barcode)
 
         @agent.tool
@@ -580,7 +587,7 @@ class PydanticAINutritionAgent:
             meal_type: str | None = None,
             source_text: str = "",
         ) -> dict[str, Any]:
-            """Draft a meal proposal from structured items like {'phrase': 'queijo', 'quantity_g': 50}."""
+            """Draft a meal proposal directly. Everyday items may include nutrients_per_100g estimates; this tool resolves or stores estimates."""
             return tools.draft_meal_proposal(
                 ctx.deps,
                 items=items,
@@ -769,5 +776,15 @@ class PydanticAINutritionAgent:
             prompt,
             deps=deps,
             output_type=[ToolOutput(AgentRuntimeResponse, name="finish"), str],
-            usage_limits=UsageLimits(request_limit=8, tool_calls_limit=8),
+            usage_limits=UsageLimits(
+                request_limit=8,
+                tool_calls_limit=max(8, _meal_tool_call_limit(message)),
+            ),
         )
+
+
+def _meal_tool_call_limit(message: str) -> int:
+    item_count = len(re.findall(r"\b\d+(?:[.,]\d+)?\s*g\b", message, flags=re.IGNORECASE))
+    if item_count == 0:
+        return 8
+    return max(12, item_count * 2 + 4)

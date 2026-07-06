@@ -155,10 +155,30 @@ class LiveAgentEvalCasesTest(unittest.TestCase):
         )
         return service, person.id
 
+    def make_empty_service(self) -> tuple[HealthMonitorService, str]:
+        service = HealthMonitorService(
+            agent_runtime="pydantic-ai",
+            model_provider="ollama",
+            agent_model=os.environ.get("LIVE_MODEL_NAME", "ornith:9b"),
+            ollama_base_url=os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434"),
+            food_lookup_provider=StaticFoodLookupProvider([]),
+        )
+        household = service.create_household(name="Casa")
+        person = service.create_person(
+            household_id=household.id,
+            name="Gabriel",
+            timezone="America/Sao_Paulo",
+        )
+        return service, person.id
+
     def test_core_live_agent_eval_cases(self) -> None:
         for case in load_cases():
             with self.subTest(case=case["id"]):
-                service, person_id = self.make_service()
+                service, person_id = (
+                    self.make_empty_service()
+                    if str(case["eval_kind"]) == "empty_household_first_meal"
+                    else self.make_service()
+                )
                 result = run_case(service, person_id, case)
                 assert_invariants(self, service, person_id, result, case["expected_invariants"])
 
@@ -211,6 +231,18 @@ def assert_invariants(
     if "confidence_is_visible" in names and proposal is not None:
         evidence = proposal.evidence[0] if proposal.evidence else {}
         test.assertIn("confidence", evidence)
+    if "uses_model_item_estimates" in names:
+        test.assertIsNotNone(proposal)
+        test.assertTrue(proposal.payload.get("estimated_food_versions"))
+        test.assertTrue(all(item.get("source") == "agent_model_estimate" for item in proposal.payload.get("estimated_food_versions", [])))
+    if "no_per_item_lookup_calls" in names:
+        tool_names = [
+            call.tool_name
+            for call in service.agent_tool_calls_for_run(getattr(run, "id"))
+        ]
+        test.assertNotIn("resolve_food_reference", tool_names)
+        test.assertNotIn("lookup_external_food", tool_names)
+        test.assertNotIn("lookup_research_food", tool_names)
     test.assertIn(getattr(run, "status"), {"answered", "proposal_created", "needs_clarification"})
 
 

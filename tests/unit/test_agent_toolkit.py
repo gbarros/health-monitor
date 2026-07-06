@@ -115,6 +115,64 @@ class NutritionAgentToolsTest(unittest.TestCase):
         self.assertEqual(service.day_summary(deps.person_id, date(2026, 7, 2)).totals, Nutrients())
         self.assertEqual(service.review_notes_for_person(deps.person_id), ())
 
+    def test_draft_meal_accepts_model_estimates_without_food_lookup(self) -> None:
+        service = HealthMonitorService()
+        household = service.create_household(name="Casa")
+        person = service.create_person(
+            household_id=household.id,
+            name="Gabriel",
+            timezone="America/Sao_Paulo",
+        )
+        deps = AgentDeps(
+            service=service,
+            person_id=person.id,
+            household_id=household.id,
+            today=date(2026, 7, 2),
+            settings={"agent_runtime": "pydantic-ai", "external_lookup": True},
+            source_config={},
+        )
+
+        result = NutritionAgentTools().draft_meal_proposal(
+            deps,
+            day="2026-07-02",
+            meal_type="lunch",
+            items=[
+                {
+                    "phrase": "arroz",
+                    "quantity_g": 74,
+                    "nutrients_per_100g": {
+                        "calories_kcal": 130,
+                        "protein_g": 2.7,
+                        "carbs_g": 28,
+                        "fat_g": 0.3,
+                    },
+                    "confidence": 0.6,
+                },
+                {
+                    "phrase": "feijão preto",
+                    "quantity_g": 139,
+                    "nutrients_per_100g": {
+                        "calories_kcal": 77,
+                        "protein_g": 4.5,
+                        "carbs_g": 14,
+                        "fat_g": 0.5,
+                    },
+                    "confidence": 0.55,
+                },
+            ],
+            source_text="Almoço: 74g arroz, 139g feijão preto",
+        )
+
+        proposal = service.get_proposal(result["proposal_id"])
+        tool_names = [
+            call.tool_name
+            for call in service.agent_tool_calls_for_run(proposal.source_agent_run_id or "")
+        ]
+        self.assertEqual(proposal.proposal_type, "diary_entries_with_estimates")
+        self.assertEqual([entry.quantity_g for entry in proposal.entries], [74, 139])
+        self.assertEqual([evidence["source_type"] for evidence in proposal.evidence], ["model_item_estimate", "model_item_estimate"])
+        self.assertEqual(tool_names, ["use_model_item_estimate", "use_model_item_estimate"])
+
     def test_onboarding_tool_creates_profile_setup_proposal(self) -> None:
         service = HealthMonitorService()
         deps = AgentDeps(

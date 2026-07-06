@@ -396,6 +396,7 @@ class HealthMonitorService:
         self.proposals = ProposalService(self.diary)
         self.agent_runs: dict[str, AgentRun] = {}
         self.agent_tool_calls: dict[str, AgentToolCall] = {}
+        self._agent_event_sinks: dict[str, Callable[[dict[str, Any]], None]] = {}
         self.chat_turns: dict[str, AgentChatTurn] = {}
         self.onboarding_turns: dict[str, OnboardingTurn] = {}
         self.review_notes: dict[str, ReviewNote] = {}
@@ -2040,6 +2041,7 @@ class HealthMonitorService:
         agent_settings: dict[str, Any] | None = None,
         attachment_ids: Sequence[str] | None = None,
         intent: str | None = None,
+        stream_event_sink: Callable[[dict[str, Any]], None] | None = None,
     ) -> AgentChatResponse:
         settings = self._agent_settings(agent_settings)
         self._ensure_model_available(settings, replay_message=message)
@@ -2053,6 +2055,8 @@ class HealthMonitorService:
             **self._run_metadata(settings),
         )
         self.agent_runs[run.id] = run
+        if stream_event_sink is not None:
+            self._agent_event_sinks[run.id] = stream_event_sink
 
         def finish(response: AgentChatResponse) -> AgentChatResponse:
             self._record_agent_chat_turn(
@@ -2063,45 +2067,48 @@ class HealthMonitorService:
             self._persist()
             return response
 
-        intent_block = AGENT_INTENT_TEMPLATES.get(str(intent)) if intent is not None else None
-        user_payload = message
-        if attachment_ids:
-            user_payload = (
-                f"{message}\n\nAttachment ids available to inspect: "
-                f"{', '.join(str(item) for item in attachment_ids)}"
-            ).strip()
-        if intent_block:
-            user_payload = f"Intent context: {intent_block}\n\nUser message: {user_payload}"
-        agent_message = self._agent_context_message(person_id, today, user_payload)
+        try:
+            intent_block = AGENT_INTENT_TEMPLATES.get(str(intent)) if intent is not None else None
+            user_payload = message
+            if attachment_ids:
+                user_payload = (
+                    f"{message}\n\nAttachment ids available to inspect: "
+                    f"{', '.join(str(item) for item in attachment_ids)}"
+                ).strip()
+            if intent_block:
+                user_payload = f"Intent context: {intent_block}\n\nUser message: {user_payload}"
+            agent_message = self._agent_context_message(person_id, today, user_payload)
 
-        pydantic_response = self._try_pydantic_ai_chat(
-            person_id=person_id,
-            message=agent_message,
-            today=today,
-            run=run,
-            settings=settings,
-        )
-        if pydantic_response is not None:
-            return finish(pydantic_response)
+            pydantic_response = self._try_pydantic_ai_chat(
+                person_id=person_id,
+                message=agent_message,
+                today=today,
+                run=run,
+                settings=settings,
+            )
+            if pydantic_response is not None:
+                return finish(pydantic_response)
 
-        response = AgentChatResponse(
-            run_id=run.id,
-            person_id=person_id,
-            message=(
-                "O agente configurado não retornou uma resposta. Tente novamente quando "
-                "o runtime de modelo estiver disponível."
-            ),
-            behavior_label="answer_question",
-        )
-        self.agent_runs[run.id] = replace(
-            run,
-            status="answered",
-            runtime=self._run_metadata(settings)["runtime"],
-            model_name=self._run_metadata(settings)["model_name"],
-            tool_loop_count=len(self.agent_tool_calls_for_run(run.id)),
-            fallback_reason=self._current_fallback_reason(run),
-        )
-        return finish(response)
+            response = AgentChatResponse(
+                run_id=run.id,
+                person_id=person_id,
+                message=(
+                    "O agente configurado não retornou uma resposta. Tente novamente quando "
+                    "o runtime de modelo estiver disponível."
+                ),
+                behavior_label="answer_question",
+            )
+            self.agent_runs[run.id] = replace(
+                run,
+                status="answered",
+                runtime=self._run_metadata(settings)["runtime"],
+                model_name=self._run_metadata(settings)["model_name"],
+                tool_loop_count=len(self.agent_tool_calls_for_run(run.id)),
+                fallback_reason=self._current_fallback_reason(run),
+            )
+            return finish(response)
+        finally:
+            self._agent_event_sinks.pop(run.id, None)
 
     def _create_range_estimate_proposal(
         self,
@@ -2511,7 +2518,12 @@ class HealthMonitorService:
             quantity_g = float(item.get("quantity_g") or item.get("quantity") or 0)
             if not phrase or quantity_g <= 0:
                 raise ValueError("structured meal items require phrase and positive quantity_g")
-            resolved = self._resolve_meal_item_food(
+            resolved = self._resolve_meal_item_model_estimate(
+                person=person,
+                run=run,
+                phrase=phrase,
+                item=item,
+            ) or self._resolve_meal_item_food(
                 person=person,
                 run=run,
                 phrase=phrase,
@@ -2547,6 +2559,66 @@ class HealthMonitorService:
                 }
             )
         return entries, evidence, totals, estimated_food_versions
+
+    def _resolve_meal_item_model_estimate(
+        self,
+        *,
+        person: Person,
+        run: AgentRun,
+        phrase: str,
+        item: dict[str, Any],
+    ) -> ResolvedMealFood | None:
+        raw_nutrients = item.get("nutrients_per_100g")
+        if not isinstance(raw_nutrients, dict):
+            return None
+        nutrients = nutrients_from_snapshot(raw_nutrients).rounded()
+        if nutrients.calories_kcal <= 0:
+            return None
+        food_id = self._next_id("food")
+        food_version_id = self._next_id("food_version")
+        food_name = str(item.get("food_name") or phrase).strip() or phrase
+        confidence = float(item.get("confidence") or 0.55)
+        notes = str(item.get("notes") or "Estimated directly by the local model.").strip()
+        version = FoodVersion(
+            id=food_version_id,
+            food_id=food_id,
+            label="model estimate",
+            nutrients_per_100g=nutrients,
+            source="agent_model_estimate",
+            confidence=confidence,
+        )
+        self._record_agent_tool_call(
+            run=run,
+            tool_name="use_model_item_estimate",
+            input_summary=f"phrase={phrase}",
+            output_summary=f"{food_name}; confidence={confidence}",
+        )
+        return ResolvedMealFood(
+            food_version_id=food_version_id,
+            version=version,
+            food_name=food_name,
+            source="agent_model_estimate_proposal",
+            resolution_reason="model_item_estimate",
+            confidence=confidence,
+            evidence_source_type="model_item_estimate",
+            evidence_source_details={
+                "nutrients_per_100g": nutrients_to_snapshot(nutrients),
+                "notes": notes,
+            },
+            pending_version={
+                "food_id": food_id,
+                "food_version_id": food_version_id,
+                "household_id": person.household_id,
+                "food_name": food_name,
+                "brand": None,
+                "phrase": phrase,
+                "version_label": "model estimate",
+                "nutrients_per_100g": nutrients_to_snapshot(nutrients),
+                "source": "agent_model_estimate",
+                "confidence": confidence,
+                "notes": notes,
+            },
+        )
 
     def _structured_entry_index(
         self,
@@ -3868,6 +3940,19 @@ class HealthMonitorService:
             completed_at=now,
         )
         self.agent_tool_calls[call.id] = call
+        sink = self._agent_event_sinks.get(run.id)
+        if sink is not None:
+            sink(
+                {
+                    "event": "tool_call",
+                    "data": {
+                        "name": call.tool_name,
+                        "status": call.status,
+                        "input_summary": call.input_summary,
+                        "output_summary": call.output_summary,
+                    },
+                }
+            )
         return call
 
     def _record_agent_chat_turn(

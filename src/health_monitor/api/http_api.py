@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import base64
+import queue
+import threading
 from dataclasses import dataclass
 from datetime import date
 from typing import Any, Callable, Iterable
@@ -595,27 +597,37 @@ class HttpApi:
             if stream_settings is None and method == "GET" and query.get("model_profile"):
                 stream_settings = {"model_profile": query["model_profile"]}
             def stream_events() -> Iterable[dict[str, Any]]:
+                events: queue.Queue[dict[str, Any]] = queue.Queue()
+                result: dict[str, Any] = {}
+
+                def run_chat() -> None:
+                    try:
+                        response = self.service.chat(
+                            person_id=str(stream_input["person_id"]),
+                            message=str(stream_input["message"]),
+                            today=date.fromisoformat(str(stream_input["today"])) if stream_input.get("today") else date.today(),
+                            agent_settings=stream_settings,
+                            attachment_ids=stream_input.get("attachment_ids") if method == "POST" else None,
+                            intent=str(stream_input["intent"]) if stream_input.get("intent") is not None else None,
+                            stream_event_sink=events.put,
+                        )
+                        result["response"] = response
+                    except Exception as exc:
+                        result["error"] = exc
+
                 yield {"event": "run_started", "data": {"status": "started"}}
-                response = self.service.chat(
-                    person_id=str(stream_input["person_id"]),
-                    message=str(stream_input["message"]),
-                    today=date.fromisoformat(str(stream_input["today"])) if stream_input.get("today") else date.today(),
-                    agent_settings=stream_settings,
-                    attachment_ids=stream_input.get("attachment_ids") if method == "POST" else None,
-                    intent=str(stream_input["intent"]) if stream_input.get("intent") is not None else None,
-                )
+                thread = threading.Thread(target=run_chat, daemon=True)
+                thread.start()
+                while thread.is_alive() or not events.empty():
+                    try:
+                        yield events.get(timeout=0.25)
+                    except queue.Empty:
+                        continue
+                thread.join()
+                if "error" in result:
+                    raise result["error"]
+                response = result["response"]
                 final = agent_chat_response_to_dict(response, self.service)
-                yield {"event": "run_started", "data": {"run_id": response.run_id}}
-                for call in self.service.agent_tool_calls_for_run(response.run_id):
-                    yield {
-                        "event": "tool_call",
-                        "data": {
-                            "name": call.tool_name,
-                            "status": call.status,
-                            "input_summary": call.input_summary,
-                            "output_summary": call.output_summary,
-                        },
-                    }
                 yield {"event": "text_delta", "data": {"text": response.message}}
                 yield {"event": "final", "data": final}
 
