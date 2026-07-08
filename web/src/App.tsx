@@ -20,6 +20,7 @@ import {
   loadProposals,
   loadWeightTrend,
   logWeight,
+  startNewChatSession,
   readStoredAgentSettings,
   readStoredBackgroundJobs,
   writeStoredAgentSettings,
@@ -169,20 +170,20 @@ function App() {
     enabled: selectedPersonId != null,
   });
 
-  const initialMessages = useMemo<ThreadMessageLike[]>(
-    () =>
-      (chatHistoryQuery.data ?? []).flatMap((turn) => [
-        {
-          role: "user" as const,
-          content: [{ type: "text" as const, text: turn.user_message }],
-        },
-        {
-          role: "assistant" as const,
-          content: [{ type: "text" as const, text: turn.assistant_message }],
-        },
-      ]),
-    [chatHistoryQuery.data],
-  );
+  const initialMessages = useMemo<ThreadMessageLike[]>(() => {
+    const turns = chatHistoryQuery.data ?? [];
+    const lastBoundary = turns.map((turn) => turn.behavior_label).lastIndexOf("session_boundary");
+    return turns.slice(lastBoundary + 1).flatMap((turn) => [
+      {
+        role: "user" as const,
+        content: [{ type: "text" as const, text: turn.user_message }],
+      },
+      {
+        role: "assistant" as const,
+        content: [{ type: "text" as const, text: turn.assistant_message }],
+      },
+    ]);
+  }, [chatHistoryQuery.data]);
 
   const invalidateDailyReadModels = useCallback(async () => {
     await Promise.all([
@@ -348,6 +349,17 @@ function App() {
       await invalidateDailyReadModels();
     },
     onError: (error) => showToast(error instanceof Error ? error.message : "Não foi possível registrar o peso."),
+  });
+
+  const newChatSession = useMutation({
+    mutationFn: () => startNewChatSession(selectedPersonId ?? ""),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.chatHistory(selectedPersonId) });
+      setChatReloadKey((key) => key + 1);
+      showToast("Nova conversa iniciada. O histórico continua salvo em Dados.");
+    },
+    onError: (error) =>
+      showToast(error instanceof Error ? error.message : "Não foi possível iniciar nova conversa."),
   });
 
   const promptBuilderSend = useMutation({
@@ -558,6 +570,7 @@ function App() {
               onLogFoodClick={() => setLogFoodOpen(true)}
               onRepeatClick={() => setRepeatOpen(true)}
               onWeightClick={() => setWeightOpen(true)}
+              onNewSessionClick={() => newChatSession.mutate()}
               onRecipeClick={() => setRecipeOpen(true)}
               onLabelClick={() => setLabelOpen(true)}
               onAgentResponse={onAgentResponse}
@@ -795,6 +808,7 @@ function ChatWorkspace({
   onLogFoodClick,
   onRepeatClick,
   onWeightClick,
+  onNewSessionClick,
   onRecipeClick,
   onLabelClick,
   onAgentResponse,
@@ -824,6 +838,7 @@ function ChatWorkspace({
   onLogFoodClick: () => void;
   onRepeatClick: () => void;
   onWeightClick: () => void;
+  onNewSessionClick: () => void;
   onRecipeClick: () => void;
   onLabelClick: () => void;
   onAgentResponse: (response: AgentChatResponse) => void;
@@ -874,6 +889,11 @@ function ChatWorkspace({
           onRecipeClick={onRecipeClick}
           onLabelClick={onLabelClick}
         />
+        <div className="chat-session-bar">
+          <button type="button" className="chat-session-new" onClick={onNewSessionClick}>
+            Nova conversa
+          </button>
+        </div>
         <ChatInterface />
         {outboxBannerVisible ? (
           <ReplayBanner

@@ -1859,10 +1859,35 @@ class HealthMonitorService:
         current = self.agent_runs.get(run.id)
         return current.fallback_reason if current is not None else run.fallback_reason
 
+    def start_new_chat_session(self, *, person_id: str) -> AgentChatTurn:
+        """Record a context boundary: the agent stops seeing turns before it."""
+        self._require_person(person_id)
+        turn = AgentChatTurn(
+            id=self._next_id("agent_chat_turn"),
+            person_id=person_id,
+            agent_run_id="",
+            user_message="",
+            assistant_message="Nova conversa iniciada.",
+            behavior_label="session_boundary",
+            citations=(),
+            proposal_id=None,
+            created_at=datetime.now(timezone.utc),
+        )
+        self.chat_turns[turn.id] = turn
+        self._persist()
+        return turn
+
+    def _current_session_turns(self, person_id: str) -> list[AgentChatTurn]:
+        turns = list(self.chat_turns_for_person(person_id))
+        for index in range(len(turns) - 1, -1, -1):
+            if turns[index].behavior_label == "session_boundary":
+                return turns[index + 1 :]
+        return turns
+
     def _build_agent_context(self, person_id: str, today: date) -> dict[str, Any]:
         person = self._require_person(person_id)
         active_goal = self.active_goal_profile(person_id=person_id, day=today)
-        recent_turns = self.chat_turns_for_person(person_id)[-10:]
+        recent_turns = self._current_session_turns(person_id)[-10:]
         open_proposals = [
             proposal
             for proposal in self.list_proposals(person_id=person_id)

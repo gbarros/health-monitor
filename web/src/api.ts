@@ -122,6 +122,10 @@ export async function loadChatHistory(personId: string): Promise<AgentChatTurn[]
   return apiGet<AgentChatTurn[]>(`/api/agent/chat-history?person_id=${encodeURIComponent(personId)}`);
 }
 
+export async function startNewChatSession(personId: string): Promise<AgentChatTurn> {
+  return apiPost<AgentChatTurn>("/api/agent/new-chat-session", { person_id: personId });
+}
+
 export async function loadDaySummary(personId: string, day: string): Promise<DaySummary> {
   return apiGet<DaySummary>(
     `/api/diary/day?person_id=${encodeURIComponent(personId)}&day=${encodeURIComponent(day)}`,

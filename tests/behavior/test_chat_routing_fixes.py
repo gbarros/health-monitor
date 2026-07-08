@@ -399,6 +399,44 @@ class GateThreeFixesTest(unittest.TestCase):
         self.assertEqual(turns[0].user_message, "Almoço: 100g de arroz")
         self.assertEqual(turns[0].behavior_label, "agent_error")
 
+    def test_new_chat_session_hides_prior_turns_from_agent_context(self) -> None:
+        from health_monitor.application.service import AgentChatResponse
+
+        class EchoAgent:
+            def __init__(self, *, model_name: str, ollama_base_url: str) -> None:
+                pass
+
+            def answer(self, *, deps, message: str):
+                return AgentChatResponse(
+                    run_id="inner",
+                    person_id=deps.person_id,
+                    message="oi",
+                    behavior_label="answer_question",
+                )
+
+        service, _, person_id = build_service(model_health_checker=lambda: True)
+        with patch("health_monitor.application.service.PydanticAINutritionAgent", EchoAgent):
+            service.chat(
+                person_id=person_id,
+                message="mensagem antiga",
+                today=TODAY,
+                agent_settings=self.PYDANTIC_SETTINGS,
+            )
+            service.start_new_chat_session(person_id=person_id)
+            context = service._build_agent_context(person_id, TODAY)
+            self.assertEqual(context["recent_chat_turns"], [])
+            service.chat(
+                person_id=person_id,
+                message="mensagem nova",
+                today=TODAY,
+                agent_settings=self.PYDANTIC_SETTINGS,
+            )
+            context = service._build_agent_context(person_id, TODAY)
+        self.assertEqual([t["user"] for t in context["recent_chat_turns"]], ["mensagem nova"])
+        # Full history still keeps everything, including the boundary marker.
+        labels = [t.behavior_label for t in service.chat_turns_for_person(person_id)]
+        self.assertIn("session_boundary", labels)
+
     def test_generic_staple_phrase_rejects_branded_lookup_product(self) -> None:
         match = HealthMonitorService._phrase_matches_product_name
         self.assertFalse(match("arroz", "Mini Biscoitos de Arroz Integral Camil Natural"))

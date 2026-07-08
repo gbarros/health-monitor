@@ -638,6 +638,10 @@ class HttpApi:
                 event_iter=stream_events,
             )
 
+        if method == "POST" and path == "/api/agent/new-chat-session":
+            turn = self.service.start_new_chat_session(person_id=body["person_id"])
+            return HttpResponse(201, agent_chat_turn_to_dict(turn))
+
         if method == "POST" and path == "/api/agent/onboarding-chat":
             turn = self.service.onboarding_chat(
                 session_id=body["session_id"],

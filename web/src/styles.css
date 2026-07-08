@@ -552,6 +552,24 @@ h3 {
   font-weight: 750;
 }
 
+.chat-session-bar {
+  display: flex;
+  justify-content: flex-end;
+  flex: 0 0 auto;
+}
+
+.chat-session-new {
+  border-radius: 999px;
+  font-size: 13px;
+  min-height: 0;
+  height: 28px;
+  line-height: 1;
+  padding: 0 12px;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--border);
+}
+
 .chat-thread-shell {
   min-height: 0;
   height: 100%;
