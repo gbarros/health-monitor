@@ -233,18 +233,29 @@ function chatReply(response: AgentChatResponse, events: readonly AgentChatStream
 }
 
 function streamingReply(events: readonly AgentChatStreamEvent[]): string {
+  const blocks: string[] = [];
+  const thinking = joinDeltaText(events, "thinking_delta");
+  if (thinking) {
+    // Keep only the live tail so the bubble doesn't grow unbounded.
+    const tail = thinking.length > 280 ? `…${thinking.slice(-280)}` : thinking;
+    blocks.push(`💭 _${tail.replaceAll("\n", " ").trim()}_`);
+  }
   const lines = toolProgressLines(events);
-  const text = events
-    .filter((event): event is AgentChatStreamEvent & { data: Record<string, unknown> } => event.event === "text_delta" && isObject(event.data))
+  if (lines.length) {
+    blocks.push(lines.join("\n"));
+  }
+  const text = joinDeltaText(events, "text_delta");
+  if (text) {
+    blocks.push(text);
+  }
+  return blocks.join("\n\n");
+}
+
+function joinDeltaText(events: readonly AgentChatStreamEvent[], kind: "text_delta" | "thinking_delta"): string {
+  return events
+    .filter((event): event is AgentChatStreamEvent & { data: Record<string, unknown> } => event.event === kind && isObject(event.data))
     .map((event) => String(event.data["text"] ?? ""))
     .join("");
-  if (lines.length && text) {
-    return `${lines.join("\n")}\n\n${text}`;
-  }
-  if (lines.length) {
-    return lines.join("\n");
-  }
-  return text;
 }
 
 function toolProgressLines(events: readonly AgentChatStreamEvent[]): string[] {

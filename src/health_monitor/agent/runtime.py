@@ -786,6 +786,8 @@ class PydanticAINutritionAgent:
         except (TypeError, ValueError):
             settings_loops = 0
         tool_calls_limit = max(8, settings_loops, _meal_tool_call_limit(message))
+        sink_active = getattr(deps.service, "agent_event_sink_active", None)
+        stream_requested = bool(sink_active and sink_active(deps.person_id))
         return agent.run_sync(
             prompt,
             deps=deps,
@@ -796,7 +798,44 @@ class PydanticAINutritionAgent:
                 request_limit=tool_calls_limit + 4,
                 tool_calls_limit=tool_calls_limit,
             ),
+            # Streamed requests are only used when an SSE client is attached;
+            # test doubles (FunctionModel) don't implement streaming.
+            event_stream_handler=_forward_stream_events if stream_requested else None,
         )
+
+
+async def _forward_stream_events(ctx: Any, events: Any) -> None:
+    """Push model thinking/text deltas to the active SSE sink as they arrive."""
+    from pydantic_ai.messages import (
+        PartDeltaEvent,
+        PartStartEvent,
+        TextPart,
+        TextPartDelta,
+        ThinkingPart,
+        ThinkingPartDelta,
+    )
+
+    deps = ctx.deps
+    emit = getattr(getattr(deps, "service", None), "stream_agent_event", None)
+    async for event in events:
+        if emit is None:
+            continue
+        kind: str | None = None
+        text = ""
+        if isinstance(event, PartStartEvent):
+            part = event.part
+            if isinstance(part, ThinkingPart):
+                kind, text = "thinking_delta", part.content or ""
+            elif isinstance(part, TextPart):
+                kind, text = "text_delta", part.content or ""
+        elif isinstance(event, PartDeltaEvent):
+            delta = event.delta
+            if isinstance(delta, ThinkingPartDelta):
+                kind, text = "thinking_delta", delta.content_delta or ""
+            elif isinstance(delta, TextPartDelta):
+                kind, text = "text_delta", delta.content_delta or ""
+        if kind and text:
+            emit(deps.person_id, {"event": kind, "data": {"text": text}})
 
 
 def _meal_tool_call_limit(message: str) -> int:

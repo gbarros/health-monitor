@@ -1,5 +1,11 @@
 import { Thread } from "@assistant-ui/react-ui";
+import { MarkdownTextPrimitive } from "@assistant-ui/react-markdown";
 import "@assistant-ui/react-ui/styles/index.css";
+import "@assistant-ui/react-markdown/styles/dot.css";
+
+function MarkdownText() {
+  return <MarkdownTextPrimitive />;
+}
 
 type ChatInterfaceProps = {
   welcomeMessage?: string;
@@ -33,6 +39,7 @@ export function ChatInterface({
           allowSpeak: false,
           allowFeedbackPositive: false,
           allowFeedbackNegative: false,
+          components: { Text: MarkdownText },
         }}
         branchPicker={{ allowBranchPicker: false }}
         strings={{

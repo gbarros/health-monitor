@@ -1859,6 +1859,15 @@ class HealthMonitorService:
         current = self.agent_runs.get(run.id)
         return current.fallback_reason if current is not None else run.fallback_reason
 
+    def stream_agent_event(self, person_id: str, event: dict[str, Any]) -> None:
+        """Forward a live agent event to the active stream sink, if any."""
+        sink = self._agent_event_sinks.get(person_id)
+        if sink is not None:
+            sink(event)
+
+    def agent_event_sink_active(self, person_id: str) -> bool:
+        return person_id in self._agent_event_sinks
+
     def start_new_chat_session(self, *, person_id: str) -> AgentChatTurn:
         """Record a context boundary: the agent stops seeing turns before it."""
         self._require_person(person_id)
