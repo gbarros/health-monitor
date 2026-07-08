@@ -375,6 +375,30 @@ class GateThreeFixesTest(unittest.TestCase):
         self.assertEqual(response.body["error"]["type"], "agent_error")
         self.assertEqual(response.body["error"]["replay_message"], "Almoço: 100g de arroz")
 
+    def test_failed_agent_run_still_persists_the_user_turn(self) -> None:
+        class BrokenAgent:
+            def __init__(self, *, model_name: str, ollama_base_url: str) -> None:
+                pass
+
+            def answer(self, *, deps, message: str):
+                raise ValueError("tool_calls_limit exceeded")
+
+        service, _, person_id = build_service(model_health_checker=lambda: True)
+        from health_monitor.application.service import AgentExecutionError
+
+        with patch("health_monitor.application.service.PydanticAINutritionAgent", BrokenAgent):
+            with self.assertRaises(AgentExecutionError):
+                service.chat(
+                    person_id=person_id,
+                    message="Almoço: 100g de arroz",
+                    today=TODAY,
+                    agent_settings=self.PYDANTIC_SETTINGS,
+                )
+        turns = service.chat_turns_for_person(person_id)
+        self.assertEqual(len(turns), 1)
+        self.assertEqual(turns[0].user_message, "Almoço: 100g de arroz")
+        self.assertEqual(turns[0].behavior_label, "agent_error")
+
     def test_generic_staple_phrase_rejects_branded_lookup_product(self) -> None:
         match = HealthMonitorService._phrase_matches_product_name
         self.assertFalse(match("arroz", "Mini Biscoitos de Arroz Integral Camil Natural"))

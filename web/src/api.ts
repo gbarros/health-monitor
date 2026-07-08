@@ -24,7 +24,33 @@ export const STORAGE_KEYS = {
   personId: "health-monitor.person-id",
   selectedDay: "health-monitor.selected-day",
   onboardingSessionId: "health-monitor.onboarding-session-id",
+  agentSettings: "health-monitor.agent-settings",
+  backgroundJobs: "health-monitor.background-jobs",
 } as const;
+
+export function readStoredAgentSettings(): AgentSettings {
+  const defaults = defaultAgentSettings();
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.agentSettings);
+    if (!raw) return defaults;
+    const parsed = JSON.parse(raw) as Partial<AgentSettings>;
+    return { ...defaults, ...parsed };
+  } catch {
+    return defaults;
+  }
+}
+
+export function writeStoredAgentSettings(settings: AgentSettings): void {
+  localStorage.setItem(STORAGE_KEYS.agentSettings, JSON.stringify(settings));
+}
+
+export function readStoredBackgroundJobs(): boolean {
+  return localStorage.getItem(STORAGE_KEYS.backgroundJobs) === "true";
+}
+
+export function writeStoredBackgroundJobs(enabled: boolean): void {
+  localStorage.setItem(STORAGE_KEYS.backgroundJobs, String(enabled));
+}
 
 export async function apiGet<T>(path: string): Promise<T> {
   const response = await fetch(path);

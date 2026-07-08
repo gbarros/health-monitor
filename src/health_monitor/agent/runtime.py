@@ -780,13 +780,21 @@ class PydanticAINutritionAgent:
             f"Today is {deps.today.isoformat()}. Active person id is {deps.person_id}. "
             f"User message: {message}"
         )
+        settings_loops = 0
+        try:
+            settings_loops = int(deps.settings.get("max_tool_loops") or 0)
+        except (TypeError, ValueError):
+            settings_loops = 0
+        tool_calls_limit = max(8, settings_loops, _meal_tool_call_limit(message))
         return agent.run_sync(
             prompt,
             deps=deps,
             output_type=[ToolOutput(AgentRuntimeResponse, name="finish"), str],
             usage_limits=UsageLimits(
-                request_limit=8,
-                tool_calls_limit=max(8, _meal_tool_call_limit(message)),
+                # Every tool round costs a model request, so the request cap
+                # must scale with the tool budget or it trips first.
+                request_limit=tool_calls_limit + 4,
+                tool_calls_limit=tool_calls_limit,
             ),
         )
 

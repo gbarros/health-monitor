@@ -20,6 +20,10 @@ import {
   loadProposals,
   loadWeightTrend,
   logWeight,
+  readStoredAgentSettings,
+  readStoredBackgroundJobs,
+  writeStoredAgentSettings,
+  writeStoredBackgroundJobs,
   rejectProposal,
   restoreDiaryEntry,
   sendAgentChat,
@@ -72,7 +76,11 @@ function App() {
   const [personId, setPersonId] = useState<string | null>(() =>
     localStorage.getItem(STORAGE_KEYS.personId),
   );
-  const [settings, setSettings] = useState<AgentSettings>(() => defaultAgentSettings());
+  const [settings, setSettingsState] = useState<AgentSettings>(() => readStoredAgentSettings());
+  const setSettings = useCallback((next: AgentSettings) => {
+    writeStoredAgentSettings(next);
+    setSettingsState(next);
+  }, []);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [logFoodOpen, setLogFoodOpen] = useState(false);
   const [weightOpen, setWeightOpen] = useState(false);
@@ -83,7 +91,11 @@ function App() {
   const [foodLibraryOpen, setFoodLibraryOpen] = useState(false);
   const [jobsSheetOpen, setJobsSheetOpen] = useState(false);
   const [addingPerson, setAddingPerson] = useState(false);
-  const [backgroundJobsEnabled, setBackgroundJobsEnabled] = useState(false);
+  const [backgroundJobsEnabled, setBackgroundJobsEnabledState] = useState(() => readStoredBackgroundJobs());
+  const setBackgroundJobsEnabled = useCallback((enabled: boolean) => {
+    writeStoredBackgroundJobs(enabled);
+    setBackgroundJobsEnabledState(enabled);
+  }, []);
   const [toast, setToast] = useState<{ message: string; action?: { label: string; onClick: () => void } } | null>(
     null,
   );
@@ -607,6 +619,9 @@ function App() {
 
         {activeView === "settings" ? (
           <section className="settings-page" aria-label="Ajustes">
+            <p className="settings-autosave-note">
+              <small>Alterações são salvas automaticamente neste dispositivo.</small>
+            </p>
             <ContextPanel
               people={people}
               personId={selectedPersonId}

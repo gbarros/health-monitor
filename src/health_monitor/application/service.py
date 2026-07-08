@@ -2173,6 +2173,26 @@ class HealthMonitorService:
                 fallback_reason=self._current_fallback_reason(run),
             )
             return finish(response)
+        except AgentExecutionError as exc:
+            # The user's message must survive a failed run: persist the turn
+            # with an inline error reply, then let the API report the failure.
+            # ModelUnavailableError is excluded — the client outbox owns replay
+            # there, and persisting the turn would duplicate it on replay.
+            self._record_agent_chat_turn(
+                run=run,
+                user_message=message,
+                response=AgentChatResponse(
+                    run_id=run.id,
+                    person_id=person_id,
+                    message=(
+                        "O agente encontrou um erro e não concluiu esta mensagem. "
+                        "Você pode reenviar quando quiser."
+                    ),
+                    behavior_label="agent_error",
+                ),
+            )
+            self._persist()
+            raise exc
         finally:
             self._agent_event_sinks.pop(person_id, None)
             self._active_meal_draft_requests.pop(person_id, None)
