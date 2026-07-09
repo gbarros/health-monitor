@@ -19,6 +19,13 @@ class FoodEvidenceUiTest(unittest.TestCase):
         self.assertIn("uploadDataUrlAttachment", runtime)
         self.assertIn("/api/attachments", api)
 
+    def test_client_ids_do_not_require_a_secure_context(self) -> None:
+        # crypto.randomUUID is undefined on plain-HTTP LAN origins (phones on
+        # http://192.168.x.x); the app must feature-detect and fall back.
+        app = read_web_file("App.tsx")
+        self.assertIn('"randomUUID" in crypto', app)
+        self.assertNotIn("const next = crypto.randomUUID()", app)
+
     def test_label_scan_quick_action_sends_attachment_backed_chat_intent(self) -> None:
         quick_actions = read_web_file("components/ModesAndTemplates.tsx")
         app = read_web_file("App.tsx")

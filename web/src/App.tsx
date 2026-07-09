@@ -1139,6 +1139,15 @@ function SessionSidebar({
   );
 }
 
+function generateClientId(): string {
+  // crypto.randomUUID only exists in secure contexts; plain-HTTP LAN access
+  // (http://192.168.x.x) is not one, so fall back to a random token.
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `session-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
 function viewFromPath(pathname: string): AppView {
   if (pathname === "/panel") return "panel";
   if (pathname === "/data") return "data";
@@ -2209,7 +2218,7 @@ function OnboardingScreen({
   const [sessionId] = useState(() => {
     const existing = localStorage.getItem(STORAGE_KEYS.onboardingSessionId);
     if (existing) return existing;
-    const next = crypto.randomUUID();
+    const next = generateClientId();
     localStorage.setItem(STORAGE_KEYS.onboardingSessionId, next);
     return next;
   });
