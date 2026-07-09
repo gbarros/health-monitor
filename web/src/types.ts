@@ -162,6 +162,17 @@ export type AgentChatResponse = {
   proposal?: Proposal | null;
 };
 
+export type MemoryNote = {
+  id: string;
+  person_id: string;
+  title: string;
+  body: string;
+  source: string;
+  source_proposal_id?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type AgentChatTurn = {
   id: string;
   person_id: string;

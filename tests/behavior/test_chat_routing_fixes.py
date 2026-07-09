@@ -437,6 +437,58 @@ class GateThreeFixesTest(unittest.TestCase):
         labels = [t.behavior_label for t in service.chat_turns_for_person(person_id)]
         self.assertIn("session_boundary", labels)
 
+    def test_memory_note_proposal_roundtrip_and_context_injection(self) -> None:
+        service, _, person_id = build_service(model_health_checker=lambda: True)
+        proposal = service.draft_memory_note_proposal(
+            person_id=person_id,
+            title="Rotina de almoço",
+            body="Almoço padrão: 120g arroz integral, 100g feijão preto, 150g frango.",
+        )
+        self.assertEqual(proposal.proposal_type, "memory_note")
+        # Nothing stored until the user confirms.
+        self.assertEqual(service.memory_notes_for_person(person_id), ())
+        applied = service.confirm_proposal(proposal.id)
+        self.assertEqual(applied.status, "applied")
+        notes = service.memory_notes_for_person(person_id)
+        self.assertEqual(len(notes), 1)
+        self.assertEqual(notes[0].title, "Rotina de almoço")
+        context = service._build_agent_context(person_id, TODAY)
+        self.assertEqual(context["memory_notes"][0]["title"], "Rotina de almoço")
+
+        # Update path keeps the same note id and created_at.
+        update = service.draft_memory_note_proposal(
+            person_id=person_id,
+            title="Rotina de almoço",
+            body="Almoço padrão agora com 140g arroz.",
+            note_id=notes[0].id,
+        )
+        service.confirm_proposal(update.id)
+        updated = service.memory_notes_for_person(person_id)
+        self.assertEqual(len(updated), 1)
+        self.assertEqual(updated[0].id, notes[0].id)
+        self.assertIn("140g arroz", updated[0].body)
+        self.assertEqual(updated[0].created_at, notes[0].created_at)
+
+        # Delete is a direct user action.
+        service.delete_memory_note(updated[0].id)
+        self.assertEqual(service.memory_notes_for_person(person_id), ())
+
+    def test_memory_notes_survive_snapshot_roundtrip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "state.sqlite3"
+            service, _, person_id = build_service(
+                model_health_checker=lambda: True,
+                repository=SQLiteStateRepository(db_path),
+            )
+            proposal = service.draft_memory_note_proposal(
+                person_id=person_id, title="Fato", body="Não como carne de porco."
+            )
+            service.confirm_proposal(proposal.id)
+            restored = HealthMonitorService(repository=SQLiteStateRepository(db_path))
+            notes = restored.memory_notes_for_person(person_id)
+            self.assertEqual(len(notes), 1)
+            self.assertEqual(notes[0].body, "Não como carne de porco.")
+
     def test_generic_staple_phrase_rejects_branded_lookup_product(self) -> None:
         match = HealthMonitorService._phrase_matches_product_name
         self.assertFalse(match("arroz", "Mini Biscoitos de Arroz Integral Camil Natural"))

@@ -465,6 +465,25 @@ class NutritionAgentTools:
         )
         return self._proposal_payload(proposal)
 
+    def draft_memory_note_proposal(
+        self,
+        deps: AgentDeps,
+        *,
+        title: str,
+        body: str,
+        note_id: str | None = None,
+        source_text: str = "",
+    ) -> dict[str, Any]:
+        proposal = deps.service.draft_memory_note_proposal(
+            person_id=deps.person_id,
+            title=title,
+            body=body,
+            note_id=note_id,
+            source_text=source_text or "structured memory note from agent",
+            agent_settings=deps.settings,
+        )
+        return self._proposal_payload(proposal)
+
     def draft_review_note_proposal(
         self,
         deps: AgentDeps,

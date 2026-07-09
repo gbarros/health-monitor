@@ -488,7 +488,7 @@ class PydanticAINutritionAgent:
         model = self.model or OllamaModel(
             self.model_name,
             provider=OllamaProvider(base_url=self.ollama_base_url),
-            settings={"timeout": 20, "temperature": 0},
+            settings={"timeout": 120, "temperature": 0},
         )
         agent = Agent(
             model,
@@ -513,6 +513,12 @@ class PydanticAINutritionAgent:
                 "different values; never reuse numbers across items or copy examples. "
                 "Call draft_meal_proposal exactly once per user message with all items together; "
                 "never draft the same meal twice. "
+                "The context JSON includes memory_notes: durable facts saved from earlier "
+                "conversations (preferences, routines, reusable results). Treat them as true "
+                "and apply them without being asked. When the user asks you to remember "
+                "something, or a conversation produces a durable reusable fact or result, "
+                "call draft_memory_note_proposal (pass note_id to update an existing note); "
+                "the user confirms before it is stored. Do not save transient chit-chat. "
                 "Draft tools may create proposals, but they must not claim "
                 "that diary entries, profile fields, goal targets, or review notes were "
                 "applied. If asked to change data, draft a proposal and explain that "
@@ -690,6 +696,23 @@ class PydanticAINutritionAgent:
                 entry_id=entry_id,
                 day=day,
                 phrase=phrase,
+                source_text=source_text,
+            )
+
+        @agent.tool
+        async def draft_memory_note_proposal(
+            ctx,
+            title: str,
+            body: str,
+            note_id: str | None = None,
+            source_text: str = "",
+        ) -> dict[str, Any]:
+            """Draft a memory-note proposal: save (or update, via note_id) a durable fact for future sessions. The user confirms before it is stored."""
+            return tools.draft_memory_note_proposal(
+                ctx.deps,
+                title=title,
+                body=body,
+                note_id=note_id,
                 source_text=source_text,
             )
 

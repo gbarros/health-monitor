@@ -8,6 +8,8 @@ import {
   confirmProposal,
   defaultAgentSettings,
   deleteDiaryEntry,
+  deleteMemoryNote,
+  loadMemoryNotes,
   loadActiveGoal,
   loadDaySummary,
   loadChatHistory,
@@ -1064,6 +1066,18 @@ function DataPage({
     queryKey: queryKeys.foods(householdId, personId),
     queryFn: () => loadFoods({ householdId, personId }),
   });
+  const memoryNotesQuery = useQuery({
+    queryKey: ["memoryNotes", personId],
+    queryFn: () => loadMemoryNotes(personId),
+  });
+  const memoryNoteDelete = useMutation({
+    mutationFn: (noteId: string) => deleteMemoryNote(noteId),
+    onSuccess: async () => {
+      await memoryNotesQuery.refetch();
+      onToast("Nota de memória excluída.");
+    },
+    onError: (error) => onToast(error instanceof Error ? error.message : "Não foi possível excluir a nota."),
+  });
   const entries = diaryRangeQuery.data ?? [];
   const foods = foodsQuery.data ?? [];
   const selectedProposal = proposals.find((proposal) => proposal.id === selectedProposalId) ?? null;
@@ -1152,6 +1166,25 @@ function DataPage({
         empty="Nenhuma tarefa."
         columns={["Criado", "Tipo", "Status", "Tentativas", "Erro"]}
         rows={jobs.map((job) => [formatDateTime(job.created_at), job.job_type, job.status, String(job.attempts), job.last_error ?? ""])}
+      />
+      <DataTable
+        title="Memória do agente"
+        empty="Nenhuma nota de memória. Peça no chat: “lembre que…”"
+        columns={["Atualizado", "Título", "Conteúdo", ""]}
+        rows={(memoryNotesQuery.data ?? []).map((note) => [
+          formatDateTime(note.updated_at),
+          note.title,
+          note.body,
+          <button
+            key={`delete-${note.id}`}
+            type="button"
+            className="compact-button"
+            disabled={memoryNoteDelete.isPending}
+            onClick={() => memoryNoteDelete.mutate(note.id)}
+          >
+            Excluir
+          </button>,
+        ])}
       />
       <DataTable
         title="Chat turns"

@@ -20,6 +20,7 @@ from health_monitor.application.service import (
     GoalProfile,
     HealthMonitorService,
     Household,
+    MemoryNote,
     ModelUnavailableError,
     OnboardingTurn,
     Person,
@@ -638,6 +639,14 @@ class HttpApi:
                 event_iter=stream_events,
             )
 
+        if method == "GET" and path == "/api/memory-notes":
+            notes = self.service.memory_notes_for_person(query["person_id"])
+            return HttpResponse(200, [memory_note_to_dict(note) for note in notes])
+
+        if method == "DELETE" and path.startswith("/api/memory-notes/"):
+            note = self.service.delete_memory_note(path.removeprefix("/api/memory-notes/"))
+            return HttpResponse(200, memory_note_to_dict(note))
+
         if method == "POST" and path == "/api/agent/new-chat-session":
             turn = self.service.start_new_chat_session(person_id=body["person_id"])
             return HttpResponse(201, agent_chat_turn_to_dict(turn))
@@ -1106,6 +1115,19 @@ def agent_chat_response_to_dict(
         "citations": list(response.citations),
         "proposal_id": response.proposal_id,
         "proposal": proposal_to_dict(proposal, service) if proposal is not None else None,
+    }
+
+
+def memory_note_to_dict(note: MemoryNote) -> dict[str, Any]:
+    return {
+        "id": note.id,
+        "person_id": note.person_id,
+        "title": note.title,
+        "body": note.body,
+        "source": note.source,
+        "source_proposal_id": note.source_proposal_id,
+        "created_at": note.created_at.isoformat(),
+        "updated_at": note.updated_at.isoformat(),
     }
 
 

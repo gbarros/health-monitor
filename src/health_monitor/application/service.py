@@ -300,6 +300,21 @@ class AgentChatResponse:
 
 
 @dataclass(frozen=True)
+class MemoryNote:
+    """A durable fact the agent saved (user-confirmed) for reuse across sessions."""
+
+    id: str
+    person_id: str
+    title: str
+    body: str
+    source: str = "agent_chat"
+    source_agent_run_id: str | None = None
+    source_proposal_id: str | None = None
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+@dataclass(frozen=True)
 class ReviewNote:
     id: str
     person_id: str
@@ -429,6 +444,7 @@ class HealthMonitorService:
         self.chat_turns: dict[str, AgentChatTurn] = {}
         self.onboarding_turns: dict[str, OnboardingTurn] = {}
         self.review_notes: dict[str, ReviewNote] = {}
+        self.memory_notes: dict[str, MemoryNote] = {}
         self.lookup_candidates: dict[str, FoodLookupCandidate] = {}
         self.attachments: dict[str, AttachmentObject] = {}
         self.jobs: dict[str, BackgroundJob] = {}
@@ -1604,6 +1620,20 @@ class HealthMonitorService:
     def recipe_version_for_food_version(self, food_version_id: str) -> RecipeVersion | None:
         return self.recipe_versions.get(food_version_id)
 
+    def memory_notes_for_person(self, person_id: str) -> tuple[MemoryNote, ...]:
+        self._require_person(person_id)
+        notes = [note for note in self.memory_notes.values() if note.person_id == person_id]
+        notes.sort(key=lambda note: note.updated_at)
+        return tuple(notes)
+
+    def delete_memory_note(self, note_id: str) -> MemoryNote:
+        try:
+            note = self.memory_notes.pop(note_id)
+        except KeyError as exc:
+            raise ValueError(f"unknown memory_note id: {note_id}") from exc
+        self._persist()
+        return note
+
     def review_notes_for_person(self, person_id: str) -> tuple[ReviewNote, ...]:
         self._require_person(person_id)
         notes = [note for note in self.review_notes.values() if note.person_id == person_id]
@@ -1960,6 +1990,15 @@ class HealthMonitorService:
             }
             if active_goal is not None
             else None,
+            "memory_notes": [
+                {
+                    "id": note.id,
+                    "title": note.title,
+                    "body": note.body[:800],
+                    "updated_at": note.updated_at.isoformat(),
+                }
+                for note in self.memory_notes_for_person(person_id)[-20:]
+            ],
             "recent_chat_turns": [
                 {
                     "created_at": turn.created_at.isoformat(),
@@ -3243,6 +3282,66 @@ class HealthMonitorService:
         self._persist()
         return proposal
 
+    def draft_memory_note_proposal(
+        self,
+        *,
+        person_id: str,
+        title: str,
+        body: str,
+        note_id: str | None = None,
+        source_text: str = "structured memory note",
+        agent_settings: dict[str, Any] | None = None,
+    ) -> CreateDiaryEntriesProposal:
+        settings = self._agent_settings(agent_settings)
+        self._require_person(person_id)
+        if note_id is not None and note_id not in self.memory_notes:
+            raise ValueError(f"unknown memory_note id: {note_id}")
+        run = AgentRun(
+            id=self._next_id("agent_run"),
+            person_id=person_id,
+            input_text=source_text,
+            settings=settings,
+            status="started",
+            **self._run_metadata(settings),
+        )
+        self.agent_runs[run.id] = run
+        note_title = title.strip() or "Memory note"
+        proposal = self.proposals.create(
+            CreateDiaryEntriesProposal(
+                id=self._next_id("proposal"),
+                person_id=person_id,
+                entries=(),
+                proposal_type="memory_note",
+                summary=(
+                    f"Atualizar memória: {note_title}" if note_id else f"Salvar na memória: {note_title}"
+                ),
+                payload={
+                    "title": note_title,
+                    "body": body.strip(),
+                    "note_id": note_id,
+                    "source": "agent_chat",
+                },
+                evidence=({"source_type": "agent_memory_note", "raw_text": source_text},),
+                source_agent_run_id=run.id,
+            )
+        )
+        self._record_agent_tool_call(
+            run=run,
+            tool_name="draft_memory_note",
+            input_summary=f"title={note_title}; chars={len(body.strip())}",
+            output_summary=f"proposal_id={proposal.id}",
+            source_record_ids=(proposal.id,),
+        )
+        self.agent_runs[run.id] = replace(
+            run,
+            status="proposal_created",
+            proposal_id=proposal.id,
+            tool_loop_count=len(self.agent_tool_calls_for_run(run.id)),
+            fallback_reason=self._current_fallback_reason(run),
+        )
+        self._persist()
+        return proposal
+
     def draft_review_note_proposal(
         self,
         *,
@@ -4033,6 +4132,11 @@ class HealthMonitorService:
             self.proposals.proposals[proposal_id] = applied
             self._persist()
             return applied
+        if proposal.proposal_type == "memory_note":
+            applied = self._apply_memory_note_proposal(proposal)
+            self.proposals.proposals[proposal_id] = applied
+            self._persist()
+            return applied
         if proposal.proposal_type == "profile_update":
             applied = self._apply_profile_update_proposal(proposal)
             self.proposals.proposals[proposal_id] = applied
@@ -4417,6 +4521,45 @@ class HealthMonitorService:
             rejected_at=proposal.rejected_at,
         )
 
+    def _apply_memory_note_proposal(
+        self,
+        proposal: CreateDiaryEntriesProposal,
+    ) -> CreateDiaryEntriesProposal:
+        if proposal.status == "rejected":
+            raise ValueError("cannot apply rejected proposal")
+        payload = proposal.payload
+        now = datetime.now(timezone.utc)
+        target_id = payload.get("note_id")
+        existing = self.memory_notes.get(str(target_id)) if target_id else None
+        note = MemoryNote(
+            id=existing.id if existing is not None else self._next_id("memory_note"),
+            person_id=proposal.person_id,
+            title=str(payload.get("title", "Memory note")),
+            body=str(payload["body"]),
+            source=str(payload.get("source", "agent_chat")),
+            source_agent_run_id=proposal.source_agent_run_id,
+            source_proposal_id=proposal.id,
+            created_at=existing.created_at if existing is not None else now,
+            updated_at=now,
+        )
+        self.memory_notes[note.id] = note
+        return CreateDiaryEntriesProposal(
+            id=proposal.id,
+            person_id=proposal.person_id,
+            entries=proposal.entries,
+            proposal_type=proposal.proposal_type,
+            status="applied",
+            summary=proposal.summary,
+            payload=proposal.payload,
+            totals=proposal.totals,
+            evidence=proposal.evidence,
+            source_agent_run_id=proposal.source_agent_run_id,
+            applied_record_ids=(note.id,),
+            created_at=proposal.created_at,
+            confirmed_at=proposal.confirmed_at or datetime.now(timezone.utc),
+            rejected_at=proposal.rejected_at,
+        )
+
     def _apply_review_note_proposal(
         self,
         proposal: CreateDiaryEntriesProposal,
@@ -4651,6 +4794,7 @@ class HealthMonitorService:
                 self.onboarding_turns,
                 self.jobs,
                 self.review_notes,
+                self.memory_notes,
                 self.attachments,
                 self.recipe_versions,
             )
@@ -4695,6 +4839,9 @@ class HealthMonitorService:
             "jobs": [background_job_to_snapshot(item) for item in self.jobs.values()],
             "review_notes": [
                 review_note_to_snapshot(item) for item in self.review_notes.values()
+            ],
+            "memory_notes": [
+                memory_note_to_snapshot(item) for item in self.memory_notes.values()
             ],
             "attachment_objects": [
                 attachment_to_snapshot(item) for item in self.attachments.values()
@@ -4762,6 +4909,10 @@ class HealthMonitorService:
         self.review_notes = {
             item["id"]: review_note_from_snapshot(item)
             for item in snapshot.get("review_notes", [])
+        }
+        self.memory_notes = {
+            item["id"]: memory_note_from_snapshot(item)
+            for item in snapshot.get("memory_notes", [])
         }
         self.attachments = {
             item["id"]: attachment_from_snapshot(item)
@@ -5661,6 +5812,34 @@ def background_job_from_snapshot(value: dict[str, Any]) -> BackgroundJob:
         updated_at=datetime.fromisoformat(value.get("updated_at", value["created_at"])),
         started_at=datetime.fromisoformat(value["started_at"]) if value.get("started_at") else None,
         completed_at=datetime.fromisoformat(value["completed_at"]) if value.get("completed_at") else None,
+    )
+
+
+def memory_note_to_snapshot(note: MemoryNote) -> dict[str, Any]:
+    return {
+        "id": note.id,
+        "person_id": note.person_id,
+        "title": note.title,
+        "body": note.body,
+        "source": note.source,
+        "source_agent_run_id": note.source_agent_run_id,
+        "source_proposal_id": note.source_proposal_id,
+        "created_at": note.created_at.isoformat(),
+        "updated_at": note.updated_at.isoformat(),
+    }
+
+
+def memory_note_from_snapshot(value: dict[str, Any]) -> MemoryNote:
+    return MemoryNote(
+        id=value["id"],
+        person_id=value["person_id"],
+        title=value.get("title", "Memory note"),
+        body=value["body"],
+        source=value.get("source", "agent_chat"),
+        source_agent_run_id=value.get("source_agent_run_id"),
+        source_proposal_id=value.get("source_proposal_id"),
+        created_at=datetime.fromisoformat(value["created_at"]),
+        updated_at=datetime.fromisoformat(value.get("updated_at") or value["created_at"]),
     )
 
 

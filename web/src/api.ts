@@ -10,6 +10,7 @@ import type {
   FoodLookupCandidate,
   FoodResponse,
   GoalProfile,
+  MemoryNote,
   OnboardingTurn,
   Person,
   Proposal,
@@ -120,6 +121,17 @@ export async function loadOnboardingHistory(sessionId: string): Promise<Onboardi
 
 export async function loadChatHistory(personId: string): Promise<AgentChatTurn[]> {
   return apiGet<AgentChatTurn[]>(`/api/agent/chat-history?person_id=${encodeURIComponent(personId)}`);
+}
+
+export async function loadMemoryNotes(personId: string): Promise<MemoryNote[]> {
+  return apiGet<MemoryNote[]>(`/api/memory-notes?person_id=${encodeURIComponent(personId)}`);
+}
+
+export async function deleteMemoryNote(noteId: string): Promise<void> {
+  const response = await fetch(`/api/memory-notes/${encodeURIComponent(noteId)}`, { method: "DELETE" });
+  if (!response.ok) {
+    throw new Error(`Não foi possível excluir a nota (${response.status}).`);
+  }
 }
 
 export async function startNewChatSession(personId: string): Promise<AgentChatTurn> {
