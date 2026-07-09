@@ -12,6 +12,7 @@ import {
   deleteDiaryEntry,
   deleteMemoryNote,
   loadChatSessions,
+  loadHouseholdDirectory,
   loadMemoryNotes,
   loadActiveGoal,
   loadDaySummary,
@@ -578,7 +579,17 @@ function App() {
   }
 
   if (!householdId || !selectedPersonId || !activePerson) {
-    return <OnboardingScreen onComplete={completeOnboarding} />;
+    return (
+      <OnboardingScreen
+        onComplete={completeOnboarding}
+        onSelectExisting={(nextHouseholdId, nextPersonId) => {
+          localStorage.setItem(STORAGE_KEYS.householdId, nextHouseholdId);
+          localStorage.setItem(STORAGE_KEYS.personId, nextPersonId);
+          setHouseholdId(nextHouseholdId);
+          setPersonId(nextPersonId);
+        }}
+      />
+    );
   }
 
   return (
@@ -2210,11 +2221,19 @@ function OnboardingScreen({
   householdId = null,
   onCancel,
   onComplete,
+  onSelectExisting,
 }: {
   householdId?: string | null;
   onCancel?: () => void;
   onComplete: (proposal: Proposal) => Promise<void>;
+  onSelectExisting?: (householdId: string, personId: string) => void;
 }) {
+  const directoryQuery = useQuery({
+    queryKey: ["householdDirectory"],
+    queryFn: loadHouseholdDirectory,
+    enabled: onSelectExisting != null,
+  });
+  const directory = (directoryQuery.data ?? []).filter((entry) => entry.people.length > 0);
   const [sessionId] = useState(() => {
     const existing = localStorage.getItem(STORAGE_KEYS.onboardingSessionId);
     if (existing) return existing;
@@ -2304,6 +2323,26 @@ function OnboardingScreen({
               : "Responda em texto livre. O agente cria uma proposta de casa, perfil e metas para você confirmar."}
           </p>
         </header>
+        {onSelectExisting && directory.length ? (
+          <section className="onboarding-existing" aria-label="Perfis existentes">
+            <span className="eyebrow">Este aparelho é novo? Entre com um perfil existente</span>
+            <div className="onboarding-existing__list">
+              {directory.flatMap((entry) =>
+                entry.people.map((person) => (
+                  <button
+                    key={person.id}
+                    type="button"
+                    className="person-chip"
+                    onClick={() => onSelectExisting(entry.id, person.id)}
+                  >
+                    <span>{person.name.slice(0, 1).toUpperCase()}</span>
+                    {person.name} · {entry.name}
+                  </button>
+                )),
+              )}
+            </div>
+          </section>
+        ) : null}
         {error ? <p className="form-error onboarding-error">{error}</p> : null}
         {historyLoaded ? (
           <OnboardingThreadWorkspace

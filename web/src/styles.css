@@ -147,6 +147,21 @@ h3 {
   max-width: 680px;
 }
 
+.onboarding-existing {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 14px 16px;
+}
+
+.onboarding-existing__list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .onboarding-status,
 .onboarding-error {
   border: 1px solid var(--border);

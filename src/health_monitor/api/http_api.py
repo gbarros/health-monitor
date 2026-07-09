@@ -292,6 +292,22 @@ class HttpApi:
                 },
             )
 
+        if method == "GET" and path == "/api/households":
+            return HttpResponse(
+                200,
+                [
+                    {
+                        **household_to_dict(household),
+                        "people": [
+                            person_to_dict(person)
+                            for person in self.service.people.values()
+                            if person.household_id == household.id
+                        ],
+                    }
+                    for household in self.service.households.values()
+                ],
+            )
+
         if method == "POST" and path == "/api/households":
             household = self.service.create_household(name=body["name"])
             return HttpResponse(201, household_to_dict(household))

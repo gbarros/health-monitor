@@ -2417,6 +2417,20 @@ class HttpApiContractTest(unittest.TestCase):
         self.assertEqual(history[0]["behavior_label"], "answer_question")
         self.assertEqual(history[0]["citations"], [])
 
+    def test_household_directory_lists_households_with_people(self) -> None:
+        api = HttpApi(HealthMonitorService())
+        household = api.handle("POST", "/api/households", {"name": "Casa"}).body
+        person = api.handle(
+            "POST",
+            "/api/people",
+            {"household_id": household["id"], "name": "Gabriel", "timezone": "America/Sao_Paulo"},
+        ).body
+
+        response = api.handle("GET", "/api/households", None)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.body[0]["id"], household["id"])
+        self.assertEqual(response.body[0]["people"][0]["id"], person["id"])
+
     def test_agent_chat_stream_returns_sse_events_through_http_contract(self) -> None:
         api = HttpApi(HealthMonitorService())
         household = api.handle("POST", "/api/households", {"name": "Casa"}).body

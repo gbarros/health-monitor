@@ -98,6 +98,16 @@ async function decodeResponse<T>(response: Response): Promise<T> {
   return payload as T;
 }
 
+export type HouseholdDirectoryEntry = {
+  id: string;
+  name: string;
+  people: Person[];
+};
+
+export async function loadHouseholdDirectory(): Promise<HouseholdDirectoryEntry[]> {
+  return apiGet<HouseholdDirectoryEntry[]>("/api/households");
+}
+
 export async function loadPeople(householdId: string): Promise<Person[]> {
   return apiGet<Person[]>(`/api/people?household_id=${encodeURIComponent(householdId)}`);
 }
