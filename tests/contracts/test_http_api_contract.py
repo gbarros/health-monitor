@@ -2451,6 +2451,46 @@ class HttpApiContractTest(unittest.TestCase):
         self.assertEqual(events[1]["data"]["text"], events[-1]["data"]["message"])
         self.assertEqual(len(api.service.chat_turns_for_person(person["id"])), 1)
 
+    def test_agent_chat_stream_emits_error_event_instead_of_aborting_socket(self) -> None:
+        from unittest.mock import patch
+
+        class BrokenAgent:
+            def __init__(self, *, model_name: str, ollama_base_url: str) -> None:
+                pass
+
+            def answer(self, *, deps, message: str):
+                raise ValueError("boom mid-run")
+
+        api = HttpApi(HealthMonitorService(require_model=True, model_health_checker=lambda: True))
+        household = api.handle("POST", "/api/households", {"name": "Casa"}).body
+        person = api.handle(
+            "POST",
+            "/api/people",
+            {
+                "household_id": household["id"],
+                "name": "Gabriel",
+                "timezone": "America/Sao_Paulo",
+            },
+        ).body
+
+        with patch("health_monitor.application.service.PydanticAINutritionAgent", BrokenAgent):
+            response = api.handle(
+                "POST",
+                "/api/agent/chat/stream",
+                {
+                    "person_id": person["id"],
+                    "message": "almoço: 100g arroz",
+                    "today": "2026-07-02",
+                    "agent_settings": {"agent_runtime": "pydantic-ai", "model_profile": "x"},
+                },
+            )
+            events = tuple(response.iter_events())
+
+        # The generator must terminate with a structured error event, never raise.
+        self.assertEqual(events[-1]["event"], "error")
+        self.assertEqual(events[-1]["data"]["type"], "agent_error")
+        self.assertEqual(events[-1]["data"]["replay_message"], "almoço: 100g arroz")
+
     def test_agent_chat_stream_supports_get_sse_route_for_eventsource_clients(self) -> None:
         api = HttpApi(HealthMonitorService())
         household = api.handle("POST", "/api/households", {"name": "Casa"}).body

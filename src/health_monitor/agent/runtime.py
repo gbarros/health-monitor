@@ -340,54 +340,6 @@ def _looks_like_proposal_request(message: str) -> bool:
     return any(keyword in text for keyword in keywords)
 
 
-def _detect_meal_type(message: str) -> str | None:
-    text = message.casefold()
-    if "café" in text or "cafe" in text:
-        return "breakfast"
-    if "almoço" in text or "almoco" in text:
-        return "lunch"
-    if "jantar" in text:
-        return "dinner"
-    if "lanche" in text:
-        return "snack"
-    return None
-
-
-def _simple_quantified_meal_items(message: str) -> list[dict[str, Any]]:
-    items: list[dict[str, Any]] = []
-    for quantity_text, phrase in re.findall(r"([+-]?\d+(?:[.,]\d+)?)\s*g\s+([^/\n,]+)", message, flags=re.IGNORECASE):
-        try:
-            quantity_g = float(quantity_text.replace(",", "."))
-        except ValueError:
-            continue
-        phrase_text = phrase.strip(" .:;-").strip()
-        if quantity_g <= 0 or not phrase_text:
-            continue
-        items.append({"phrase": phrase_text, "quantity_g": quantity_g})
-    return items
-
-
-def _simple_quantified_meal_response(deps: AgentDeps, message: str) -> AgentRuntimeResponse | None:
-    items = _simple_quantified_meal_items(message)
-    if not items:
-        return None
-    proposal = deps.service.draft_structured_meal_proposal(
-        person_id=deps.person_id,
-        items=items,
-        day=deps.today,
-        time_text=None,
-        meal_type=_detect_meal_type(message),
-        agent_settings=deps.settings,
-        source_text=message,
-    )
-    return AgentRuntimeResponse(
-        message=proposal.summary,
-        behavior_label="proposal_draft",
-        proposal_id=proposal.id,
-        output_type="proposal_draft",
-    )
-
-
 class PydanticAINutritionAgent:
     def __init__(
         self,
@@ -432,10 +384,6 @@ class PydanticAINutritionAgent:
             ),
         )
         response = normalize_agent_runtime_output(result.output)
-        if response.proposal_id is None:
-            deterministic_meal = _simple_quantified_meal_response(deps, message)
-            if deterministic_meal is not None:
-                return deterministic_meal
         if response.proposal_id is None and _looks_like_proposal_request(message):
             retry = self._run(
                 deps=deps,

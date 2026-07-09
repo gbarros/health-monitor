@@ -508,7 +508,7 @@ export async function streamAgentChat(input: StreamAgentChatInput): Promise<Stre
 }
 
 export type AgentChatStreamEvent = {
-  event: "run_started" | "tool_call" | "text_delta" | "thinking_delta" | "final" | "message";
+  event: "run_started" | "tool_call" | "text_delta" | "thinking_delta" | "final" | "error" | "message";
   data: unknown;
 };
 
@@ -537,7 +537,8 @@ function streamEventName(value: string): AgentChatStreamEvent["event"] {
     value === "tool_call" ||
     value === "text_delta" ||
     value === "thinking_delta" ||
-    value === "final"
+    value === "final" ||
+    value === "error"
     ? value
     : "message";
 }

@@ -626,7 +626,26 @@ class HttpApi:
                         continue
                 thread.join()
                 if "error" in result:
-                    raise result["error"]
+                    # Raising here would abort the socket mid-stream and the
+                    # client would see nothing but a dropped connection. Emit
+                    # a structured error event instead so the UI can react
+                    # (outbox replay for model_unavailable, message otherwise).
+                    exc = result["error"]
+                    if isinstance(exc, ModelUnavailableError):
+                        error_type = "model_unavailable"
+                    elif isinstance(exc, AgentExecutionError):
+                        error_type = "agent_error"
+                    else:
+                        error_type = type(exc).__name__
+                    yield {
+                        "event": "error",
+                        "data": {
+                            "type": error_type,
+                            "message": str(exc),
+                            "replay_message": getattr(exc, "replay_message", None),
+                        },
+                    }
+                    return
                 response = result["response"]
                 final = agent_chat_response_to_dict(response, self.service)
                 yield {"event": "text_delta", "data": {"text": response.message}}

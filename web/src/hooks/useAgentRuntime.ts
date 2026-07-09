@@ -106,6 +106,13 @@ export function useAgentRuntime(context: RuntimeContext) {
             signal: options.abortSignal,
           })) {
             events.push(event);
+            if (event.event === "error" && isObject(event.data)) {
+              throw new ApiError(
+                String(event.data["message"] ?? "Erro do agente"),
+                String(event.data["type"] ?? "agent_error"),
+                typeof event.data["replay_message"] === "string" ? event.data["replay_message"] : null,
+              );
+            }
             if (event.event === "final" && isAgentChatResponse(event.data)) {
               finalResponse = event.data;
               continue;
