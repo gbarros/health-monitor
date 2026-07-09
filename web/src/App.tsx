@@ -3,7 +3,19 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ReadonlyJSONObject } from "assistant-stream/utils";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { NavLink, useLocation } from "react-router-dom";
-import { PanelLeftCloseIcon, PanelLeftOpenIcon, SquarePenIcon, WrenchIcon } from "lucide-react";
+import {
+  ClipboardListIcon,
+  DatabaseIcon,
+  LayoutDashboardIcon,
+  ListChecksIcon,
+  MessageSquareTextIcon,
+  PanelLeftCloseIcon,
+  PanelLeftOpenIcon,
+  SettingsIcon,
+  SquarePenIcon,
+  UtensilsCrossedIcon,
+  WrenchIcon,
+} from "lucide-react";
 import {
   ApiError,
   confirmProposal,
@@ -628,7 +640,8 @@ function App() {
             aria-label="Abrir propostas"
             onClick={() => setProposalInboxOpen(true)}
           >
-            Propostas
+            <ClipboardListIcon size={18} aria-hidden="true" />
+            <span className="icon-button__label">Propostas</span>
           </button>
           <button
             type="button"
@@ -636,7 +649,8 @@ function App() {
             aria-label="Abrir alimentos"
             onClick={() => setFoodLibraryOpen(true)}
           >
-            Alimentos
+            <UtensilsCrossedIcon size={18} aria-hidden="true" />
+            <span className="icon-button__label">Alimentos</span>
           </button>
           <button
             type="button"
@@ -644,7 +658,9 @@ function App() {
             aria-label="Abrir tarefas"
             onClick={() => setJobsSheetOpen(true)}
           >
-            Tarefas{activeJobCount > 0 ? <span className="badge-count">{activeJobCount}</span> : null}
+            <ListChecksIcon size={18} aria-hidden="true" />
+            <span className="icon-button__label">Tarefas</span>
+            {activeJobCount > 0 ? <span className="badge-count">{activeJobCount}</span> : null}
           </button>
         </div>
       </header>
@@ -753,6 +769,23 @@ function App() {
           </section>
         ) : null}
       </main>
+
+      <nav className="bottom-tabs" aria-label="Navegação">
+        {TOP_LEVEL_VIEWS.map((view) => (
+          <NavLink
+            key={view}
+            to={viewPath(view)}
+            className={({ isActive }) => {
+              const active = isActive || (view === "chat" && location.pathname === "/");
+              return active ? "bottom-tab is-active" : "bottom-tab";
+            }}
+            aria-current={view === activeView ? "page" : undefined}
+          >
+            <TabIcon view={view} />
+            <span>{viewTitle(view)}</span>
+          </NavLink>
+        ))}
+      </nav>
 
       {sessionsOpen ? (
         <div className="modal-backdrop" role="presentation" onClick={() => setSessionsOpen(false)}>
@@ -1177,6 +1210,14 @@ function viewTitle(view: AppView): string {
   if (view === "data") return "Dados";
   if (view === "settings") return "Ajustes";
   return "Chat";
+}
+
+function TabIcon({ view }: { view: AppView }) {
+  const size = 22;
+  if (view === "panel") return <LayoutDashboardIcon size={size} aria-hidden="true" />;
+  if (view === "data") return <DatabaseIcon size={size} aria-hidden="true" />;
+  if (view === "settings") return <SettingsIcon size={size} aria-hidden="true" />;
+  return <MessageSquareTextIcon size={size} aria-hidden="true" />;
 }
 
 function DaySummaryStrip({

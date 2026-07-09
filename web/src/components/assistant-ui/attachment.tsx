@@ -253,7 +253,7 @@ export const ComposerAddAttachment: FC = () => {
         side="bottom"
         variant="ghost"
         size="icon"
-        className="aui-composer-add-attachment hover:bg-muted-foreground/15 dark:border-muted-foreground/15 dark:hover:bg-muted-foreground/30 size-7 rounded-full p-1 text-xs font-semibold"
+        className="aui-composer-add-attachment hover:bg-muted-foreground/15 dark:border-muted-foreground/15 dark:hover:bg-muted-foreground/30 size-11 rounded-full p-1 text-xs font-semibold"
         aria-label="Anexar foto ou arquivo"
       >
         <PlusIcon className="aui-attachment-add-icon size-4.5 stroke-[1.5px]" />

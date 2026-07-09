@@ -272,6 +272,7 @@ h3 {
   border-bottom: 1px solid var(--border);
   background: rgba(255, 255, 255, 0.92);
   padding: 10px 12px;
+  padding-top: max(10px, env(safe-area-inset-top));
   backdrop-filter: blur(10px);
 }
 
@@ -342,6 +343,9 @@ h3 {
 
 .icon-button {
   min-width: 44px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .header-actions {
@@ -349,6 +353,11 @@ h3 {
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
+}
+
+/* Bottom tab bar is mobile-only; desktop keeps the top nav (hidden here). */
+.bottom-tabs {
+  display: none;
 }
 
 .badge-count {
@@ -1740,25 +1749,84 @@ h3 {
 
 /* Below the desktop layout the 4-column header grid does not fit; stack it. */
 @media (max-width: 899px) {
+  /* Single-row header: brand · person chips · icon actions. The four route
+     tabs move to the bottom bar, so the top nav is hidden here. */
   .app-header {
-    grid-template-columns: 1fr auto;
-  }
-
-  .person-chips {
-    grid-column: 1 / -1;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 8px;
   }
 
   .app-nav {
-    grid-column: 1 / -1;
-    justify-content: flex-start;
-    overflow-x: auto;
+    display: none;
+  }
+
+  .brand-block h1 {
+    font-size: 20px;
   }
 
   .header-actions {
-    grid-column: 1 / -1;
     flex-wrap: nowrap;
-    overflow-x: auto;
-    justify-content: flex-start;
+    gap: 4px;
+    justify-content: flex-end;
+  }
+
+  /* Icon-only actions on mobile; the label is announced via aria-label. */
+  .icon-button {
+    min-width: 44px;
+    min-height: 44px;
+    justify-content: center;
+    padding: 0;
+  }
+
+  .icon-button__label {
+    display: none;
+  }
+
+  .bottom-tabs {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    position: sticky;
+    bottom: 0;
+    z-index: 20;
+    border-top: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.96);
+    backdrop-filter: blur(10px);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  .bottom-tab {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    min-height: 56px;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 650;
+    text-decoration: none;
+  }
+
+  .bottom-tab.is-active {
+    color: var(--primary-strong);
+  }
+
+  .bottom-tab.is-active svg {
+    stroke-width: 2.4;
+  }
+
+  /* Touch-target minimums on mobile (skill: touch-target-size 44px). */
+  .compact-day-nav button {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  .chat-session-new {
+    height: 40px;
+    padding: 0 14px;
   }
 }
 

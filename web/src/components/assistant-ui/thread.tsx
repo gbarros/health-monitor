@@ -272,7 +272,7 @@ const ComposerAction: FC = () => {
                 type="button"
                 variant="ghost"
                 size="icon"
-                className="aui-composer-dictate size-7 rounded-full"
+                className="aui-composer-dictate size-11 rounded-full"
                 aria-label="Iniciar entrada de voz"
               >
                 <MicIcon className="aui-composer-dictate-icon size-4" />
@@ -287,7 +287,7 @@ const ComposerAction: FC = () => {
                 type="button"
                 variant="ghost"
                 size="icon"
-                className="aui-composer-stop-dictation text-destructive size-7 rounded-full"
+                className="aui-composer-stop-dictation text-destructive size-11 rounded-full"
                 aria-label="Parar entrada de voz"
               >
                 <SquareIcon className="aui-composer-stop-dictation-icon size-3.5 animate-pulse fill-current" />
@@ -303,7 +303,7 @@ const ComposerAction: FC = () => {
               type="button"
               variant="default"
               size="icon"
-              className="aui-composer-send size-7 rounded-full"
+              className="aui-composer-send size-11 rounded-full"
               aria-label="Enviar mensagem"
             >
               <ArrowUpIcon className="aui-composer-send-icon size-4.5" />
@@ -316,7 +316,7 @@ const ComposerAction: FC = () => {
               type="button"
               variant="default"
               size="icon"
-              className="aui-composer-cancel size-7 rounded-full"
+              className="aui-composer-cancel size-11 rounded-full"
               aria-label="Parar geração"
             >
               <SquareIcon className="aui-composer-cancel-icon size-3.5 fill-current" />
