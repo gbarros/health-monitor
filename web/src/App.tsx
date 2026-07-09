@@ -170,20 +170,51 @@ function App() {
     enabled: selectedPersonId != null,
   });
 
-  const initialMessages = useMemo<ThreadMessageLike[]>(() => {
+  const sessionTurns = useMemo(() => {
     const turns = chatHistoryQuery.data ?? [];
     const lastBoundary = turns.map((turn) => turn.behavior_label).lastIndexOf("session_boundary");
-    return turns.slice(lastBoundary + 1).flatMap((turn) => [
-      {
-        role: "user" as const,
-        content: [{ type: "text" as const, text: turn.user_message }],
-      },
-      {
-        role: "assistant" as const,
-        content: [{ type: "text" as const, text: turn.assistant_message }],
-      },
-    ]);
+    return turns.slice(lastBoundary + 1);
   }, [chatHistoryQuery.data]);
+
+  const proposalsById = useMemo(
+    () => new Map((proposalsQuery.data ?? []).map((proposal) => [proposal.id, proposal])),
+    [proposalsQuery.data],
+  );
+
+  // Proposals referenced by visible turns render as interactive cards
+  // in-thread (same as live responses), so the fallback dock stays hidden
+  // after a reload.
+  const initialMessages = useMemo<ThreadMessageLike[]>(
+    () =>
+      sessionTurns.flatMap((turn) => {
+        const proposal = turn.proposal_id ? proposalsById.get(turn.proposal_id) : undefined;
+        const assistantContent: ThreadMessageLike["content"] = [
+          { type: "text" as const, text: turn.assistant_message },
+        ];
+        if (proposal) {
+          const proposalJson = JSON.parse(JSON.stringify(proposal)) as ReadonlyJSONObject;
+          (assistantContent as unknown[]).push({
+            type: "tool-call" as const,
+            toolCallId: `proposal-${proposal.id}`,
+            toolName: "draft_proposal",
+            args: { proposal: proposalJson },
+            argsText: JSON.stringify({ proposal: proposalJson }),
+            result: { proposal: proposalJson },
+          });
+        }
+        return [
+          {
+            role: "user" as const,
+            content: [{ type: "text" as const, text: turn.user_message }],
+          },
+          {
+            role: "assistant" as const,
+            content: assistantContent,
+          },
+        ];
+      }),
+    [proposalsById, sessionTurns],
+  );
 
   const invalidateDailyReadModels = useCallback(async () => {
     await Promise.all([
@@ -461,7 +492,14 @@ function App() {
   const activeDraft = (proposalsQuery.data ?? []).find((proposal) =>
     ["draft", "needs_clarification"].includes(proposal.status),
   );
-  const fallbackDraft = activeDraft && !inlineProposalIds.has(activeDraft.id) ? activeDraft : undefined;
+  const historyProposalIds = useMemo(
+    () => new Set(sessionTurns.map((turn) => turn.proposal_id).filter(Boolean)),
+    [sessionTurns],
+  );
+  const fallbackDraft =
+    activeDraft && !inlineProposalIds.has(activeDraft.id) && !historyProposalIds.has(activeDraft.id)
+      ? activeDraft
+      : undefined;
 
   const changePerson = (nextPersonId: string) => {
     setPersonId(nextPersonId);
@@ -556,7 +594,7 @@ function App() {
 
       <main className="app-main">
         {activeView === "chat" ? (
-          chatHistoryQuery.isSuccess ? (
+          chatHistoryQuery.isSuccess && (proposalsQuery.isSuccess || proposalsQuery.isError) ? (
             <ChatWorkspace
               key={`${selectedPersonId}-${chatReloadKey}`}
               householdId={householdId}
