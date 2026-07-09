@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ReadonlyJSONObject } from "assistant-stream/utils";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { NavLink, useLocation } from "react-router-dom";
+import { PanelLeftCloseIcon, PanelLeftOpenIcon, SquarePenIcon } from "lucide-react";
 import {
   ApiError,
   confirmProposal,
@@ -58,6 +59,7 @@ import type {
   AgentChatTurn,
   AgentSettings,
   BackgroundJob,
+  ChatSession,
   DaySummaryEntry,
   FoodResponse,
   OnboardingTurn,
@@ -653,6 +655,9 @@ function App() {
               onWeightClick={() => setWeightOpen(true)}
               onNewSessionClick={() => newChatSession.mutate()}
               onSessionsClick={() => setSessionsOpen(true)}
+              sessions={chatSessionsQuery.data ?? []}
+              sessionBusy={activateSession.isPending || newChatSession.isPending}
+              onActivateSession={(sessionId) => activateSession.mutate(sessionId)}
               onRecipeClick={() => setRecipeOpen(true)}
               onLabelClick={() => setLabelOpen(true)}
               onAgentResponse={onAgentResponse}
@@ -932,6 +937,9 @@ function ChatWorkspace({
   onWeightClick,
   onNewSessionClick,
   onSessionsClick,
+  sessions,
+  sessionBusy,
+  onActivateSession,
   onRecipeClick,
   onLabelClick,
   onAgentResponse,
@@ -963,6 +971,9 @@ function ChatWorkspace({
   onWeightClick: () => void;
   onNewSessionClick: () => void;
   onSessionsClick: () => void;
+  sessions: ChatSession[];
+  sessionBusy: boolean;
+  onActivateSession: (sessionId: string) => void;
   onRecipeClick: () => void;
   onLabelClick: () => void;
   onAgentResponse: (response: AgentChatResponse) => void;
@@ -1004,41 +1015,126 @@ function ChatWorkspace({
         onReject={onRejectProposal}
         onUpdateEntry={onUpdateProposalEntry}
       />
-      <section className="chat-column" aria-label="Conversa">
-        <DaySummaryStrip personId={personId} day={today} onDayChange={onDayChange} />
-        <QuickActionRow
-          onLogFoodClick={onLogFoodClick}
-          onRepeatClick={onRepeatClick}
-          onWeightClick={onWeightClick}
-          onRecipeClick={onRecipeClick}
-          onLabelClick={onLabelClick}
+      <section className="chat-workspace" aria-label="Conversa">
+        <SessionSidebar
+          sessions={sessions}
+          busy={sessionBusy}
+          onActivate={onActivateSession}
+          onNewSession={onNewSessionClick}
         />
-        <div className="chat-session-bar">
-          <button type="button" className="chat-session-new" onClick={onSessionsClick}>
-            Conversas
-          </button>
-          <button type="button" className="chat-session-new" onClick={onNewSessionClick}>
-            Nova conversa
-          </button>
-        </div>
-        <ChatInterface />
-        {outboxBannerVisible ? (
-          <ReplayBanner
-            count={outboxCount}
-            busy={outboxReplaying}
-            onReplay={onOutboxReplay}
-            onDiscardAll={onOutboxDiscard}
+        <div className="chat-main">
+          <div className="chat-top">
+            <DaySummaryStrip personId={personId} day={today} onDayChange={onDayChange} />
+            <QuickActionRow
+              onLogFoodClick={onLogFoodClick}
+              onRepeatClick={onRepeatClick}
+              onWeightClick={onWeightClick}
+              onRecipeClick={onRecipeClick}
+              onLabelClick={onLabelClick}
+            />
+            <div className="chat-session-bar">
+              <button type="button" className="chat-session-new" onClick={onSessionsClick}>
+                Conversas
+              </button>
+              <button type="button" className="chat-session-new" onClick={onNewSessionClick}>
+                Nova conversa
+              </button>
+            </div>
+          </div>
+          <ChatInterface />
+          {outboxBannerVisible ? (
+            <ReplayBanner
+              count={outboxCount}
+              busy={outboxReplaying}
+              onReplay={onOutboxReplay}
+              onDiscardAll={onOutboxDiscard}
+            />
+          ) : null}
+          <DraftProposalDock
+            proposal={proposal}
+            busy={proposalBusy}
+            onConfirm={onConfirmProposal}
+            onReject={onRejectProposal}
+            onUpdateEntry={onUpdateProposalEntry}
           />
-        ) : null}
-        <DraftProposalDock
-          proposal={proposal}
-          busy={proposalBusy}
-          onConfirm={onConfirmProposal}
-          onReject={onRejectProposal}
-          onUpdateEntry={onUpdateProposalEntry}
-        />
+        </div>
+        <aside className="chat-rail" aria-label="Resumo do dia">
+          <DaySummaryStrip personId={personId} day={today} onDayChange={onDayChange} />
+          <QuickActionRow
+            onLogFoodClick={onLogFoodClick}
+            onRepeatClick={onRepeatClick}
+            onWeightClick={onWeightClick}
+            onRecipeClick={onRecipeClick}
+            onLabelClick={onLabelClick}
+          />
+        </aside>
       </section>
     </AssistantRuntimeProvider>
+  );
+}
+
+
+function SessionSidebar({
+  sessions,
+  busy,
+  onActivate,
+  onNewSession,
+}: {
+  sessions: ChatSession[];
+  busy: boolean;
+  onActivate: (sessionId: string) => void;
+  onNewSession: () => void;
+}) {
+  const [collapsed, setCollapsedState] = useState(
+    () => localStorage.getItem("health-monitor.session-sidebar") === "collapsed",
+  );
+  const setCollapsed = (value: boolean) => {
+    localStorage.setItem("health-monitor.session-sidebar", value ? "collapsed" : "open");
+    setCollapsedState(value);
+  };
+  return (
+    <aside className={`session-sidebar${collapsed ? " is-collapsed" : ""}`} aria-label="Conversas">
+      <div className="session-sidebar__head">
+        {!collapsed ? <span className="eyebrow">Conversas</span> : null}
+        <button
+          type="button"
+          className="session-sidebar__toggle"
+          aria-label={collapsed ? "Expandir lista de conversas" : "Recolher lista de conversas"}
+          onClick={() => setCollapsed(!collapsed)}
+        >
+          {collapsed ? <PanelLeftOpenIcon size={18} /> : <PanelLeftCloseIcon size={18} />}
+        </button>
+      </div>
+      <button
+        type="button"
+        className="session-sidebar__new"
+        disabled={busy}
+        aria-label="Nova conversa"
+        onClick={onNewSession}
+      >
+        <SquarePenIcon size={16} />
+        {!collapsed ? <span>Nova conversa</span> : null}
+      </button>
+      {!collapsed ? (
+        <div className="session-sidebar__list">
+          {sessions.map((session) => (
+            <button
+              key={session.id}
+              type="button"
+              className={`session-sidebar__item${session.active ? " is-active" : ""}`}
+              disabled={session.active || busy}
+              onClick={() => onActivate(session.id)}
+            >
+              <strong>{session.preview || "Conversa sem mensagens"}</strong>
+              <span>
+                {session.last_at ? formatDateTime(session.last_at) : "agora"} - {session.turn_count}
+              </span>
+            </button>
+          ))}
+          {sessions.length === 0 ? <p className="empty-copy">Nenhuma conversa ainda.</p> : null}
+        </div>
+      ) : null}
+    </aside>
   );
 }
 

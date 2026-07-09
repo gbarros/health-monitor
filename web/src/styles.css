@@ -337,34 +337,198 @@ h3 {
   overflow-x: hidden;
 }
 
-.chat-column {
+.chat-column,
+.chat-workspace {
   /* app-main is the flex-sized scroll region; fill it instead of guessing
      the header height with a magic number. */
   height: 100%;
   min-height: 0;
   display: flex;
-  flex-direction: column;
   gap: 10px;
   overflow: hidden;
   padding: 10px;
 }
 
-/* The thread takes all remaining height; every other child keeps its
-   natural size regardless of how many children the column has. */
-.chat-column > * {
+.chat-column {
+  flex-direction: column;
+}
+
+.chat-main {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.chat-top {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
   flex: 0 0 auto;
 }
 
-.chat-column > .chat-thread-shell {
+/* The thread takes all remaining height; every other child keeps its
+   natural size regardless of how many children the column has. */
+.chat-main > * {
+  flex: 0 0 auto;
+}
+
+.chat-main > .chat-thread-shell {
   flex: 1 1 0;
   min-height: 160px;
 }
 
 /* The dock may shrink (it scrolls internally) so its action buttons are
    never pushed off-screen on small viewports. */
-.chat-column .draft-dock {
+.chat-main .draft-dock {
   flex: 0 1 auto;
   min-height: 140px;
+}
+
+/* Session sidebar and right rail only exist on wide screens. */
+.session-sidebar,
+.chat-rail {
+  display: none;
+}
+
+@media (min-width: 1024px) {
+  .session-sidebar {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    width: 250px;
+    flex: 0 0 auto;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    padding: 10px;
+    overflow: hidden;
+  }
+
+  .session-sidebar.is-collapsed {
+    width: 54px;
+    align-items: center;
+  }
+
+  .session-sidebar__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 32px;
+  }
+
+  .session-sidebar.is-collapsed .session-sidebar__head {
+    justify-content: center;
+  }
+
+  .session-sidebar__toggle,
+  .session-sidebar__new {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 34px;
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    font-weight: 600;
+  }
+
+  .session-sidebar__toggle:hover,
+  .session-sidebar__new:hover:not(:disabled) {
+    color: var(--primary-strong);
+    border: none;
+    background: var(--surface-soft);
+    border-radius: 8px;
+  }
+
+  .session-sidebar__new {
+    justify-content: flex-start;
+    color: var(--text);
+    padding: 0 8px;
+    border-radius: 8px;
+  }
+
+  .session-sidebar.is-collapsed .session-sidebar__new {
+    justify-content: center;
+    width: 34px;
+    padding: 0;
+  }
+
+  .session-sidebar__list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    overflow-y: auto;
+    min-height: 0;
+  }
+
+  .session-sidebar__item {
+    display: grid;
+    gap: 2px;
+    text-align: left;
+    min-height: 0;
+    padding: 8px 10px;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+  }
+
+  .session-sidebar__item strong {
+    font-size: 13.5px;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .session-sidebar__item span {
+    color: var(--muted);
+    font-size: 12px;
+  }
+
+  .session-sidebar__item:hover:not(:disabled) {
+    border: none;
+    background: var(--surface-soft);
+  }
+
+  .session-sidebar__item.is-active {
+    background: #e6f4f1;
+  }
+
+  .session-sidebar__item.is-active:disabled {
+    opacity: 1;
+    cursor: default;
+  }
+
+  /* Sidebar replaces the pill bar and the modal drawer trigger. */
+  .chat-top .chat-session-bar {
+    display: none;
+  }
+}
+
+@media (min-width: 1440px) {
+  .chat-rail {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    width: 320px;
+    flex: 0 0 auto;
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  .chat-rail .quick-action-row {
+    flex-wrap: wrap;
+    overflow: visible;
+  }
+
+  /* Day strip and quick actions live in the rail on very wide screens. */
+  .chat-top {
+    display: none;
+  }
 }
 
 .page-grid,
