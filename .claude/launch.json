@@ -4,19 +4,26 @@
     {
       "name": "api",
       "runtimeExecutable": "make",
-      "runtimeArgs": ["dev-api"],
+      "runtimeArgs": [
+        "dev-api"
+      ],
       "port": 8765
     },
     {
       "name": "web",
       "runtimeExecutable": "make",
-      "runtimeArgs": ["dev-web"],
+      "runtimeArgs": [
+        "dev-web"
+      ],
       "port": 5173
     },
     {
       "name": "web-preview",
       "runtimeExecutable": "sh",
-      "runtimeArgs": ["-c", "cd web && bun run build && bun run preview"],
+      "runtimeArgs": [
+        "-c",
+        "cd web && bun run build && bun run preview"
+      ],
       "port": 4173
     }
   ]

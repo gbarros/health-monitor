@@ -1901,8 +1901,19 @@ class HealthMonitorService:
         return person_id in self._agent_event_sinks
 
     def start_new_chat_session(self, *, person_id: str) -> str:
-        """Start a fresh conversation session and make it active."""
+        """Start a fresh conversation session and make it active.
+
+        Idempotent while the active session is still empty: repeated clicks
+        (or retries) reuse it instead of piling up blank sessions.
+        """
         self._require_person(person_id)
+        active = self.active_chat_sessions.get(person_id)
+        if active is not None and not any(
+            turn.session_id == active
+            for turn in self.chat_turns.values()
+            if turn.person_id == person_id
+        ):
+            return active
         session_id = self._next_id("chat_session")
         self.active_chat_sessions[person_id] = session_id
         self._persist()

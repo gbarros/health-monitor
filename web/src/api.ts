@@ -120,8 +120,9 @@ export async function loadOnboardingHistory(sessionId: string): Promise<Onboardi
   return apiGet<OnboardingTurn[]>(`/api/agent/onboarding-history?session_id=${encodeURIComponent(sessionId)}`);
 }
 
-export async function loadChatHistory(personId: string): Promise<AgentChatTurn[]> {
-  return apiGet<AgentChatTurn[]>(`/api/agent/chat-history?person_id=${encodeURIComponent(personId)}`);
+export async function loadChatHistory(personId: string, sessionId?: string): Promise<AgentChatTurn[]> {
+  const sessionParam = sessionId ? `&session_id=${encodeURIComponent(sessionId)}` : "";
+  return apiGet<AgentChatTurn[]>(`/api/agent/chat-history?person_id=${encodeURIComponent(personId)}${sessionParam}`);
 }
 
 export async function loadMemoryNotes(personId: string): Promise<MemoryNote[]> {

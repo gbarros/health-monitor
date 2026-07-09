@@ -182,13 +182,21 @@ function App() {
   });
   const activeSessionId = (chatSessionsQuery.data ?? []).find((session) => session.active)?.id ?? null;
 
+  // The thread reads one query keyed by (person, session) so turns are always
+  // consistent with the session they belong to — two independent queries used
+  // to race after Nova conversa / reopen and briefly render the wrong thread.
+  const sessionHistoryQuery = useQuery({
+    queryKey: ["chatHistorySession", selectedPersonId, activeSessionId],
+    queryFn: () => loadChatHistory(selectedPersonId ?? "", activeSessionId ?? undefined),
+    enabled: selectedPersonId != null && activeSessionId != null,
+  });
+
   const sessionTurns = useMemo(() => {
-    const turns = chatHistoryQuery.data ?? [];
-    if (!activeSessionId) {
-      return turns;
+    if (activeSessionId != null) {
+      return sessionHistoryQuery.data ?? [];
     }
-    return turns.filter((turn) => turn.session_id === activeSessionId);
-  }, [activeSessionId, chatHistoryQuery.data]);
+    return chatHistoryQuery.data ?? [];
+  }, [activeSessionId, chatHistoryQuery.data, sessionHistoryQuery.data]);
 
   const proposalsById = useMemo(
     () => new Map((proposalsQuery.data ?? []).map((proposal) => [proposal.id, proposal])),
@@ -336,6 +344,7 @@ function App() {
             return next;
           });
           await queryClient.invalidateQueries({ queryKey: queryKeys.chatHistory(selectedPersonId) });
+          await queryClient.invalidateQueries({ queryKey: ["chatHistorySession", selectedPersonId] });
           setChatReloadKey((key) => key + 1);
         } catch (error) {
           const message =
@@ -401,9 +410,9 @@ function App() {
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.chatHistory(selectedPersonId) }),
+        queryClient.invalidateQueries({ queryKey: ["chatHistorySession", selectedPersonId] }),
         queryClient.invalidateQueries({ queryKey: ["chatSessions", selectedPersonId] }),
       ]);
-      setChatReloadKey((key) => key + 1);
       showToast("Nova conversa iniciada. As anteriores ficam em Conversas.");
     },
     onError: (error) =>
@@ -415,10 +424,10 @@ function App() {
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.chatHistory(selectedPersonId) }),
+        queryClient.invalidateQueries({ queryKey: ["chatHistorySession", selectedPersonId] }),
         queryClient.invalidateQueries({ queryKey: ["chatSessions", selectedPersonId] }),
       ]);
       setSessionsOpen(false);
-      setChatReloadKey((key) => key + 1);
       showToast("Conversa reaberta. Novas mensagens continuam nela.");
     },
     onError: (error) =>
@@ -462,6 +471,7 @@ function App() {
       setRepeatOpen(false);
       showToast("Mensagem enviada ao agente.");
       await queryClient.invalidateQueries({ queryKey: queryKeys.chatHistory(selectedPersonId) });
+      await queryClient.invalidateQueries({ queryKey: ["chatHistorySession", selectedPersonId] });
       setChatReloadKey((key) => key + 1);
       await invalidateDailyReadModels();
     },
@@ -494,6 +504,7 @@ function App() {
       }
       if (typeof job.result?.["chat_turn_id"] === "string" && selectedPersonId) {
         await queryClient.invalidateQueries({ queryKey: queryKeys.chatHistory(selectedPersonId) });
+        await queryClient.invalidateQueries({ queryKey: ["chatHistorySession", selectedPersonId] });
         setChatReloadKey((key) => key + 1);
         setJobsSheetOpen(false);
         showToast("Resposta do chat atualizada.");
@@ -626,7 +637,7 @@ function App() {
 
       <main className="app-main">
         {activeView === "chat" ? (
-          chatHistoryQuery.isSuccess && (proposalsQuery.isSuccess || proposalsQuery.isError) && (chatSessionsQuery.isSuccess || chatSessionsQuery.isError) ? (
+          chatHistoryQuery.isSuccess && (proposalsQuery.isSuccess || proposalsQuery.isError) && (chatSessionsQuery.isSuccess || chatSessionsQuery.isError) && (activeSessionId == null || sessionHistoryQuery.isSuccess) ? (
             <ChatWorkspace
               key={`${selectedPersonId}-${chatReloadKey}-${activeSessionId ?? "none"}`}
               householdId={householdId}
