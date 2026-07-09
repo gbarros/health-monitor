@@ -17,8 +17,8 @@ class AppConfig:
     model_provider: str = "deterministic"
     require_model: bool = True
     food_estimator: str = "ollama"
-    ollama_base_url: str = "http://127.0.0.1:11434"
-    ollama_model: str = "ornith:9b"
+    ollama_base_url: str = "https://ollama.1596.io"
+    ollama_model: str = "qwen3.6:27b"
     label_text_extractor: str = "ollama"
     ocr_model: str = "glm-ocr:latest"
     openfoodfacts_enabled: bool = True
@@ -26,7 +26,7 @@ class AppConfig:
     usda_api_key: str | None = None
     research_lookup_enabled: bool = False
     live_model_tests: bool = False
-    live_model_name: str = "ornith:9b"
+    live_model_name: str = "qwen3.6:27b"
     cloud_model_calls_enabled: bool = False
     cloud_model_name: str = "glm-5.2:cloud"
 
@@ -51,10 +51,13 @@ def load_config() -> AppConfig:
         require_model=os.environ.get("REQUIRE_MODEL", "true").casefold()
         in {"1", "true", "yes", "on"},
         food_estimator=os.environ.get("FOOD_ESTIMATOR", "ollama"),
-        ollama_base_url=os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434"),
+        ollama_base_url=os.environ.get(
+            "OLLAMA_BASE_URL",
+            os.environ.get("OLLAMA_HOST", "https://ollama.1596.io"),
+        ),
         ollama_model=os.environ.get(
             "OLLAMA_MODEL",
-            os.environ.get("DEFAULT_MODEL_PROFILE", "ornith:9b"),
+            os.environ.get("DEFAULT_MODEL_PROFILE", "qwen3.6:27b"),
         ),
         label_text_extractor=os.environ.get("LABEL_TEXT_EXTRACTOR", "ollama"),
         ocr_model=os.environ.get("OCR_MODEL", os.environ.get("OLLAMA_OCR_MODEL", "glm-ocr:latest")),
@@ -67,7 +70,7 @@ def load_config() -> AppConfig:
         in {"1", "true", "yes", "on"},
         live_model_tests=os.environ.get("LIVE_MODEL_TESTS", "false").casefold()
         in {"1", "true", "yes", "on"},
-        live_model_name=os.environ.get("LIVE_MODEL_NAME", "ornith:9b"),
+        live_model_name=os.environ.get("LIVE_MODEL_NAME", "qwen3.6:27b"),
         cloud_model_calls_enabled=os.environ.get(
             "CLOUD_MODEL_CALLS_ENABLED", "false"
         ).casefold()
