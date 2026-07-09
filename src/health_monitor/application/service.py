@@ -1622,6 +1622,77 @@ class HealthMonitorService:
     def recipe_version_for_food_version(self, food_version_id: str) -> RecipeVersion | None:
         return self.recipe_versions.get(food_version_id)
 
+    def delete_household(self, household_id: str) -> Household:
+        """Remove a household and everything scoped to it (dev cleanup path)."""
+        try:
+            household = self.households.pop(household_id)
+        except KeyError as exc:
+            raise ValueError(f"unknown household_id: {household_id}") from exc
+        person_ids = {
+            person_id
+            for person_id, person in self.people.items()
+            if person.household_id == household_id
+        }
+        for person_id in person_ids:
+            del self.people[person_id]
+            self.active_chat_sessions.pop(person_id, None)
+        self.goal_profiles = {
+            key: item for key, item in self.goal_profiles.items() if item.person_id not in person_ids
+        }
+        self.weights = {
+            key: item for key, item in self.weights.items() if item.person_id not in person_ids
+        }
+        self.diary.entries = {
+            key: item for key, item in self.diary.entries.items() if item.person_id not in person_ids
+        }
+        self.proposals.proposals = {
+            key: item for key, item in self.proposals.proposals.items() if item.person_id not in person_ids
+        }
+        self.agent_runs = {
+            key: item for key, item in self.agent_runs.items() if item.person_id not in person_ids
+        }
+        run_ids = {key for key in self.agent_runs}
+        self.agent_tool_calls = {
+            key: item for key, item in self.agent_tool_calls.items() if item.agent_run_id in run_ids
+        }
+        self.chat_turns = {
+            key: item for key, item in self.chat_turns.items() if item.person_id not in person_ids
+        }
+        self.onboarding_turns = {
+            key: item for key, item in self.onboarding_turns.items() if item.household_id != household_id
+        }
+        self.review_notes = {
+            key: item for key, item in self.review_notes.items() if item.person_id not in person_ids
+        }
+        self.memory_notes = {
+            key: item for key, item in self.memory_notes.items() if item.person_id not in person_ids
+        }
+        self.attachments = {
+            key: item for key, item in self.attachments.items() if item.household_id != household_id
+        }
+        self.recipe_versions = {
+            key: item for key, item in self.recipe_versions.items() if item.household_id != household_id
+        }
+        food_ids = {
+            food_id for food_id, food in self.catalog.foods.items() if food.household_id == household_id
+        }
+        self.catalog.foods = {
+            key: item for key, item in self.catalog.foods.items() if key not in food_ids
+        }
+        self.catalog.versions = {
+            key: item for key, item in self.catalog.versions.items() if item.food_id not in food_ids
+        }
+        self.catalog.aliases = {
+            key: item for key, item in self.catalog.aliases.items() if item.food_id not in food_ids
+        }
+        self.catalog.barcode_associations = {
+            key: item
+            for key, item in self.catalog.barcode_associations.items()
+            if getattr(item, "food_id", None) not in food_ids
+        }
+        self._persist()
+        return household
+
     def memory_notes_for_person(self, person_id: str) -> tuple[MemoryNote, ...]:
         self._require_person(person_id)
         notes = [note for note in self.memory_notes.values() if note.person_id == person_id]

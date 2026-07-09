@@ -156,6 +156,27 @@ h3 {
   padding: 14px 16px;
 }
 
+.onboarding-existing__row {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.onboarding-existing__delete {
+  min-height: 32px;
+  min-width: 32px;
+  padding: 0;
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+}
+
+.onboarding-existing__delete:hover:not(:disabled) {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
 .onboarding-existing__list {
   display: flex;
   flex-wrap: wrap;

@@ -308,6 +308,10 @@ class HttpApi:
                 ],
             )
 
+        if method == "DELETE" and path.startswith("/api/households/"):
+            household = self.service.delete_household(path.removeprefix("/api/households/"))
+            return HttpResponse(200, household_to_dict(household))
+
         if method == "POST" and path == "/api/households":
             household = self.service.create_household(name=body["name"])
             return HttpResponse(201, household_to_dict(household))

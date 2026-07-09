@@ -108,6 +108,13 @@ export async function loadHouseholdDirectory(): Promise<HouseholdDirectoryEntry[
   return apiGet<HouseholdDirectoryEntry[]>("/api/households");
 }
 
+export async function deleteHousehold(householdId: string): Promise<void> {
+  const response = await fetch(`/api/households/${encodeURIComponent(householdId)}`, { method: "DELETE" });
+  if (!response.ok) {
+    throw new Error(`Não foi possível excluir a casa (${response.status}).`);
+  }
+}
+
 export async function loadPeople(householdId: string): Promise<Person[]> {
   return apiGet<Person[]>(`/api/people?household_id=${encodeURIComponent(householdId)}`);
 }

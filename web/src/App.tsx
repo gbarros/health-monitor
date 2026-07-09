@@ -11,6 +11,7 @@ import {
   activateChatSession,
   deleteDiaryEntry,
   deleteMemoryNote,
+  deleteHousehold,
   loadChatSessions,
   loadHouseholdDirectory,
   loadMemoryNotes,
@@ -2329,15 +2330,34 @@ function OnboardingScreen({
             <div className="onboarding-existing__list">
               {directory.flatMap((entry) =>
                 entry.people.map((person) => (
-                  <button
-                    key={person.id}
-                    type="button"
-                    className="person-chip"
-                    onClick={() => onSelectExisting(entry.id, person.id)}
-                  >
-                    <span>{person.name.slice(0, 1).toUpperCase()}</span>
-                    {person.name} · {entry.name}
-                  </button>
+                  <span key={person.id} className="onboarding-existing__row">
+                    <button
+                      type="button"
+                      className="person-chip"
+                      onClick={() => onSelectExisting(entry.id, person.id)}
+                    >
+                      <span>{person.name.slice(0, 1).toUpperCase()}</span>
+                      {person.name} · {entry.name}
+                    </button>
+                    <button
+                      type="button"
+                      className="onboarding-existing__delete"
+                      aria-label={`Excluir a casa ${entry.name} e todos os seus dados`}
+                      onClick={() => {
+                        if (
+                          window.confirm(
+                            `Excluir a casa "${entry.name}" (${entry.people
+                              .map((p) => p.name)
+                              .join(", ")}) e TODOS os dados dela?`,
+                          )
+                        ) {
+                          void deleteHousehold(entry.id).then(() => directoryQuery.refetch());
+                        }
+                      }}
+                    >
+                      ×
+                    </button>
+                  </span>
                 )),
               )}
             </div>

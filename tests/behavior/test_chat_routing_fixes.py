@@ -481,6 +481,55 @@ class GateThreeFixesTest(unittest.TestCase):
             # Active session is the most recent segment.
             self.assertTrue(next(s for s in sessions if s["active"])["preview"].startswith("segunda"))
 
+    def test_delete_household_cascades_all_scoped_records(self) -> None:
+        service, household_id, person_id = build_service(model_health_checker=lambda: True)
+        _, version = service.create_food_with_version(
+            household_id=household_id,
+            name="Arroz",
+            brand=None,
+            version_label="cozido",
+            nutrients_per_100g=Nutrients(130, 2.5, 28, 0.3),
+            source="manual",
+            aliases=["arroz"],
+        )
+        service.log_diary_entry(
+            person_id=person_id,
+            logged_at_local="2026-07-01T12:00:00",
+            food_version_id=version.id,
+            quantity_g=100,
+            source="manual",
+        )
+        service.log_weight(
+            person_id=person_id,
+            measured_at_local="2026-07-01T08:00:00",
+            weight_kg=96.0,
+            note=None,
+            source="manual_ui",
+        )
+        keeper = service.create_household(name="Fica")
+        keeper_person = service.create_person(
+            household_id=keeper.id, name="Ana", timezone="America/Sao_Paulo"
+        )
+
+        service.delete_household(household_id)
+
+        self.assertNotIn(household_id, service.households)
+        self.assertNotIn(person_id, service.people)
+        self.assertEqual(
+            [e for e in service.diary.entries.values() if e.person_id == person_id], []
+        )
+        self.assertEqual(
+            [w for w in service.weights.values() if w.person_id == person_id], []
+        )
+        self.assertEqual(
+            [f for f in service.catalog.foods.values() if f.household_id == household_id], []
+        )
+        # Unrelated household untouched.
+        self.assertIn(keeper.id, service.households)
+        self.assertIn(keeper_person.id, service.people)
+        with self.assertRaises(ValueError):
+            service.delete_household(household_id)
+
     def test_memory_note_proposal_roundtrip_and_context_injection(self) -> None:
         service, _, person_id = build_service(model_health_checker=lambda: True)
         proposal = service.draft_memory_note_proposal(
