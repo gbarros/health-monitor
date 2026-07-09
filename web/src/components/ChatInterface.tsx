@@ -9,6 +9,7 @@ type ChatInterfaceProps = {
   suggestions?: ChatSuggestion[];
   placeholder?: string;
   allowAttachments?: boolean;
+  onQuickActions?: () => void;
 };
 
 const DEFAULT_SUGGESTIONS: ChatSuggestion[] = [
@@ -26,10 +27,11 @@ export function ChatInterface({
   suggestions = DEFAULT_SUGGESTIONS,
   placeholder = "Escreva uma refeição, pergunta, correção ou cole uma tabela...",
   allowAttachments = true,
+  onQuickActions,
 }: ChatInterfaceProps) {
   return (
     <div className="chat-thread-shell">
-      <ThreadUIConfigContext.Provider value={{ placeholder, allowAttachments }}>
+      <ThreadUIConfigContext.Provider value={{ placeholder, allowAttachments, onQuickActions }}>
         <WelcomeContext.Provider value={{ message: welcomeMessage, suggestions }}>
           <Thread components={{ Welcome: ChatWelcome }} />
         </WelcomeContext.Provider>

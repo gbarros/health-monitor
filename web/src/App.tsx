@@ -4,6 +4,7 @@ import type { ReadonlyJSONObject } from "assistant-stream/utils";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import {
+  ChefHatIcon,
   ClipboardListIcon,
   DatabaseIcon,
   LayoutDashboardIcon,
@@ -11,6 +12,9 @@ import {
   MessageSquareTextIcon,
   PanelLeftCloseIcon,
   PanelLeftOpenIcon,
+  RepeatIcon,
+  ScaleIcon,
+  ScanLineIcon,
   SettingsIcon,
   SquarePenIcon,
   UtensilsCrossedIcon,
@@ -608,6 +612,16 @@ function App() {
   return (
     <div className="app-shell">
       <header className="app-header">
+        {activeView === "chat" ? (
+          <button
+            type="button"
+            className="mobile-sessions-btn"
+            aria-label="Abrir conversas"
+            onClick={() => setSessionsOpen(true)}
+          >
+            <PanelLeftOpenIcon size={20} aria-hidden="true" />
+          </button>
+        ) : null}
         <div className="brand-block">
           <p className="eyebrow">Health Monitor</p>
           <h1>{viewTitle(activeView)}</h1>
@@ -1068,6 +1082,8 @@ function ChatWorkspace({
     onJobQueued,
   });
 
+  const [actionsSheetOpen, setActionsSheetOpen] = useState(false);
+
   return (
     <AssistantRuntimeProvider runtime={runtime}>
       <ProposalToolRenderer
@@ -1104,7 +1120,17 @@ function ChatWorkspace({
               </button>
             </div>
           </div>
-          <ChatInterface />
+          <ChatInterface onQuickActions={() => setActionsSheetOpen(true)} />
+          {actionsSheetOpen ? (
+            <QuickActionsSheet
+              onClose={() => setActionsSheetOpen(false)}
+              onLogFoodClick={onLogFoodClick}
+              onRepeatClick={onRepeatClick}
+              onWeightClick={onWeightClick}
+              onRecipeClick={onRecipeClick}
+              onLabelClick={onLabelClick}
+            />
+          ) : null}
           {outboxBannerVisible ? (
             <ReplayBanner
               count={outboxCount}
@@ -1235,6 +1261,57 @@ function TabIcon({ view }: { view: AppView }) {
   if (view === "data") return <DatabaseIcon size={size} aria-hidden="true" />;
   if (view === "settings") return <SettingsIcon size={size} aria-hidden="true" />;
   return <MessageSquareTextIcon size={size} aria-hidden="true" />;
+}
+
+function QuickActionsSheet({
+  onClose,
+  onLogFoodClick,
+  onRepeatClick,
+  onWeightClick,
+  onRecipeClick,
+  onLabelClick,
+}: {
+  onClose: () => void;
+  onLogFoodClick: () => void;
+  onRepeatClick: () => void;
+  onWeightClick: () => void;
+  onRecipeClick: () => void;
+  onLabelClick: () => void;
+}) {
+  const actions: { label: string; icon: ReactNode; onClick: () => void }[] = [
+    { label: "Registrar alimento", icon: <UtensilsCrossedIcon size={20} />, onClick: onLogFoodClick },
+    { label: "Escanear rótulo", icon: <ScanLineIcon size={20} />, onClick: onLabelClick },
+    { label: "Repetir refeição", icon: <RepeatIcon size={20} />, onClick: onRepeatClick },
+    { label: "Peso", icon: <ScaleIcon size={20} />, onClick: onWeightClick },
+    { label: "Receita/lote", icon: <ChefHatIcon size={20} />, onClick: onRecipeClick },
+  ];
+  return (
+    <div className="action-sheet-backdrop" role="presentation" onClick={onClose}>
+      <div
+        className="action-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Ações rápidas"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="action-sheet__grip" aria-hidden="true" />
+        {actions.map((action) => (
+          <button
+            key={action.label}
+            type="button"
+            className="action-sheet__item"
+            onClick={() => {
+              onClose();
+              action.onClick();
+            }}
+          >
+            <span className="action-sheet__icon">{action.icon}</span>
+            {action.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function DaySummaryStrip({

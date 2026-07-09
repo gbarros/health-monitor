@@ -49,6 +49,7 @@ import {
   MicIcon,
   MoreHorizontalIcon,
   PencilIcon,
+  PlusIcon,
   RefreshCwIcon,
   SquareIcon,
 } from "lucide-react";
@@ -65,6 +66,7 @@ export type ThreadGroupPart = MessagePrimitive.GroupedParts.GroupPart;
 export type ThreadUIConfig = {
   placeholder?: string;
   allowAttachments?: boolean;
+  onQuickActions?: () => void;
 };
 
 export const ThreadUIConfigContext = createContext<ThreadUIConfig>({});
@@ -258,10 +260,28 @@ const Composer: FC = () => {
 };
 
 const ComposerAction: FC = () => {
-  const { allowAttachments = true } = useContext(ThreadUIConfigContext);
+  const { allowAttachments = true, onQuickActions } = useContext(ThreadUIConfigContext);
+  const leading = onQuickActions ? (
+    <TooltipIconButton
+      tooltip="Ações rápidas"
+      side="top"
+      type="button"
+      variant="ghost"
+      size="icon"
+      className="aui-composer-quick-actions size-11 rounded-full"
+      aria-label="Abrir ações rápidas"
+      onClick={onQuickActions}
+    >
+      <PlusIcon className="size-5" />
+    </TooltipIconButton>
+  ) : allowAttachments ? (
+    <ComposerAddAttachment />
+  ) : (
+    <span />
+  );
   return (
     <div className="aui-composer-action-wrapper relative flex items-center justify-between">
-      {allowAttachments ? <ComposerAddAttachment /> : <span />}
+      {leading}
       <div className="flex items-center gap-1.5">
         <AuiIf condition={(s) => s.thread.capabilities.dictation}>
           <AuiIf condition={(s) => s.composer.dictation == null}>

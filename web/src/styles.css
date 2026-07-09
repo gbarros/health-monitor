@@ -360,6 +360,83 @@ h3 {
   display: none;
 }
 
+/* The header sessions button is mobile-only (desktop has the sidebar). */
+.mobile-sessions-btn {
+  display: none;
+}
+
+/* Quick-actions bottom sheet (composer "+"). */
+.action-sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: rgba(20, 35, 34, 0.45);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.action-sheet {
+  width: min(560px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: var(--surface);
+  border-top-left-radius: 18px;
+  border-top-right-radius: 18px;
+  padding: 8px 12px calc(12px + env(safe-area-inset-bottom));
+  box-shadow: var(--shadow);
+  animation: action-sheet-in 200ms ease-out;
+}
+
+@keyframes action-sheet-in {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+.action-sheet__grip {
+  width: 40px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--border-strong);
+  margin: 4px auto 8px;
+}
+
+.action-sheet__item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 52px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  padding: 0 12px;
+  font-size: 15px;
+  font-weight: 600;
+  text-align: left;
+  justify-content: flex-start;
+}
+
+.action-sheet__item:hover:not(:disabled) {
+  border: none;
+  background: var(--surface-soft);
+}
+
+.action-sheet__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  background: var(--surface-soft);
+  color: var(--primary-strong);
+}
+
 .badge-count {
   display: inline-flex;
   align-items: center;
@@ -1913,6 +1990,44 @@ h3 {
 
   .chat-top .quick-action-row {
     padding-bottom: 0;
+  }
+
+  /* Native-app chrome: no in-page title, chat fills edge-to-edge, and the
+     day summary + quick actions + session pills leave the chat surface
+     (calorie summary lives in Painel; quick actions in the composer '+';
+     conversas in the header button). */
+  .brand-block {
+    display: none;
+  }
+
+  .mobile-sessions-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;
+    min-height: 44px;
+    border: none;
+    background: transparent;
+    color: var(--text);
+  }
+
+  .chat-top {
+    display: none;
+  }
+
+  .chat-workspace {
+    padding: 0;
+  }
+
+  .chat-main {
+    gap: 0;
+  }
+
+  .chat-main > .chat-thread-shell {
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    min-height: 0;
   }
 }
 

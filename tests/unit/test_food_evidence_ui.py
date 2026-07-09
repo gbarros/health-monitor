@@ -12,7 +12,7 @@ class FoodEvidenceUiTest(unittest.TestCase):
         api = read_web_file("api.ts")
 
         self.assertIn("allowAttachments = true", chat)
-        self.assertIn("ThreadUIConfigContext.Provider value={{ placeholder, allowAttachments }}", chat)
+        self.assertIn("ThreadUIConfigContext.Provider value={{ placeholder, allowAttachments, onQuickActions }}", chat)
         self.assertIn("SimpleImageAttachmentAdapter", runtime)
         self.assertIn("SimpleTextAttachmentAdapter", runtime)
         self.assertIn("uploadMessageAttachments", runtime)
