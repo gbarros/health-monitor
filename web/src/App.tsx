@@ -788,26 +788,43 @@ function App() {
       </nav>
 
       {sessionsOpen ? (
-        <div className="modal-backdrop" role="presentation" onClick={() => setSessionsOpen(false)}>
+        <div className="session-drawer-backdrop" role="presentation" onClick={() => setSessionsOpen(false)}>
           <div
-            className="settings-drawer"
+            className="session-drawer"
             role="dialog"
             aria-modal="true"
             aria-label="Conversas"
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="section-heading">
-              <span>Conversas</span>
-              <button type="button" onClick={() => setSessionsOpen(false)}>
-                Fechar
+            <div className="session-drawer__head">
+              <span className="eyebrow">Conversas</span>
+              <button
+                type="button"
+                className="session-drawer__close"
+                aria-label="Fechar"
+                onClick={() => setSessionsOpen(false)}
+              >
+                <PanelLeftCloseIcon size={18} />
               </button>
             </div>
-            <div className="session-list">
+            <button
+              type="button"
+              className="session-sidebar__new"
+              disabled={newChatSession.isPending}
+              onClick={() => {
+                setSessionsOpen(false);
+                newChatSession.mutate();
+              }}
+            >
+              <SquarePenIcon size={16} />
+              <span>Nova conversa</span>
+            </button>
+            <div className="session-sidebar__list">
               {(chatSessionsQuery.data ?? []).map((session) => (
                 <button
                   key={session.id}
                   type="button"
-                  className={`session-row${session.active ? " is-active" : ""}`}
+                  className={`session-sidebar__item${session.active ? " is-active" : ""}`}
                   disabled={session.active || activateSession.isPending}
                   onClick={() => activateSession.mutate(session.id)}
                 >
