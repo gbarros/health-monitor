@@ -3,6 +3,7 @@ import type {
   AgentChatTurn,
   AgentSettings,
   Attachment,
+  ChatSession,
   BackgroundJob,
   DaySummary,
   DaySummaryEntry,
@@ -134,8 +135,19 @@ export async function deleteMemoryNote(noteId: string): Promise<void> {
   }
 }
 
-export async function startNewChatSession(personId: string): Promise<AgentChatTurn> {
-  return apiPost<AgentChatTurn>("/api/agent/new-chat-session", { person_id: personId });
+export async function startNewChatSession(personId: string): Promise<{ session_id: string }> {
+  return apiPost<{ session_id: string }>("/api/agent/new-chat-session", { person_id: personId });
+}
+
+export async function loadChatSessions(personId: string): Promise<ChatSession[]> {
+  return apiGet<ChatSession[]>(`/api/agent/chat-sessions?person_id=${encodeURIComponent(personId)}`);
+}
+
+export async function activateChatSession(personId: string, sessionId: string): Promise<{ session_id: string }> {
+  return apiPost<{ session_id: string }>("/api/agent/chat-sessions/activate", {
+    person_id: personId,
+    session_id: sessionId,
+  });
 }
 
 export async function loadDaySummary(personId: string, day: string): Promise<DaySummary> {

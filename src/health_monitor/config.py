@@ -18,7 +18,7 @@ class AppConfig:
     require_model: bool = True
     food_estimator: str = "ollama"
     ollama_base_url: str = "https://ollama.1596.io"
-    ollama_model: str = "qwen3.6:27b"
+    ollama_model: str = "gemma4:26b"
     label_text_extractor: str = "ollama"
     ocr_model: str = "glm-ocr:latest"
     openfoodfacts_enabled: bool = True
@@ -26,7 +26,7 @@ class AppConfig:
     usda_api_key: str | None = None
     research_lookup_enabled: bool = False
     live_model_tests: bool = False
-    live_model_name: str = "qwen3.6:27b"
+    live_model_name: str = "gemma4:26b"
     cloud_model_calls_enabled: bool = False
     cloud_model_name: str = "glm-5.2:cloud"
 
@@ -57,7 +57,7 @@ def load_config() -> AppConfig:
         ),
         ollama_model=os.environ.get(
             "OLLAMA_MODEL",
-            os.environ.get("DEFAULT_MODEL_PROFILE", "qwen3.6:27b"),
+            os.environ.get("DEFAULT_MODEL_PROFILE", "gemma4:26b"),
         ),
         label_text_extractor=os.environ.get("LABEL_TEXT_EXTRACTOR", "ollama"),
         ocr_model=os.environ.get("OCR_MODEL", os.environ.get("OLLAMA_OCR_MODEL", "glm-ocr:latest")),
@@ -70,7 +70,7 @@ def load_config() -> AppConfig:
         in {"1", "true", "yes", "on"},
         live_model_tests=os.environ.get("LIVE_MODEL_TESTS", "false").casefold()
         in {"1", "true", "yes", "on"},
-        live_model_name=os.environ.get("LIVE_MODEL_NAME", "qwen3.6:27b"),
+        live_model_name=os.environ.get("LIVE_MODEL_NAME", "gemma4:26b"),
         cloud_model_calls_enabled=os.environ.get(
             "CLOUD_MODEL_CALLS_ENABLED", "false"
         ).casefold()

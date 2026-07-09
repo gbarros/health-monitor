@@ -686,6 +686,40 @@ h3 {
   margin-right: 12px;
 }
 
+.session-list {
+  display: grid;
+  gap: 8px;
+  max-height: 60dvh;
+  overflow-y: auto;
+}
+
+.session-row {
+  display: grid;
+  gap: 2px;
+  text-align: left;
+  min-height: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.session-row strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-row span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.session-row.is-active {
+  border-color: var(--primary);
+  background: #e6f4f1;
+}
+
 .thinking-box {
   width: min(920px, 100%);
   margin: 2px auto 6px;

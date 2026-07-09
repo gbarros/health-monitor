@@ -183,6 +183,16 @@ export type AgentChatTurn = {
   citations: Array<Record<string, string>>;
   proposal_id?: string | null;
   created_at: string;
+  session_id?: string;
+};
+
+export type ChatSession = {
+  id: string;
+  started_at: string | null;
+  last_at: string | null;
+  turn_count: number;
+  preview: string;
+  active: boolean;
 };
 
 export type AppEvent = {

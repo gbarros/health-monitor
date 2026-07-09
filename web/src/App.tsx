@@ -7,8 +7,10 @@ import {
   ApiError,
   confirmProposal,
   defaultAgentSettings,
+  activateChatSession,
   deleteDiaryEntry,
   deleteMemoryNote,
+  loadChatSessions,
   loadMemoryNotes,
   loadActiveGoal,
   loadDaySummary,
@@ -85,6 +87,7 @@ function App() {
     setSettingsState(next);
   }, []);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [sessionsOpen, setSessionsOpen] = useState(false);
   const [logFoodOpen, setLogFoodOpen] = useState(false);
   const [weightOpen, setWeightOpen] = useState(false);
   const [recipeOpen, setRecipeOpen] = useState(false);
@@ -172,11 +175,20 @@ function App() {
     enabled: selectedPersonId != null,
   });
 
+  const chatSessionsQuery = useQuery({
+    queryKey: ["chatSessions", selectedPersonId],
+    queryFn: () => loadChatSessions(selectedPersonId ?? ""),
+    enabled: selectedPersonId != null,
+  });
+  const activeSessionId = (chatSessionsQuery.data ?? []).find((session) => session.active)?.id ?? null;
+
   const sessionTurns = useMemo(() => {
     const turns = chatHistoryQuery.data ?? [];
-    const lastBoundary = turns.map((turn) => turn.behavior_label).lastIndexOf("session_boundary");
-    return turns.slice(lastBoundary + 1);
-  }, [chatHistoryQuery.data]);
+    if (!activeSessionId) {
+      return turns;
+    }
+    return turns.filter((turn) => turn.session_id === activeSessionId);
+  }, [activeSessionId, chatHistoryQuery.data]);
 
   const proposalsById = useMemo(
     () => new Map((proposalsQuery.data ?? []).map((proposal) => [proposal.id, proposal])),
@@ -387,12 +399,30 @@ function App() {
   const newChatSession = useMutation({
     mutationFn: () => startNewChatSession(selectedPersonId ?? ""),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: queryKeys.chatHistory(selectedPersonId) });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.chatHistory(selectedPersonId) }),
+        queryClient.invalidateQueries({ queryKey: ["chatSessions", selectedPersonId] }),
+      ]);
       setChatReloadKey((key) => key + 1);
-      showToast("Nova conversa iniciada. O histórico continua salvo em Dados.");
+      showToast("Nova conversa iniciada. As anteriores ficam em Conversas.");
     },
     onError: (error) =>
       showToast(error instanceof Error ? error.message : "Não foi possível iniciar nova conversa."),
+  });
+
+  const activateSession = useMutation({
+    mutationFn: (sessionId: string) => activateChatSession(selectedPersonId ?? "", sessionId),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.chatHistory(selectedPersonId) }),
+        queryClient.invalidateQueries({ queryKey: ["chatSessions", selectedPersonId] }),
+      ]);
+      setSessionsOpen(false);
+      setChatReloadKey((key) => key + 1);
+      showToast("Conversa reaberta. Novas mensagens continuam nela.");
+    },
+    onError: (error) =>
+      showToast(error instanceof Error ? error.message : "Não foi possível reabrir a conversa."),
   });
 
   const promptBuilderSend = useMutation({
@@ -596,9 +626,9 @@ function App() {
 
       <main className="app-main">
         {activeView === "chat" ? (
-          chatHistoryQuery.isSuccess && (proposalsQuery.isSuccess || proposalsQuery.isError) ? (
+          chatHistoryQuery.isSuccess && (proposalsQuery.isSuccess || proposalsQuery.isError) && (chatSessionsQuery.isSuccess || chatSessionsQuery.isError) ? (
             <ChatWorkspace
-              key={`${selectedPersonId}-${chatReloadKey}`}
+              key={`${selectedPersonId}-${chatReloadKey}-${activeSessionId ?? "none"}`}
               householdId={householdId}
               personId={selectedPersonId}
               today={selectedDay}
@@ -611,6 +641,7 @@ function App() {
               onRepeatClick={() => setRepeatOpen(true)}
               onWeightClick={() => setWeightOpen(true)}
               onNewSessionClick={() => newChatSession.mutate()}
+              onSessionsClick={() => setSessionsOpen(true)}
               onRecipeClick={() => setRecipeOpen(true)}
               onLabelClick={() => setLabelOpen(true)}
               onAgentResponse={onAgentResponse}
@@ -694,6 +725,46 @@ function App() {
           </section>
         ) : null}
       </main>
+
+      {sessionsOpen ? (
+        <div className="modal-backdrop" role="presentation" onClick={() => setSessionsOpen(false)}>
+          <div
+            className="settings-drawer"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Conversas"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="section-heading">
+              <span>Conversas</span>
+              <button type="button" onClick={() => setSessionsOpen(false)}>
+                Fechar
+              </button>
+            </div>
+            <div className="session-list">
+              {(chatSessionsQuery.data ?? []).map((session) => (
+                <button
+                  key={session.id}
+                  type="button"
+                  className={`session-row${session.active ? " is-active" : ""}`}
+                  disabled={session.active || activateSession.isPending}
+                  onClick={() => activateSession.mutate(session.id)}
+                >
+                  <strong>{session.preview || "Conversa sem mensagens"}</strong>
+                  <span>
+                    {session.last_at ? formatDateTime(session.last_at) : "agora"} ·{" "}
+                    {session.turn_count} {session.turn_count === 1 ? "mensagem" : "mensagens"}
+                    {session.active ? " · ativa" : ""}
+                  </span>
+                </button>
+              ))}
+              {(chatSessionsQuery.data ?? []).length === 0 ? (
+                <p className="empty-copy">Nenhuma conversa ainda.</p>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {settingsOpen ? (
         <div className="modal-backdrop" role="presentation" onClick={() => setSettingsOpen(false)}>
@@ -849,6 +920,7 @@ function ChatWorkspace({
   onRepeatClick,
   onWeightClick,
   onNewSessionClick,
+  onSessionsClick,
   onRecipeClick,
   onLabelClick,
   onAgentResponse,
@@ -879,6 +951,7 @@ function ChatWorkspace({
   onRepeatClick: () => void;
   onWeightClick: () => void;
   onNewSessionClick: () => void;
+  onSessionsClick: () => void;
   onRecipeClick: () => void;
   onLabelClick: () => void;
   onAgentResponse: (response: AgentChatResponse) => void;
@@ -931,6 +1004,9 @@ function ChatWorkspace({
           onLabelClick={onLabelClick}
         />
         <div className="chat-session-bar">
+          <button type="button" className="chat-session-new" onClick={onSessionsClick}>
+            Conversas
+          </button>
           <button type="button" className="chat-session-new" onClick={onNewSessionClick}>
             Nova conversa
           </button>

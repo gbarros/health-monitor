@@ -238,6 +238,7 @@ class AgentChatTurn:
     citations: tuple[dict[str, str], ...] = ()
     proposal_id: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    session_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -442,6 +443,7 @@ class HealthMonitorService:
         self._agent_event_sinks: dict[str, Callable[[dict[str, Any]], None]] = {}
         self._active_meal_draft_requests: dict[str, list[str]] = {}
         self.chat_turns: dict[str, AgentChatTurn] = {}
+        self.active_chat_sessions: dict[str, str] = {}
         self.onboarding_turns: dict[str, OnboardingTurn] = {}
         self.review_notes: dict[str, ReviewNote] = {}
         self.memory_notes: dict[str, MemoryNote] = {}
@@ -1898,30 +1900,71 @@ class HealthMonitorService:
     def agent_event_sink_active(self, person_id: str) -> bool:
         return person_id in self._agent_event_sinks
 
-    def start_new_chat_session(self, *, person_id: str) -> AgentChatTurn:
-        """Record a context boundary: the agent stops seeing turns before it."""
+    def start_new_chat_session(self, *, person_id: str) -> str:
+        """Start a fresh conversation session and make it active."""
         self._require_person(person_id)
-        turn = AgentChatTurn(
-            id=self._next_id("agent_chat_turn"),
-            person_id=person_id,
-            agent_run_id="",
-            user_message="",
-            assistant_message="Nova conversa iniciada.",
-            behavior_label="session_boundary",
-            citations=(),
-            proposal_id=None,
-            created_at=datetime.now(timezone.utc),
-        )
-        self.chat_turns[turn.id] = turn
+        session_id = self._next_id("chat_session")
+        self.active_chat_sessions[person_id] = session_id
         self._persist()
-        return turn
+        return session_id
+
+    def activate_chat_session(self, *, person_id: str, session_id: str) -> str:
+        """Reopen a previous conversation session; new turns continue it."""
+        self._require_person(person_id)
+        known = {turn.session_id for turn in self.chat_turns_for_person(person_id)}
+        if session_id not in known and session_id != self.active_chat_sessions.get(person_id):
+            raise ValueError(f"unknown chat session: {session_id}")
+        self.active_chat_sessions[person_id] = session_id
+        self._persist()
+        return session_id
+
+    def chat_sessions_for_person(self, person_id: str) -> list[dict[str, Any]]:
+        self._require_person(person_id)
+        active = self.active_chat_sessions.get(person_id)
+        groups: dict[str, list[AgentChatTurn]] = {}
+        for turn in self.chat_turns_for_person(person_id):
+            groups.setdefault(turn.session_id, []).append(turn)
+        sessions: list[dict[str, Any]] = []
+        for session_id, turns in groups.items():
+            turns.sort(key=lambda turn: turn.created_at)
+            preview = next((t.user_message for t in turns if t.user_message.strip()), "")
+            sessions.append(
+                {
+                    "id": session_id,
+                    "started_at": turns[0].created_at.isoformat(),
+                    "last_at": turns[-1].created_at.isoformat(),
+                    "turn_count": len(turns),
+                    "preview": preview[:120],
+                    "active": session_id == active,
+                }
+            )
+        if active is not None and active not in groups:
+            sessions.append(
+                {
+                    "id": active,
+                    "started_at": None,
+                    "last_at": None,
+                    "turn_count": 0,
+                    "preview": "",
+                    "active": True,
+                }
+            )
+        sessions.sort(key=lambda item: str(item["last_at"] or "9999"), reverse=True)
+        return sessions
+
+    def _active_session_id(self, person_id: str) -> str:
+        session_id = self.active_chat_sessions.get(person_id)
+        if session_id is None:
+            session_id = self._next_id("chat_session")
+            self.active_chat_sessions[person_id] = session_id
+        return session_id
 
     def _current_session_turns(self, person_id: str) -> list[AgentChatTurn]:
+        active = self.active_chat_sessions.get(person_id)
         turns = list(self.chat_turns_for_person(person_id))
-        for index in range(len(turns) - 1, -1, -1):
-            if turns[index].behavior_label == "session_boundary":
-                return turns[index + 1 :]
-        return turns
+        if active is None:
+            return turns
+        return [turn for turn in turns if turn.session_id == active]
 
     def _build_agent_context(self, person_id: str, today: date) -> dict[str, Any]:
         person = self._require_person(person_id)
@@ -4224,6 +4267,7 @@ class HealthMonitorService:
             citations=response.citations,
             proposal_id=response.proposal_id,
             created_at=datetime.now(timezone.utc),
+            session_id=self._active_session_id(run.person_id),
         )
         self.chat_turns[turn.id] = turn
         return turn
@@ -4765,11 +4809,42 @@ class HealthMonitorService:
                 behavior_label="onboarding",
                 proposal_id=turn.proposal_id,
                 created_at=turn.created_at,
+                session_id=self._active_session_id(person_id),
             )
             self.agent_runs[run.id] = run
             self.chat_turns[chat_turn.id] = chat_turn
             migrated_turn_ids.append(chat_turn.id)
         return tuple(migrated_turn_ids)
+
+    def _migrate_legacy_chat_sessions(self) -> None:
+        """Assign session ids to pre-session turns, splitting on old boundary markers."""
+        by_person: dict[str, list[AgentChatTurn]] = {}
+        for turn in self.chat_turns.values():
+            by_person.setdefault(turn.person_id, []).append(turn)
+        for person_id, turns in by_person.items():
+            turns.sort(key=lambda turn: turn.created_at)
+            needs_migration = any(
+                not turn.session_id or turn.behavior_label == "session_boundary" for turn in turns
+            )
+            if not needs_migration:
+                continue
+            counter = 1
+            current = f"legacy_session:{person_id}:{counter}"
+            last_assigned: str | None = None
+            for turn in turns:
+                if turn.behavior_label == "session_boundary":
+                    del self.chat_turns[turn.id]
+                    counter += 1
+                    current = f"legacy_session:{person_id}:{counter}"
+                    continue
+                if turn.session_id:
+                    current = turn.session_id
+                    last_assigned = turn.session_id
+                    continue
+                self.chat_turns[turn.id] = replace(turn, session_id=current)
+                last_assigned = current
+            if person_id not in self.active_chat_sessions and last_assigned is not None:
+                self.active_chat_sessions[person_id] = last_assigned
 
     def _persist(self) -> None:
         if self.repository is not None:
@@ -4795,6 +4870,7 @@ class HealthMonitorService:
                 self.jobs,
                 self.review_notes,
                 self.memory_notes,
+                self.active_chat_sessions,
                 self.attachments,
                 self.recipe_versions,
             )
@@ -4843,6 +4919,7 @@ class HealthMonitorService:
             "memory_notes": [
                 memory_note_to_snapshot(item) for item in self.memory_notes.values()
             ],
+            "active_chat_sessions": dict(self.active_chat_sessions),
             "attachment_objects": [
                 attachment_to_snapshot(item) for item in self.attachments.values()
             ],
@@ -4914,6 +4991,11 @@ class HealthMonitorService:
             item["id"]: memory_note_from_snapshot(item)
             for item in snapshot.get("memory_notes", [])
         }
+        self.active_chat_sessions = {
+            str(key): str(value)
+            for key, value in snapshot.get("active_chat_sessions", {}).items()
+        }
+        self._migrate_legacy_chat_sessions()
         self.attachments = {
             item["id"]: attachment_from_snapshot(item)
             for item in snapshot.get("attachment_objects", [])
@@ -5740,6 +5822,7 @@ def agent_chat_turn_to_snapshot(turn: AgentChatTurn) -> dict[str, Any]:
         "citations": [dict(item) for item in turn.citations],
         "proposal_id": turn.proposal_id,
         "created_at": turn.created_at.isoformat(),
+        "session_id": turn.session_id,
     }
 
 
@@ -5754,6 +5837,7 @@ def agent_chat_turn_from_snapshot(value: dict[str, Any]) -> AgentChatTurn:
         citations=tuple(dict(item) for item in value.get("citations", [])),
         proposal_id=value.get("proposal_id"),
         created_at=datetime.fromisoformat(value["created_at"]),
+        session_id=value.get("session_id", ""),
     )
 
 

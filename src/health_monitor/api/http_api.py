@@ -648,8 +648,19 @@ class HttpApi:
             return HttpResponse(200, memory_note_to_dict(note))
 
         if method == "POST" and path == "/api/agent/new-chat-session":
-            turn = self.service.start_new_chat_session(person_id=body["person_id"])
-            return HttpResponse(201, agent_chat_turn_to_dict(turn))
+            session_id = self.service.start_new_chat_session(person_id=body["person_id"])
+            return HttpResponse(201, {"session_id": session_id})
+
+        if method == "GET" and path == "/api/agent/chat-sessions":
+            sessions = self.service.chat_sessions_for_person(query["person_id"])
+            return HttpResponse(200, sessions)
+
+        if method == "POST" and path == "/api/agent/chat-sessions/activate":
+            session_id = self.service.activate_chat_session(
+                person_id=body["person_id"],
+                session_id=body["session_id"],
+            )
+            return HttpResponse(200, {"session_id": session_id})
 
         if method == "POST" and path == "/api/agent/onboarding-chat":
             turn = self.service.onboarding_chat(
@@ -666,6 +677,8 @@ class HttpApi:
 
         if method == "GET" and path == "/api/agent/chat-history":
             turns = self.service.chat_turns_for_person(query["person_id"])
+            if query.get("session_id"):
+                turns = tuple(turn for turn in turns if turn.session_id == query["session_id"])
             return HttpResponse(200, [agent_chat_turn_to_dict(turn) for turn in turns])
 
         if method == "GET" and path == "/api/proposals":
@@ -1142,6 +1155,7 @@ def agent_chat_turn_to_dict(turn: AgentChatTurn) -> dict[str, Any]:
         "citations": [dict(item) for item in turn.citations],
         "proposal_id": turn.proposal_id,
         "created_at": turn.created_at.isoformat(),
+        "session_id": turn.session_id,
     }
 
 

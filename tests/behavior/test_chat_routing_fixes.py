@@ -433,9 +433,53 @@ class GateThreeFixesTest(unittest.TestCase):
             )
             context = service._build_agent_context(person_id, TODAY)
         self.assertEqual([t["user"] for t in context["recent_chat_turns"]], ["mensagem nova"])
-        # Full history still keeps everything, including the boundary marker.
-        labels = [t.behavior_label for t in service.chat_turns_for_person(person_id)]
-        self.assertIn("session_boundary", labels)
+        # Full history keeps every turn across both sessions.
+        turns = service.chat_turns_for_person(person_id)
+        self.assertEqual(len(turns), 2)
+        self.assertEqual(len({t.session_id for t in turns}), 2)
+        # Reopening the first session brings its turns back into context.
+        sessions = service.chat_sessions_for_person(person_id)
+        old_session = next(s for s in sessions if not s["active"])
+        service.activate_chat_session(person_id=person_id, session_id=old_session["id"])
+        context = service._build_agent_context(person_id, TODAY)
+        self.assertEqual([t["user"] for t in context["recent_chat_turns"]], ["mensagem antiga"])
+
+    def test_legacy_boundary_turns_migrate_to_sessions_on_restore(self) -> None:
+        from health_monitor.application.service import AgentChatTurn
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "state.sqlite3"
+            service, _, person_id = build_service(
+                model_health_checker=lambda: True,
+                repository=SQLiteStateRepository(db_path),
+            )
+            # Simulate the pre-session data shape: plain turns split by a
+            # legacy boundary marker, none carrying a session id.
+            for index, (user, label) in enumerate(
+                [("primeira", "answer_question"), ("", "session_boundary"), ("segunda", "answer_question")]
+            ):
+                turn = AgentChatTurn(
+                    id=f"agent_chat_turn_legacy_{index}",
+                    person_id=person_id,
+                    agent_run_id="",
+                    user_message=user,
+                    assistant_message="ok",
+                    behavior_label=label,
+                )
+                service.chat_turns[turn.id] = turn
+            service._persist()
+
+            restored = HealthMonitorService(repository=SQLiteStateRepository(db_path))
+            turns = restored.chat_turns_for_person(person_id)
+            labels = [t.behavior_label for t in turns]
+            self.assertNotIn("session_boundary", labels)
+            self.assertEqual(len(turns), 2)
+            self.assertTrue(all(t.session_id for t in turns))
+            self.assertEqual(len({t.session_id for t in turns}), 2)
+            sessions = restored.chat_sessions_for_person(person_id)
+            self.assertEqual(len(sessions), 2)
+            # Active session is the most recent segment.
+            self.assertTrue(next(s for s in sessions if s["active"])["preview"].startswith("segunda"))
 
     def test_memory_note_proposal_roundtrip_and_context_injection(self) -> None:
         service, _, person_id = build_service(model_health_checker=lambda: True)
