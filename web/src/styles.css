@@ -686,6 +686,39 @@ h3 {
   margin-right: 12px;
 }
 
+.thinking-box {
+  width: min(920px, 100%);
+  margin: 2px auto 6px;
+}
+
+.thinking-box__toggle {
+  min-height: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  padding: 2px 0;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.thinking-box__body {
+  max-height: 180px;
+  overflow-y: auto;
+  border-left: 3px solid var(--border);
+  margin-top: 4px;
+  padding: 4px 12px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .draft-dock {
   display: grid;
   gap: 12px;

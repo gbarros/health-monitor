@@ -110,21 +110,34 @@ export function useAgentRuntime(context: RuntimeContext) {
               finalResponse = event.data;
               continue;
             }
+            const thinking = joinDeltaText(events, "thinking_delta");
             const partial = streamingReply(events);
+            const content: AssistantContentPart[] = [];
+            if (thinking) {
+              content.push(thinkingPart(thinking, false));
+            }
             if (partial) {
-              yield assistantText(partial);
+              content.push({ type: "text", text: partial });
+            }
+            if (content.length) {
+              yield { content };
             }
           }
           if (finalResponse == null) {
             throw new Error("Resposta final ausente no stream do agente.");
           }
           onAgentResponse(finalResponse);
+          const finalThinking = joinDeltaText(events, "thinking_delta");
+          const finalContent: AssistantContentPart[] = [];
+          if (finalThinking) {
+            finalContent.push(thinkingPart(finalThinking, true));
+          }
+          finalContent.push({ type: "text", text: chatReply(finalResponse, events) });
           if (finalResponse.proposal) {
             onProposal(finalResponse.proposal);
-            yield completeResult(assistantProposal(finalResponse.proposal, chatReply(finalResponse, events)));
-            return;
+            finalContent.push(proposalPart(finalResponse.proposal));
           }
-          yield completeResult(assistantText(chatReply(finalResponse, events)));
+          yield completeResult({ content: finalContent });
           return;
         } catch (error) {
           if (error instanceof ApiError && error.type === "model_unavailable") {
@@ -186,20 +199,28 @@ function completeResult(result: ChatModelRunResult): ChatModelRunResult {
   };
 }
 
-function assistantProposal(proposal: Proposal, text: string): ChatModelRunResult {
+type AssistantContentPart = ChatModelRunResult["content"] extends readonly (infer P)[] | undefined ? P : never;
+
+function proposalPart(proposal: Proposal): AssistantContentPart {
   const proposalJson = JSON.parse(JSON.stringify(proposal)) as ReadonlyJSONObject;
   return {
-    content: [
-      { type: "text", text },
-      {
-        type: "tool-call",
-        toolCallId: `proposal-${proposal.id}`,
-        toolName: "draft_proposal",
-        args: { proposal: proposalJson },
-        argsText: JSON.stringify({ proposal: proposalJson }),
-        result: { proposal },
-      },
-    ],
+    type: "tool-call",
+    toolCallId: `proposal-${proposal.id}`,
+    toolName: "draft_proposal",
+    args: { proposal: proposalJson },
+    argsText: JSON.stringify({ proposal: proposalJson }),
+    result: { proposal },
+  };
+}
+
+function thinkingPart(text: string, done: boolean): AssistantContentPart {
+  return {
+    type: "tool-call",
+    toolCallId: "agent-thinking",
+    toolName: "agent_thinking",
+    args: { text, done },
+    argsText: JSON.stringify({ text, done }),
+    result: { text, done },
   };
 }
 
@@ -233,13 +254,8 @@ function chatReply(response: AgentChatResponse, events: readonly AgentChatStream
 }
 
 function streamingReply(events: readonly AgentChatStreamEvent[]): string {
+  // Thinking is rendered separately as a collapsible part, not inline text.
   const blocks: string[] = [];
-  const thinking = joinDeltaText(events, "thinking_delta");
-  if (thinking) {
-    // Keep only the live tail so the bubble doesn't grow unbounded.
-    const tail = thinking.length > 280 ? `…${thinking.slice(-280)}` : thinking;
-    blocks.push(`💭 _${tail.replaceAll("\n", " ").trim()}_`);
-  }
   const lines = toolProgressLines(events);
   if (lines.length) {
     blocks.push(lines.join("\n"));
