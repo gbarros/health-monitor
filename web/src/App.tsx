@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ReadonlyJSONObject } from "assistant-stream/utils";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { NavLink, useLocation } from "react-router-dom";
-import { PanelLeftCloseIcon, PanelLeftOpenIcon, SquarePenIcon } from "lucide-react";
+import { PanelLeftCloseIcon, PanelLeftOpenIcon, SquarePenIcon, WrenchIcon } from "lucide-react";
 import {
   ApiError,
   confirmProposal,
@@ -1015,6 +1015,7 @@ function ChatWorkspace({
         onReject={onRejectProposal}
         onUpdateEntry={onUpdateProposalEntry}
       />
+      <ToolTraceRenderer />
       <section className="chat-workspace" aria-label="Conversa">
         <SessionSidebar
           sessions={sessions}
@@ -1658,6 +1659,28 @@ function foodVersionRow(item: FoodResponse): string[] {
 
 function roundOne(value?: number | null): number {
   return Math.round((value ?? 0) * 10) / 10;
+}
+
+function ToolTraceRenderer() {
+  const tool = useMemo(
+    () => ({
+      toolName: "agent_tool_trace",
+      display: "standalone" as const,
+      render: ({ args }: { args?: { name?: string; status?: string } }) => {
+        const status = String(args?.status ?? "");
+        return (
+          <div className={`tool-trace-chip${status === "failed" ? " is-failed" : ""}`}>
+            <WrenchIcon size={12} aria-hidden="true" />
+            <span>{String(args?.name ?? "ferramenta")}</span>
+            {status ? <span className="tool-trace-chip__status">{status}</span> : null}
+          </div>
+        );
+      },
+    }),
+    [],
+  );
+  useAssistantToolUI(tool);
+  return null;
 }
 
 function ProposalToolRenderer({

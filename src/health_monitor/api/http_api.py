@@ -648,7 +648,8 @@ class HttpApi:
                     return
                 response = result["response"]
                 final = agent_chat_response_to_dict(response, self.service)
-                yield {"event": "text_delta", "data": {"text": response.message}}
+                # No trailing text lump: streamed deltas already carried any
+                # incremental text, and `final` carries the full message.
                 yield {"event": "final", "data": final}
 
             return HttpStreamResponse(

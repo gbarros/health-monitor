@@ -37,8 +37,7 @@ class FoodEvidenceUiTest(unittest.TestCase):
         self.assertIn("AgentChatStreamEvent", api)
         self.assertIn('"run_started"', api)
         self.assertIn("events.push(event)", api)
-        self.assertIn("toolProgressLines", runtime)
-        self.assertIn("Ferramentas consultadas", runtime)
+        self.assertIn("agent_tool_trace", runtime)
         self.assertIn("intent: input.intent", api)
         self.assertIn("attachment_ids", api)
 

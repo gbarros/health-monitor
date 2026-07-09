@@ -2447,8 +2447,8 @@ class HttpApiContractTest(unittest.TestCase):
         self.assertEqual(first, {"event": "run_started", "data": {"status": "started"}})
         self.assertEqual(api.service.chat_turns_for_person(person["id"]), ())
         events = (first, *tuple(event_iter))
-        self.assertEqual([event["event"] for event in events], ["run_started", "text_delta", "final"])
-        self.assertEqual(events[1]["data"]["text"], events[-1]["data"]["message"])
+        self.assertEqual([event["event"] for event in events], ["run_started", "final"])
+        self.assertTrue(events[-1]["data"]["message"])
         self.assertEqual(len(api.service.chat_turns_for_person(person["id"])), 1)
 
     def test_agent_chat_stream_emits_error_event_instead_of_aborting_socket(self) -> None:
@@ -2518,7 +2518,7 @@ class HttpApiContractTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         events = tuple(response.iter_events())
-        self.assertEqual([event["event"] for event in events], ["run_started", "text_delta", "final"])
+        self.assertEqual([event["event"] for event in events], ["run_started", "final"])
         self.assertEqual(events[0]["data"]["status"], "started")
         self.assertEqual(api.service.chat_turns_for_person(person["id"])[0].user_message, "Pode resumir meu dia?")
 

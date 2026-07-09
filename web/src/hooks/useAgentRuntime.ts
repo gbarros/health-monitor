@@ -19,7 +19,6 @@ import {
   streamAgentChatEvents,
   uploadDataUrlAttachment,
 } from "../api";
-import type { AgentChatStreamEvent } from "../api";
 import type { AgentChatResponse, AgentSettings, BackgroundJob, Proposal } from "../types";
 
 type RuntimeContext = {
@@ -95,7 +94,11 @@ export function useAgentRuntime(context: RuntimeContext) {
             return;
           }
 
-          const events: AgentChatStreamEvent[] = [];
+          // The assistant message is an ordered transcript of the run:
+          // thought blocks, in-between messages, and tool meta lines stay in
+          // sequence (texting style) instead of collapsing into one reply.
+          const segments: StreamSegment[] = [];
+          let toolCount = 0;
           let finalResponse: AgentChatResponse | null = null;
           for await (const event of streamAgentChatEvents({
             personId,
@@ -105,7 +108,6 @@ export function useAgentRuntime(context: RuntimeContext) {
             attachmentIds,
             signal: options.abortSignal,
           })) {
-            events.push(event);
             if (event.event === "error" && isObject(event.data)) {
               throw new ApiError(
                 String(event.data["message"] ?? "Erro do agente"),
@@ -117,29 +119,49 @@ export function useAgentRuntime(context: RuntimeContext) {
               finalResponse = event.data;
               continue;
             }
-            const thinking = joinDeltaText(events, "thinking_delta");
-            const partial = streamingReply(events);
-            const content: AssistantContentPart[] = [];
-            if (thinking) {
-              content.push(reasoningPart(thinking));
+            if ((event.event === "thinking_delta" || event.event === "text_delta") && isObject(event.data)) {
+              const kind = event.event === "thinking_delta" ? ("reasoning" as const) : ("text" as const);
+              const delta = String(event.data["text"] ?? "");
+              const last = segments.at(-1);
+              if (last && last.kind === kind) {
+                last.text += delta;
+              } else if (delta) {
+                segments.push({ kind, text: delta });
+              }
+            } else if (event.event === "tool_call" && isObject(event.data)) {
+              const name = String(event.data["name"] ?? "ferramenta");
+              // The wrap-up record of the whole run is bookkeeping, not a tool.
+              if (name !== "pydantic_ai_chat") {
+                segments.push({
+                  kind: "tool",
+                  id: toolCount++,
+                  name: name.replaceAll("_", " "),
+                  status: String(event.data["status"] ?? ""),
+                });
+              }
+            } else {
+              continue;
             }
-            if (partial) {
-              content.push({ type: "text", text: partial });
-            }
-            if (content.length) {
-              yield { content };
+            if (segments.length) {
+              yield { content: segmentsToParts(segments) };
             }
           }
           if (finalResponse == null) {
             throw new Error("Resposta final ausente no stream do agente.");
           }
           onAgentResponse(finalResponse);
-          const finalThinking = joinDeltaText(events, "thinking_delta");
-          const finalContent: AssistantContentPart[] = [];
-          if (finalThinking) {
-            finalContent.push(reasoningPart(finalThinking));
+          const streamedText = segments
+            .filter((segment) => segment.kind === "text")
+            .map((segment) => segment.text)
+            .join("\n");
+          const finalMessage = finalResponse.message.trim();
+          if (finalMessage && !streamedText.includes(finalMessage)) {
+            segments.push({ kind: "text", text: finalResponse.message });
           }
-          finalContent.push({ type: "text", text: chatReply(finalResponse, events) });
+          if (finalResponse.citations.length) {
+            segments.push({ kind: "text", text: `Citações: ${finalResponse.citations.length}` });
+          }
+          const finalContent = segmentsToParts(segments);
           if (finalResponse.proposal) {
             onProposal(finalResponse.proposal);
             finalContent.push(proposalPart(finalResponse.proposal));
@@ -220,8 +242,28 @@ function proposalPart(proposal: Proposal): AssistantContentPart {
   };
 }
 
-function reasoningPart(text: string): AssistantContentPart {
-  return { type: "reasoning", text };
+type StreamSegment =
+  | { kind: "reasoning"; text: string }
+  | { kind: "text"; text: string }
+  | { kind: "tool"; id: number; name: string; status: string };
+
+function segmentsToParts(segments: StreamSegment[]): AssistantContentPart[] {
+  return segments.map((segment) => {
+    if (segment.kind === "reasoning") {
+      return { type: "reasoning", text: segment.text } as AssistantContentPart;
+    }
+    if (segment.kind === "text") {
+      return { type: "text", text: segment.text } as AssistantContentPart;
+    }
+    return {
+      type: "tool-call",
+      toolCallId: `trace-${segment.id}`,
+      toolName: "agent_tool_trace",
+      args: { name: segment.name, status: segment.status },
+      argsText: JSON.stringify({ name: segment.name, status: segment.status }),
+      result: { displayed: true },
+    } as AssistantContentPart;
+  });
 }
 
 function textFromContent(content: readonly ThreadUserMessagePart[]): string {
@@ -236,92 +278,12 @@ function messageHasUploadableAttachment(content: readonly ThreadUserMessagePart[
   return content.some((part) => part.type === "image" || part.type === "file");
 }
 
-function chatReply(response: AgentChatResponse, events: readonly AgentChatStreamEvent[] = []): string {
-  const lines = toolProgressLines(events);
-  if (lines.length) {
-    lines.push("");
-  }
-  lines.push(response.message);
-  if (response.proposal) {
-    lines.push("");
-    lines.push(proposalReply(response.proposal, "Proposal drafted."));
-  }
-  if (response.citations.length) {
-    lines.push("");
-    lines.push(`Citations: ${response.citations.length}`);
-  }
-  return lines.join("\n");
-}
-
-function streamingReply(events: readonly AgentChatStreamEvent[]): string {
-  // Thinking is rendered separately as a collapsible part, not inline text.
-  const blocks: string[] = [];
-  const lines = toolProgressLines(events);
-  if (lines.length) {
-    blocks.push(lines.join("\n"));
-  }
-  const text = joinDeltaText(events, "text_delta");
-  if (text) {
-    blocks.push(text);
-  }
-  return blocks.join("\n\n");
-}
-
-function joinDeltaText(events: readonly AgentChatStreamEvent[], kind: "text_delta" | "thinking_delta"): string {
-  return events
-    .filter((event): event is AgentChatStreamEvent & { data: Record<string, unknown> } => event.event === kind && isObject(event.data))
-    .map((event) => String(event.data["text"] ?? ""))
-    .join("");
-}
-
-function toolProgressLines(events: readonly AgentChatStreamEvent[]): string[] {
-  const toolCalls = events.filter(
-    (event): event is AgentChatStreamEvent & { data: Record<string, unknown> } =>
-      event.event === "tool_call" && isObject(event.data),
-  );
-  if (!toolCalls.length) {
-    return [];
-  }
-  return [
-    "Ferramentas consultadas:",
-    ...toolCalls.map((event) => {
-      const name = String(event.data["name"] ?? "tool").replaceAll("_", " ");
-      const status = String(event.data["status"] ?? "?");
-      return `- ${name}: ${status}`;
-    }),
-  ];
-}
-
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
 function isAgentChatResponse(value: unknown): value is AgentChatResponse {
   return isObject(value) && typeof value["run_id"] === "string" && typeof value["message"] === "string";
-}
-
-function proposalReply(proposal: Proposal, intro: string): string {
-  const totals = proposal.totals;
-  const totalsText = totals
-    ? [
-        totals.calories_kcal != null ? `${totals.calories_kcal} kcal` : null,
-        totals.protein_g != null ? `${totals.protein_g}g protein` : null,
-        totals.carbs_g != null ? `${totals.carbs_g}g carbs` : null,
-        totals.fat_g != null ? `${totals.fat_g}g fat` : null,
-      ]
-        .filter(Boolean)
-        .join(", ")
-    : "";
-  return [
-    intro,
-    proposal.summary,
-    `Type: ${proposal.proposal_type}`,
-    `Status: ${proposal.status}`,
-    totalsText ? `Totals: ${totalsText}` : null,
-    "Review it in the proposal panel before anything durable is applied.",
-  ]
-    .filter(Boolean)
-    .join("\n");
 }
 
 async function uploadMessageAttachments(input: {
