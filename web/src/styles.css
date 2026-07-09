@@ -594,138 +594,248 @@ h3 {
   min-height: 0;
   height: 100%;
   overflow: hidden;
-  padding: 4px 16px;
-  --aui-thread-max-width: min(920px, calc(100vw - 60px));
-}
-
-.chat-thread-shell [data-aui-thread-root],
-.chat-thread-shell [data-assistant-ui-thread-root] {
-  height: 100%;
 }
 
 .chat-thread-shell .aui-thread-root {
-  background: transparent;
+  border-radius: var(--radius);
 }
 
-.chat-thread-shell .aui-thread-viewport {
-  align-items: stretch;
-  justify-content: flex-start;
-  gap: 2px;
-  padding: 8px 0 0;
+.draft-dock {
+  flex: 0 1 auto;
+  min-height: 140px;
 }
 
-.chat-thread-shell .aui-thread-welcome-root {
-  flex-grow: 0;
+.page-grid,
+.settings-page,
+.data-page {
+  width: min(1120px, 100%);
+  display: grid;
+  gap: 14px;
   margin: 0 auto;
-  padding: 10px 0 4px;
+  padding: 12px;
 }
 
-.chat-thread-shell .aui-thread-welcome-center {
-  align-items: flex-start;
-  justify-content: flex-start;
+.data-range-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(160px, 220px));
+  gap: 12px;
+  align-items: end;
 }
 
-.chat-thread-shell .aui-thread-welcome-message {
-  margin-top: 10px;
-  color: var(--muted);
+.day-card {
+  display: grid;
+  gap: 12px;
+  max-height: 38dvh;
+  overflow-y: auto;
+  padding: 12px;
 }
 
-.chat-thread-shell .aui-thread-viewport-footer {
-  width: min(920px, 100%);
-  max-width: none;
-  margin: auto auto 0;
-  padding: 10px 0 8px;
-  background: linear-gradient(180deg, rgba(238, 246, 244, 0), var(--bg) 22%);
-}
-
-.chat-thread-shell .aui-composer-root {
-  min-height: 68px;
-  border-color: var(--border-strong);
-  background: var(--surface);
-  box-shadow: 0 10px 30px rgba(20, 35, 34, 0.1);
-}
-
-.chat-thread-shell .aui-composer-input {
-  min-height: 52px;
-  font-size: 16px;
-  line-height: 1.45;
-}
-
-.chat-thread-shell .aui-user-message-root,
-.chat-thread-shell .aui-assistant-message-root {
-  width: min(920px, 100%);
-  max-width: none;
-  margin-inline: auto;
-  padding-block: 8px;
-}
-
-.chat-thread-shell .aui-user-message-root {
+.day-card-header,
+.section-heading,
+.meal-heading,
+.weight-strip {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
 }
 
-.chat-thread-shell .aui-user-message-content {
-  max-width: min(680px, 82%);
-  border: 1px solid #dce5e3;
-  border-radius: 18px;
-  background: #eef2f2;
-  padding: 10px 14px;
+.compact-button {
+  min-height: 36px;
+  padding-inline: 10px;
+}
+
+.day-card-skeleton,
+.empty-copy {
+  color: var(--muted);
+  font-size: 14px;
   line-height: 1.45;
 }
 
-.chat-thread-shell .aui-assistant-message-content {
-  max-width: min(760px, calc(100% - 64px));
-  margin: 0;
-  color: var(--text);
-  font-size: 16px;
-  line-height: 1.6;
+.summary-strip {
+  display: grid;
+  gap: 10px;
 }
 
-.chat-thread-shell .aui-avatar-root,
-.chat-thread-shell .aui-assistant-avatar {
-  margin-right: 12px;
+.summary-primary {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
 }
 
-.field-note {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
+.summary-primary strong {
+  font-size: 26px;
+}
+
+.summary-primary span,
+.remaining-line,
+.weight-strip,
+.meal-entry span,
+.entry-meta span,
+.week-placeholder p:last-child {
   color: var(--muted);
   font-size: 13px;
 }
 
-.session-list {
+.macro-grid {
   display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
-  max-height: 60dvh;
-  overflow-y: auto;
 }
 
-.session-row {
+.macro-grid span {
+  min-width: 0;
   display: grid;
   gap: 2px;
-  text-align: left;
-  min-height: 0;
-  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-soft);
+  padding: 8px;
+}
+
+.macro-grid strong,
+.macro-grid small {
+  overflow-wrap: anywhere;
+}
+
+.meal-groups {
+  display: grid;
+  gap: 10px;
+}
+
+.meal-group {
+  display: grid;
+  gap: 8px;
+}
+
+.meal-heading span {
+  color: var(--muted);
+  font-weight: 750;
+}
+
+.meal-entry-list {
+  display: grid;
+  gap: 6px;
+}
+
+.meal-entry {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-soft);
+  padding: 9px;
+}
+
+.meal-entry > div:first-child,
+.entry-meta {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.entry-meta {
+  justify-items: end;
+}
+
+.confidence-badge {
+  width: fit-content;
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0 8px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.confidence-exact {
+  background: #e8f5ec;
+  color: var(--success);
+}
+
+.confidence-estimate {
+  background: #fff7db;
+  color: var(--warning);
+}
+
+.confidence-range {
+  background: #edf3ff;
+  color: #1d4ed8;
+}
+
+.quick-action-row {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.day-summary-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface);
+  padding: 8px 10px;
 }
 
-.session-row strong {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.day-summary-strip div:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
 }
 
-.session-row span {
+.day-summary-strip strong {
+  font-size: 16px;
+}
+
+.day-summary-strip span {
   color: var(--muted);
   font-size: 13px;
 }
 
-.session-row.is-active {
-  border-color: var(--primary);
-  background: #e6f4f1;
+.compact-day-nav button {
+  min-height: 36px;
+}
+
+.quick-action-row button {
+  min-width: fit-content;
+  border-radius: 999px;
+  font-weight: 750;
+}
+
+.chat-session-bar {
+  display: flex;
+  justify-content: flex-end;
+  flex: 0 0 auto;
+}
+
+.chat-session-new {
+  border-radius: 999px;
+  font-size: 13px;
+  min-height: 0;
+  height: 28px;
+  line-height: 1;
+  padding: 0 12px;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--border);
+}
+
+.chat-thread-shell {
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.chat-thread-shell .aui-thread-root {
+  border-radius: var(--radius);
 }
 
 .thinking-box {

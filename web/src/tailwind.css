@@ -1,0 +1,57 @@
+/* No preflight: the rest of the app has its own base styles. */
+@layer theme, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+@import "tw-animate-css";
+@import "tw-shimmer";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --hm-background: #f4f7f6;
+  --hm-foreground: #17322e;
+  --hm-card: #ffffff;
+  --hm-card-foreground: #17322e;
+  --hm-popover: #ffffff;
+  --hm-popover-foreground: #17322e;
+  --hm-primary: #0f766e;
+  --hm-primary-foreground: #ffffff;
+  --hm-secondary: #e6f4f1;
+  --hm-secondary-foreground: #0f5132;
+  --hm-muted: #eef2f2;
+  --hm-muted-foreground: #5b6b68;
+  --hm-accent: #e6f4f1;
+  --hm-accent-foreground: #0f5132;
+  --hm-destructive: #dc2626;
+  --hm-destructive-foreground: #ffffff;
+  --hm-border: #dce5e3;
+  --hm-input: #dce5e3;
+  --hm-ring: #0f766e;
+  --hm-radius: 0.625rem;
+}
+
+@theme inline {
+  --color-background: var(--hm-background);
+  --color-foreground: var(--hm-foreground);
+  --color-card: var(--hm-card);
+  --color-card-foreground: var(--hm-card-foreground);
+  --color-popover: var(--hm-popover);
+  --color-popover-foreground: var(--hm-popover-foreground);
+  --color-primary: var(--hm-primary);
+  --color-primary-foreground: var(--hm-primary-foreground);
+  --color-secondary: var(--hm-secondary);
+  --color-secondary-foreground: var(--hm-secondary-foreground);
+  --color-muted: var(--hm-muted);
+  --color-muted-foreground: var(--hm-muted-foreground);
+  --color-accent: var(--hm-accent);
+  --color-accent-foreground: var(--hm-accent-foreground);
+  --color-destructive: var(--hm-destructive);
+  --color-destructive-foreground: var(--hm-destructive-foreground);
+  --color-border: var(--hm-border);
+  --color-input: var(--hm-input);
+  --color-ring: var(--hm-ring);
+  --radius-sm: calc(var(--hm-radius) - 4px);
+  --radius-md: calc(var(--hm-radius) - 2px);
+  --radius-lg: var(--hm-radius);
+  --radius-xl: calc(var(--hm-radius) + 4px);
+}

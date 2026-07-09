@@ -1004,7 +1004,6 @@ function ChatWorkspace({
         onReject={onRejectProposal}
         onUpdateEntry={onUpdateProposalEntry}
       />
-      <ThinkingToolRenderer />
       <section className="chat-column" aria-label="Conversa">
         <DaySummaryStrip personId={personId} day={today} onDayChange={onDayChange} />
         <QuickActionRow
@@ -1563,56 +1562,6 @@ function foodVersionRow(item: FoodResponse): string[] {
 
 function roundOne(value?: number | null): number {
   return Math.round((value ?? 0) * 10) / 10;
-}
-
-function ThinkingToolRenderer() {
-  const tool = useMemo(
-    () => ({
-      toolName: "agent_thinking",
-      display: "standalone" as const,
-      render: ({ args }: { args?: { text?: string; done?: boolean } }) => {
-        const text = String(args?.text ?? "");
-        if (!text) {
-          return null;
-        }
-        return <ThinkingBox text={text} done={Boolean(args?.done)} />;
-      },
-    }),
-    [],
-  );
-  useAssistantToolUI(tool);
-  return null;
-}
-
-function ThinkingBox({ text, done }: { text: string; done: boolean }) {
-  const [open, setOpen] = useState(!done);
-  const wasDone = useRef(done);
-  const bodyRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    // Collapse once when the run finishes; afterwards the user is in control.
-    if (done && !wasDone.current) {
-      setOpen(false);
-    }
-    wasDone.current = done;
-  }, [done]);
-  useEffect(() => {
-    // Follow the newest tokens; text only appends, so nothing shifts.
-    if (!done && open && bodyRef.current) {
-      bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
-    }
-  }, [text, done, open]);
-  return (
-    <div className={`thinking-box${done ? " is-done" : ""}`}>
-      <button type="button" className="thinking-box__toggle" onClick={() => setOpen((value) => !value)}>
-        <span aria-hidden="true">{open ? "▾" : "▸"}</span> 💭 {done ? "Raciocínio do modelo" : "Pensando…"}
-      </button>
-      {open ? (
-        <div ref={bodyRef} className="thinking-box__body">
-          {text}
-        </div>
-      ) : null}
-    </div>
-  );
 }
 
 function ProposalToolRenderer({

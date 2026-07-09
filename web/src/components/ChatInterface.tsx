@@ -1,78 +1,69 @@
-import { Thread } from "@assistant-ui/react-ui";
-import { MarkdownTextPrimitive } from "@assistant-ui/react-markdown";
-import "@assistant-ui/react-ui/styles/index.css";
-import "@assistant-ui/react-markdown/styles/dot.css";
+import { createContext, useContext } from "react";
+import { useComposerRuntime } from "@assistant-ui/react";
+import { Thread, ThreadUIConfigContext } from "@/components/assistant-ui/thread";
 
-function MarkdownText() {
-  return <MarkdownTextPrimitive />;
-}
+type ChatSuggestion = { text: string; prompt: string };
 
 type ChatInterfaceProps = {
   welcomeMessage?: string;
-  suggestions?: { text: string; prompt: string }[];
+  suggestions?: ChatSuggestion[];
   placeholder?: string;
   allowAttachments?: boolean;
 };
 
+const DEFAULT_SUGGESTIONS: ChatSuggestion[] = [
+  { text: "Registrar refeição", prompt: "Café da manhã:\n100g iogurte\n30g whey\n1 banana" },
+  { text: "Revisar o dia", prompt: "Como está meu dia até agora?" },
+];
+
+const WelcomeContext = createContext<{ message: string; suggestions: ChatSuggestion[] }>({
+  message: "",
+  suggestions: [],
+});
+
 export function ChatInterface({
   welcomeMessage = "Pode escrever como você escreveria no ChatGPT: refeição, dúvida, correção, rótulo ou ajuste de metas.",
-  suggestions = [
-    { text: "Registrar refeição", prompt: "Café da manhã:\n100g iogurte\n30g whey\n1 banana" },
-    { text: "Revisar o dia", prompt: "Como está meu dia até agora?" },
-  ],
+  suggestions = DEFAULT_SUGGESTIONS,
   placeholder = "Escreva uma refeição, pergunta, correção ou cole uma tabela...",
   allowAttachments = true,
 }: ChatInterfaceProps) {
   return (
     <div className="chat-thread-shell">
-      <Thread
-        assistantAvatar={{ fallback: "HM" }}
-        welcome={{
-          message: welcomeMessage,
-          suggestions,
-        }}
-        composer={{ allowAttachments }}
-        userMessage={{ allowEdit: false }}
-        assistantMessage={{
-          allowReload: false,
-          allowCopy: true,
-          allowSpeak: false,
-          allowFeedbackPositive: false,
-          allowFeedbackNegative: false,
-          components: { Text: MarkdownText },
-        }}
-        branchPicker={{ allowBranchPicker: false }}
-        strings={{
-          welcome: { message: "Como posso ajudar com o diário hoje?" },
-          thread: { scrollToBottom: { tooltip: "Ir para o final" } },
-          composer: {
-            input: { placeholder },
-            send: { tooltip: "Enviar" },
-            cancel: { tooltip: "Cancelar" },
-            addAttachment: { tooltip: "Anexar foto ou arquivo" },
-            removeAttachment: { tooltip: "Remover anexo" },
-          },
-          assistantMessage: {
-            copy: { tooltip: "Copiar resposta" },
-            reload: { tooltip: "Gerar novamente" },
-            speak: { tooltip: "Ler resposta", stop: { tooltip: "Parar leitura" } },
-            feedback: {
-              positive: { tooltip: "Resposta útil" },
-              negative: { tooltip: "Resposta ruim" },
-            },
-          },
-          userMessage: { edit: { tooltip: "Editar mensagem" } },
-          branchPicker: {
-            previous: { tooltip: "Resposta anterior" },
-            next: { tooltip: "Próxima resposta" },
-          },
-          editComposer: {
-            send: { label: "Salvar" },
-            cancel: { label: "Cancelar" },
-          },
-          code: { header: { copy: { tooltip: "Copiar código" } } },
-        }}
-      />
+      <ThreadUIConfigContext.Provider value={{ placeholder, allowAttachments }}>
+        <WelcomeContext.Provider value={{ message: welcomeMessage, suggestions }}>
+          <Thread components={{ Welcome: ChatWelcome }} />
+        </WelcomeContext.Provider>
+      </ThreadUIConfigContext.Provider>
     </div>
+  );
+}
+
+function ChatWelcome() {
+  const { message, suggestions } = useContext(WelcomeContext);
+  return (
+    <div className="mb-6 flex flex-col items-center gap-4 px-4 text-center">
+      <h1 className="fade-in slide-in-from-bottom-1 animate-in fill-mode-both text-xl font-semibold duration-200">
+        Como posso ajudar com o diário hoje?
+      </h1>
+      <p className="text-muted-foreground max-w-md text-sm">{message}</p>
+      <div className="flex flex-wrap items-center justify-center gap-2">
+        {suggestions.map((suggestion) => (
+          <WelcomeSuggestion key={suggestion.text} suggestion={suggestion} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function WelcomeSuggestion({ suggestion }: { suggestion: ChatSuggestion }) {
+  const composer = useComposerRuntime();
+  return (
+    <button
+      type="button"
+      className="text-foreground hover:bg-muted border-border/60 cursor-pointer rounded-full border px-3.5 py-1.5 text-sm whitespace-nowrap transition-colors"
+      onClick={() => composer.setText(suggestion.prompt)}
+    >
+      {suggestion.text}
+    </button>
   );
 }

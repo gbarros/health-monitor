@@ -114,7 +114,7 @@ export function useAgentRuntime(context: RuntimeContext) {
             const partial = streamingReply(events);
             const content: AssistantContentPart[] = [];
             if (thinking) {
-              content.push(thinkingPart(thinking, false));
+              content.push(reasoningPart(thinking));
             }
             if (partial) {
               content.push({ type: "text", text: partial });
@@ -130,7 +130,7 @@ export function useAgentRuntime(context: RuntimeContext) {
           const finalThinking = joinDeltaText(events, "thinking_delta");
           const finalContent: AssistantContentPart[] = [];
           if (finalThinking) {
-            finalContent.push(thinkingPart(finalThinking, true));
+            finalContent.push(reasoningPart(finalThinking));
           }
           finalContent.push({ type: "text", text: chatReply(finalResponse, events) });
           if (finalResponse.proposal) {
@@ -213,15 +213,8 @@ function proposalPart(proposal: Proposal): AssistantContentPart {
   };
 }
 
-function thinkingPart(text: string, done: boolean): AssistantContentPart {
-  return {
-    type: "tool-call",
-    toolCallId: "agent-thinking",
-    toolName: "agent_thinking",
-    args: { text, done },
-    argsText: JSON.stringify({ text, done }),
-    result: { text, done },
-  };
+function reasoningPart(text: string): AssistantContentPart {
+  return { type: "reasoning", text };
 }
 
 function textFromContent(content: readonly ThreadUserMessagePart[]): string {
