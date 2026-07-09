@@ -1989,11 +1989,18 @@ function LabelScanModal({
   const [barcode, setBarcode] = useState("");
   const [tableText, setTableText] = useState("");
   const [files, setFiles] = useState<File[]>([]);
+  const appendFiles = (incoming: FileList | null) => {
+    if (incoming?.length) {
+      setFiles((current) => [...current, ...Array.from(incoming)]);
+    }
+  };
   const text = [
     "Rótulo:",
     product.trim() ? `Produto: ${product.trim()}` : "",
     barcode.trim() ? `Código de barras: ${barcode.trim()}` : "",
-    files.length ? `${files.length} foto(s) anexada(s).` : "",
+    files.length
+      ? `${files.length} foto(s) anexada(s) — podem conter a tabela nutricional e/ou o código de barras.`
+      : "",
     tableText.trim(),
   ]
     .filter(Boolean)
@@ -2020,21 +2027,49 @@ function LabelScanModal({
             Fechar
           </button>
         </div>
+        <div className="field">
+          <span>Fotos — tabela nutricional e/ou código de barras</span>
+          <div className="modal-grid two">
+            <label className="field">
+              <span>Tirar foto</span>
+              <input
+                type="file"
+                accept="image/*"
+                capture="environment"
+                onChange={(event) => {
+                  appendFiles(event.target.files);
+                  event.target.value = "";
+                }}
+              />
+            </label>
+            <label className="field">
+              <span>Da galeria</span>
+              <input
+                type="file"
+                accept="image/*"
+                multiple
+                onChange={(event) => {
+                  appendFiles(event.target.files);
+                  event.target.value = "";
+                }}
+              />
+            </label>
+          </div>
+          {files.length ? (
+            <span className="field-note">
+              {files.length} foto(s) anexada(s).{" "}
+              <button type="button" className="compact-button" onClick={() => setFiles([])}>
+                Limpar
+              </button>
+            </span>
+          ) : null}
+        </div>
         <label className="field">
-          <span>Fotos do rótulo</span>
-          <input
-            type="file"
-            accept="image/*"
-            multiple
-            onChange={(event) => setFiles(Array.from(event.target.files ?? []))}
-          />
-        </label>
-        <label className="field">
-          <span>Produto</span>
+          <span>Produto (opcional)</span>
           <input value={product} onChange={(event) => setProduct(event.target.value)} placeholder="Iogurte Batavo" />
         </label>
         <label className="field">
-          <span>Código de barras</span>
+          <span>Código de barras (se preferir digitar)</span>
           <input inputMode="numeric" value={barcode} onChange={(event) => setBarcode(event.target.value)} />
         </label>
         <label className="field">
