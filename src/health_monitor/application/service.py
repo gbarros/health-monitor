@@ -4335,7 +4335,7 @@ class HealthMonitorService:
             aliases=[food_name.casefold()],
             barcode=payload.get("barcode") if payload.get("barcode") is None else str(payload["barcode"]),
             serving_size_g=float(payload["serving_size_g"]),
-            confidence=float(payload.get("confidence", 1.0)),
+            confidence=float(payload.get("confidence") or 1.0),
             food_id=requested_food_id,
             version_id=str(payload["food_version_id"]) if payload.get("food_version_id") is not None else None,
         )
@@ -4416,7 +4416,7 @@ class HealthMonitorService:
             aliases=[food_name.casefold()],
             barcode=None,
             serving_size_g=None,
-            confidence=float(payload.get("confidence", 1.0)),
+            confidence=float(payload.get("confidence") or 1.0),
             food_id=(
                 existing_food.id
                 if existing_food is not None
@@ -5437,14 +5437,23 @@ def nutrients_to_snapshot(nutrients: Nutrients) -> dict[str, float]:
     }
 
 
+def _nutrient_value(value: dict[str, Any], key: str) -> float:
+    # Models sometimes emit explicit nulls ("fiber_g": null); dict.get's
+    # default only covers missing keys, so coerce None to 0 here.
+    raw = value.get(key)
+    if raw is None:
+        return 0.0
+    return float(raw)
+
+
 def nutrients_from_snapshot(value: dict[str, Any]) -> Nutrients:
     return Nutrients(
-        calories_kcal=float(value.get("calories_kcal", 0)),
-        protein_g=float(value.get("protein_g", 0)),
-        carbs_g=float(value.get("carbs_g", 0)),
-        fat_g=float(value.get("fat_g", 0)),
-        fiber_g=float(value.get("fiber_g", 0)),
-        sodium_mg=float(value.get("sodium_mg", 0)),
+        calories_kcal=_nutrient_value(value, "calories_kcal"),
+        protein_g=_nutrient_value(value, "protein_g"),
+        carbs_g=_nutrient_value(value, "carbs_g"),
+        fat_g=_nutrient_value(value, "fat_g"),
+        fiber_g=_nutrient_value(value, "fiber_g"),
+        sodium_mg=_nutrient_value(value, "sodium_mg"),
     )
 
 
@@ -5452,12 +5461,12 @@ def nutrients_from_mapping(value: Any) -> Nutrients:
     if not isinstance(value, dict):
         raise ValueError("nutrient targets must be an object")
     return Nutrients(
-        calories_kcal=float(value.get("calories_kcal", 0)),
-        protein_g=float(value.get("protein_g", 0)),
-        carbs_g=float(value.get("carbs_g", 0)),
-        fat_g=float(value.get("fat_g", 0)),
-        fiber_g=float(value.get("fiber_g", 0)),
-        sodium_mg=float(value.get("sodium_mg", 0)),
+        calories_kcal=_nutrient_value(value, "calories_kcal"),
+        protein_g=_nutrient_value(value, "protein_g"),
+        carbs_g=_nutrient_value(value, "carbs_g"),
+        fat_g=_nutrient_value(value, "fat_g"),
+        fiber_g=_nutrient_value(value, "fiber_g"),
+        sodium_mg=_nutrient_value(value, "sodium_mg"),
     )
 
 
@@ -5525,7 +5534,7 @@ def food_version_from_snapshot(value: dict[str, Any]) -> FoodVersion:
         nutrients_per_100g=nutrients_from_snapshot(value["nutrients_per_100g"]),
         source=value["source"],
         serving_size_g=value.get("serving_size_g"),
-        confidence=float(value.get("confidence", 1.0)),
+        confidence=float(value.get("confidence") or 1.0),
         created_at=datetime.fromisoformat(value["created_at"]),
         archived=bool(value.get("archived", False)),
     )
@@ -5625,7 +5634,7 @@ def food_alias_from_snapshot(value: dict[str, Any]) -> FoodAlias:
         phrase=value["phrase"],
         food_id=value["food_id"],
         person_id=value.get("person_id"),
-        confidence=float(value.get("confidence", 1.0)),
+        confidence=float(value.get("confidence") or 1.0),
     )
 
 
@@ -5654,7 +5663,7 @@ def barcode_association_from_snapshot(value: dict[str, Any]) -> BarcodeAssociati
         food_id=value["food_id"],
         food_version_id=value["food_version_id"],
         source=value["source"],
-        confidence=float(value.get("confidence", 1.0)),
+        confidence=float(value.get("confidence") or 1.0),
         confirmed_at=datetime.fromisoformat(confirmed_at) if confirmed_at else None,
         archived=bool(value.get("archived", False)),
     )

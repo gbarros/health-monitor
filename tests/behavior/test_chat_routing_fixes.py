@@ -533,6 +533,32 @@ class GateThreeFixesTest(unittest.TestCase):
             self.assertEqual(len(notes), 1)
             self.assertEqual(notes[0].body, "Não como carne de porco.")
 
+    def test_model_item_estimates_tolerate_explicit_null_nutrients(self) -> None:
+        # gemma/qwen sometimes emit "fiber_g": null; that must coerce to 0,
+        # not crash the draft with float(None).
+        service, _, person_id = build_service(model_health_checker=lambda: True)
+        proposal = service.draft_structured_meal_proposal(
+            person_id=person_id,
+            items=[
+                {
+                    "phrase": "iogurte natural",
+                    "quantity_g": 100,
+                    "nutrients_per_100g": {
+                        "calories_kcal": 60,
+                        "protein_g": 4,
+                        "carbs_g": 5,
+                        "fat_g": 3,
+                        "fiber_g": None,
+                        "sodium_mg": None,
+                    },
+                }
+            ],
+            day=TODAY,
+        )
+        self.assertEqual(proposal.status, "draft")
+        self.assertEqual(proposal.totals.rounded().calories_kcal, 60)
+        self.assertEqual(proposal.totals.rounded().fiber_g, 0)
+
     def test_generic_staple_phrase_rejects_branded_lookup_product(self) -> None:
         match = HealthMonitorService._phrase_matches_product_name
         self.assertFalse(match("arroz", "Mini Biscoitos de Arroz Integral Camil Natural"))
