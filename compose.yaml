@@ -20,11 +20,14 @@ services:
       LOG_FORMAT: ${LOG_FORMAT:-json}
       NEXUSLOG_MODE: ${NEXUSLOG_MODE:-stdout}
       NEXUSLOG_JSONL_PATH: ${NEXUSLOG_JSONL_PATH:-/app/var/nexuslog-events/health-monitor.jsonl}
+      CLIENT_EVENT_LOG_PATH: ${CLIENT_EVENT_LOG_PATH:-/app/data/client-events.jsonl}
       AGENT_RUNTIME: ${AGENT_RUNTIME:-pydantic-ai}
       MODEL_PROVIDER: ${MODEL_PROVIDER:-ollama}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma4:e4b}
-      OLLAMA_VISION_MODEL: ${OLLAMA_VISION_MODEL:-llava}
+      OLLAMA_VISION_MODEL: ${OLLAMA_VISION_MODEL:-kimi-k2.6:cloud}
+      IMAGE_ANALYZER: ${IMAGE_ANALYZER:-ollama}
+      OCR_MODEL: ${OCR_MODEL:-glm-ocr:latest}
       FOOD_ESTIMATOR: ${FOOD_ESTIMATOR:-ollama}
       LABEL_TEXT_EXTRACTOR: ${LABEL_TEXT_EXTRACTOR:-ollama}
       OPENFOODFACTS_ENABLED: ${OPENFOODFACTS_ENABLED:-true}
@@ -69,7 +72,9 @@ services:
       MODEL_PROVIDER: ${MODEL_PROVIDER:-ollama}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma4:e4b}
-      OLLAMA_VISION_MODEL: ${OLLAMA_VISION_MODEL:-llava}
+      OLLAMA_VISION_MODEL: ${OLLAMA_VISION_MODEL:-kimi-k2.6:cloud}
+      IMAGE_ANALYZER: ${IMAGE_ANALYZER:-ollama}
+      OCR_MODEL: ${OCR_MODEL:-glm-ocr:latest}
       FOOD_ESTIMATOR: ${FOOD_ESTIMATOR:-ollama}
       LABEL_TEXT_EXTRACTOR: ${LABEL_TEXT_EXTRACTOR:-ollama}
       OPENFOODFACTS_ENABLED: ${OPENFOODFACTS_ENABLED:-true}

@@ -48,9 +48,10 @@ import {
   DownloadIcon,
   MicIcon,
   MoreHorizontalIcon,
+  LoaderCircleIcon,
   PencilIcon,
-  PlusIcon,
   RefreshCwIcon,
+  SlidersHorizontalIcon,
   SquareIcon,
 } from "lucide-react";
 import {
@@ -261,24 +262,25 @@ const Composer: FC = () => {
 
 const ComposerAction: FC = () => {
   const { allowAttachments = true, onQuickActions } = useContext(ThreadUIConfigContext);
-  const leading = onQuickActions ? (
-    <TooltipIconButton
-      tooltip="Ações rápidas"
-      side="top"
-      type="button"
-      variant="ghost"
-      size="icon"
-      className="aui-composer-quick-actions size-11 rounded-full"
-      aria-label="Abrir ações rápidas"
-      onClick={onQuickActions}
-    >
-      <PlusIcon className="size-5" />
-    </TooltipIconButton>
-  ) : allowAttachments ? (
-    <ComposerAddAttachment />
-  ) : (
-    <span />
-  );
+  const leading = allowAttachments || onQuickActions ? (
+    <div className="flex items-center gap-1">
+      {allowAttachments ? <ComposerAddAttachment /> : null}
+      {onQuickActions ? (
+        <TooltipIconButton
+          tooltip="Ações de saúde"
+          side="top"
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="aui-composer-quick-actions size-11 rounded-full"
+          aria-label="Abrir ações de saúde"
+          onClick={onQuickActions}
+        >
+          <SlidersHorizontalIcon className="size-4.5" />
+        </TooltipIconButton>
+      ) : null}
+    </div>
+  ) : <span />;
   return (
     <div className="aui-composer-action-wrapper relative flex items-center justify-between">
       {leading}
@@ -434,10 +436,11 @@ const AssistantMessage: FC = () => {
                 return (
                   <span
                     data-slot="aui_assistant-message-indicator"
-                    className="animate-pulse font-sans"
+                    className="agent-inline-processing"
                     aria-label="O agente está processando"
                   >
-                    {"●"}
+                    <LoaderCircleIcon className="agent-run-spin" size={15} aria-hidden="true" />
+                    <span>Processando…</span>
                   </span>
                 );
               default:

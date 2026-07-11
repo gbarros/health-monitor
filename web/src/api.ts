@@ -146,6 +146,31 @@ export async function loadMemoryNotes(personId: string): Promise<MemoryNote[]> {
   return apiGet<MemoryNote[]>(`/api/memory-notes?person_id=${encodeURIComponent(personId)}`);
 }
 
+export async function createMemoryNote(input: {
+  personId: string;
+  title: string;
+  body: string;
+}): Promise<MemoryNote> {
+  return apiPost<MemoryNote>("/api/memory-notes", {
+    person_id: input.personId,
+    title: input.title,
+    body: input.body,
+  });
+}
+
+export async function updateMemoryNote(input: {
+  noteId: string;
+  title: string;
+  body: string;
+}): Promise<MemoryNote> {
+  const response = await fetch(`/api/memory-notes/${encodeURIComponent(input.noteId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title: input.title, body: input.body }),
+  });
+  return decodeResponse<MemoryNote>(response);
+}
+
 export async function deleteMemoryNote(noteId: string): Promise<void> {
   const response = await fetch(`/api/memory-notes/${encodeURIComponent(noteId)}`, { method: "DELETE" });
   if (!response.ok) {
@@ -525,7 +550,7 @@ export async function streamAgentChat(input: StreamAgentChatInput): Promise<Stre
 }
 
 export type AgentChatStreamEvent = {
-  event: "run_started" | "tool_call" | "text_delta" | "thinking_delta" | "final" | "error" | "message";
+  event: "run_started" | "stage" | "tool_call" | "text_delta" | "thinking_delta" | "final" | "error" | "message";
   data: unknown;
 };
 
@@ -551,6 +576,7 @@ function parseSseEvent(chunk: string): AgentChatStreamEvent {
 
 function streamEventName(value: string): AgentChatStreamEvent["event"] {
   return value === "run_started" ||
+    value === "stage" ||
     value === "tool_call" ||
     value === "text_delta" ||
     value === "thinking_delta" ||
@@ -567,6 +593,7 @@ export async function uploadDataUrlAttachment(input: {
   personId: string;
   dataUrl: string;
   filename?: string;
+  capturedAt?: string;
   objectType?: string;
 }): Promise<{ id: string }> {
   const parsed = parseDataUrl(input.dataUrl);
@@ -576,6 +603,7 @@ export async function uploadDataUrlAttachment(input: {
     object_type: input.objectType ?? "nutrition_label",
     mime_type: parsed.mimeType,
     filename: input.filename,
+    captured_at: input.capturedAt,
     content_base64: parsed.contentBase64,
     retention_policy: "keep",
   });

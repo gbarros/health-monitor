@@ -14,8 +14,9 @@ from health_monitor.lookup.foods import (
     OpenFoodFactsLookupProvider,
     USDAFoodDataCentralLookupProvider,
 )
-from health_monitor.lookup.labels import OllamaLabelTextExtractor
+from health_monitor.lookup.labels import OllamaImageAnalyzer, OllamaLabelTextExtractor
 from health_monitor.observability.nexuslog import NexusLogEvent, build_nexuslog_sink
+from health_monitor.observability.client_events import ClientEventStore
 from health_monitor.persistence.postgres_state import PostgresStateRepository
 from health_monitor.persistence.sqlite_state import SQLiteStateRepository
 
@@ -28,6 +29,7 @@ def build_api() -> HttpApi:
             mode=config.nexuslog_mode,
             jsonl_path=config.nexuslog_jsonl_path,
         ),
+        client_event_store=ClientEventStore(config.client_event_log_path),
     )
 
 
@@ -55,6 +57,14 @@ def build_service(config: Any | None = None) -> HealthMonitorService:
         )
     elif config.label_text_extractor != "none":
         raise ValueError(f"unsupported label text extractor: {config.label_text_extractor}")
+    image_analyzer = None
+    if config.image_analyzer == "ollama":
+        image_analyzer = OllamaImageAnalyzer(
+            base_url=config.ollama_base_url,
+            model=config.vision_model,
+        )
+    elif config.image_analyzer != "none":
+        raise ValueError(f"unsupported image analyzer: {config.image_analyzer}")
     lookup_providers = []
     if config.openfoodfacts_enabled:
         lookup_providers.append(OpenFoodFactsLookupProvider())
@@ -74,6 +84,7 @@ def build_service(config: Any | None = None) -> HealthMonitorService:
         estimator=estimator,
         food_lookup_provider=food_lookup_provider,
         label_text_extractor=label_text_extractor,
+        image_analyzer=image_analyzer,
         agent_runtime=config.agent_runtime,
         model_provider=config.model_provider,
         agent_model=config.ollama_model,
@@ -114,6 +125,9 @@ class HealthMonitorRequestHandler(BaseHTTPRequestHandler):
                 self.wfile.write(b"data: ")
                 self.wfile.write(payload)
                 self.wfile.write(b"\n\n")
+                # SSE is only useful when each stage reaches the client now;
+                # Android Chrome otherwise receives the whole run at the end.
+                self.wfile.flush()
                 self.wfile.flush()
             return
         payload = json.dumps(response.body, ensure_ascii=False).encode("utf-8")

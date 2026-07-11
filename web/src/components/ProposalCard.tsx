@@ -22,6 +22,7 @@ export function ProposalCard({
   const canConfirm = proposal.status === "draft";
   const canReject = proposal.status === "draft" || proposal.status === "needs_clarification";
   const supersededBy = proposal.payload?.["superseded_by_proposal_id"];
+  const isMemoryProposal = proposal.proposal_type === "memory_note";
   return (
     <section className="proposal-card" aria-label="Proposta de registro">
       <div className="proposal-card__header">
@@ -51,11 +52,19 @@ export function ProposalCard({
             />
           ))}
         </div>
-      ) : (
+      ) : isMemoryProposal ? (
+        <div className="proposal-memory-preview">
+          <strong>{String(proposal.payload?.["title"] ?? "Memória do agente")}</strong>
+          <p>{String(proposal.payload?.["body"] ?? "")}</p>
+          <small>
+            {proposal.payload?.["note_id"] ? "Atualiza uma memória existente" : "Cria um novo assunto na memória"}
+          </small>
+        </div>
+      ) : proposal.status === "needs_clarification" ? (
         <p className="proposal-card__empty">A proposta precisa de mais informação antes de confirmar.</p>
-      )}
+      ) : null}
 
-      <div className="proposal-card__totals">{proposalTotals(proposal)}</div>
+      {!isMemoryProposal ? <div className="proposal-card__totals">{proposalTotals(proposal)}</div> : null}
 
       {typeof supersededBy === "string" ? (
         <button
@@ -72,7 +81,7 @@ export function ProposalCard({
           Rejeitar
         </button>
         <button type="button" className="primary-action" onClick={() => onConfirm(proposal)} disabled={busy || !canConfirm}>
-          {canConfirm ? "Confirmar" : "Precisa revisar"}
+          {proposalPrimaryLabel(proposal.status)}
         </button>
       </div>
 
@@ -220,6 +229,14 @@ function proposalStatusLabel(status: string): string {
   if (status === "rejected") return "Rejeitada";
   if (status === "superseded") return "Substituída";
   return status;
+}
+
+function proposalPrimaryLabel(status: string): string {
+  if (status === "draft") return "Confirmar";
+  if (status === "applied") return "Aplicada";
+  if (status === "rejected") return "Rejeitada";
+  if (status === "superseded") return "Substituída";
+  return "Precisa revisar";
 }
 
 function mealLabel(mealType: string): string {

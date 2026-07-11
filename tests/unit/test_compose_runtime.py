@@ -41,6 +41,9 @@ class ComposeRuntimeTest(unittest.TestCase):
         self.assertGreaterEqual(source.count("AGENT_RUNTIME: ${AGENT_RUNTIME:-pydantic-ai}"), 2)
         self.assertGreaterEqual(source.count("USDA_ENABLED: ${USDA_ENABLED:-false}"), 2)
         self.assertGreaterEqual(source.count("USDA_API_KEY: ${USDA_API_KEY:-}"), 2)
+        self.assertGreaterEqual(source.count("IMAGE_ANALYZER: ${IMAGE_ANALYZER:-ollama}"), 2)
+        self.assertGreaterEqual(source.count("OCR_MODEL: ${OCR_MODEL:-glm-ocr:latest}"), 2)
+        self.assertGreaterEqual(source.count("OLLAMA_VISION_MODEL: ${OLLAMA_VISION_MODEL:-kimi-k2.6:cloud}"), 2)
 
     def test_api_image_installs_pydantic_ai_runtime_dependency(self) -> None:
         source = DOCKERFILE_API.read_text(encoding="utf-8")

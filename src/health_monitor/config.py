@@ -13,6 +13,7 @@ class AppConfig:
     log_format: str = "text"
     nexuslog_mode: str = "stdout"
     nexuslog_jsonl_path: Path = Path("var/nexuslog-events/health-monitor.jsonl")
+    client_event_log_path: Path = Path("data/local/client-events.jsonl")
     agent_runtime: str = "pydantic-ai"
     model_provider: str = "deterministic"
     require_model: bool = True
@@ -21,6 +22,8 @@ class AppConfig:
     ollama_model: str = "gemma4:26b"
     label_text_extractor: str = "ollama"
     ocr_model: str = "glm-ocr:latest"
+    image_analyzer: str = "ollama"
+    vision_model: str = "kimi-k2.6:cloud"
     openfoodfacts_enabled: bool = True
     usda_enabled: bool = False
     usda_api_key: str | None = None
@@ -46,6 +49,9 @@ def load_config() -> AppConfig:
         nexuslog_jsonl_path=Path(
             os.environ.get("NEXUSLOG_JSONL_PATH", "var/nexuslog-events/health-monitor.jsonl")
         ),
+        client_event_log_path=Path(
+            os.environ.get("CLIENT_EVENT_LOG_PATH", "data/local/client-events.jsonl")
+        ),
         agent_runtime=os.environ.get("AGENT_RUNTIME", "pydantic-ai"),
         model_provider=os.environ.get("MODEL_PROVIDER", "deterministic"),
         require_model=os.environ.get("REQUIRE_MODEL", "true").casefold()
@@ -61,6 +67,11 @@ def load_config() -> AppConfig:
         ),
         label_text_extractor=os.environ.get("LABEL_TEXT_EXTRACTOR", "ollama"),
         ocr_model=os.environ.get("OCR_MODEL", os.environ.get("OLLAMA_OCR_MODEL", "glm-ocr:latest")),
+        image_analyzer=os.environ.get("IMAGE_ANALYZER", "ollama"),
+        vision_model=os.environ.get(
+            "OLLAMA_VISION_MODEL",
+            "kimi-k2.6:cloud",
+        ),
         openfoodfacts_enabled=os.environ.get("OPENFOODFACTS_ENABLED", "true").casefold()
         in {"1", "true", "yes", "on"},
         usda_enabled=os.environ.get("USDA_ENABLED", "false").casefold()

@@ -60,7 +60,21 @@ class HealthMonitorServiceProtocol(Protocol):
     def get_proposal(self, proposal_id: str) -> Any:
         pass
 
+    def get_attachment(self, attachment_id: str) -> Any:
+        pass
+
     def extract_label_text_from_attachment(self, *, attachment_id: str) -> dict[str, Any]:
+        pass
+
+    def inspect_image_attachment(self, *, attachment_id: str) -> dict[str, Any]:
+        pass
+
+    def inspect_image_attachments(
+        self,
+        *,
+        attachment_ids: list[str],
+        context_text: str = "",
+    ) -> dict[str, Any]:
         pass
 
     def propose_profile_update(
@@ -199,8 +213,8 @@ def normalize_agent_runtime_output(raw_output: Any) -> AgentRuntimeResponse:
     if isinstance(payload, AgentLookupEstimateExplanation):
         return AgentRuntimeResponse(
             message=(
-                f"{payload.source_name} {payload.source_type} estimate "
-                f"{payload.source_id} with {payload.confidence:.0%} confidence."
+                f"Estimativa de {payload.source_name} ({payload.source_type}, "
+                f"{payload.source_id}) com {payload.confidence:.0%} de confiança."
             ),
             behavior_label="lookup_explanation",
             output_type="lookup_explanation",
@@ -271,7 +285,7 @@ def _message_from_payload(payload: dict[str, Any], *, output_type: str) -> str:
         if isinstance(value, str) and value.strip():
             return value.strip()
     if output_type == "proposal_draft" and payload.get("proposal_id"):
-        return f"Draft proposal {payload['proposal_id']} is ready for review."
+        return f"A proposta {payload['proposal_id']} está pronta para revisão."
     return json.dumps(payload, ensure_ascii=False, sort_keys=True)
 
 
@@ -357,7 +371,9 @@ class PydanticAINutritionAgent:
             deps=deps,
             message=message,
             task_instructions=(
-                "Return a concise answer. If the user is asking to log food, amend a meal, "
+                "Always respond in concise Brazilian Portuguese (pt-BR), even when the user "
+                "writes in another language, unless they explicitly request another language. "
+                "If the user is asking to log food, amend a meal, "
                 "repeat a meal, log a weight, draft a recipe, or otherwise change app data, "
                 "you must call the corresponding tool instead of describing the action in prose. "
                 "If the user asks to change a logged food quantity on a specific day, call "
@@ -408,6 +424,7 @@ class PydanticAINutritionAgent:
                 f"User message: {message}"
             ),
             task_instructions=(
+                "Always respond in concise Brazilian Portuguese (pt-BR). "
                 "You are onboarding a new household member. Ask concise follow-up questions "
                 "until household name or household id, person name, timezone, and initial targets "
                 "are clear. When enough information is available, call draft_onboarding_proposal "
@@ -445,8 +462,27 @@ class PydanticAINutritionAgent:
                 "You are a private household nutrition assistant. Use tools to inspect "
                 "structured app data. Read tools can inspect diary, week summaries, "
                 "weight trend, food resolution, lookup candidates, and food version "
-                "history, and can run targeted OCR on attachment ids when image text "
-                "is needed. For food logging, extract structured items yourself and "
+                "history, inspect arbitrary attachment images with the configured vision model, "
+                "and run targeted OCR when exact image text is needed. For ordinary chat image "
+                "attachments, inspect them before responding. When two or more attachment ids are "
+                "present, call inspect_image_attachments exactly once with all ids and the user's "
+                "original request as context; do not inspect those images individually. Choose "
+                "ordering_strategy='capture_time' only when the user's request describes a temporal "
+                "or progressive relationship such as before/after, repeated tare, preparation steps, "
+                "or an item being assembled. Otherwise use ordering_strategy='supplied'. "
+                "For one image, call inspect_image_attachment. Use the result to understand whether "
+                "the image is a food plate, package, table, receipt, or another scene. If inspection "
+                "returns ocr_recommended=true, or the user explicitly needs exact visible text, "
+                "then call extract_label_text_from_attachment. For the explicit label-scan helper, "
+                "go directly to OCR. Never use OCR alone to interpret a food plate. "
+                "Photo-based meal logging is confirmation-first. When the current request says "
+                "photo_confirmation_required=true, inspect every attachment, summarize the foods "
+                "and uncertain portions you can see, and ask the user to confirm or correct that "
+                "interpretation. Do not draft or amend a meal proposal in that same turn. Only "
+                "draft on a later user turn that confirms or corrects the interpretation. Surface "
+                "the batch inspection's questions and alternatives as concise targeted confirmation "
+                "questions; never silently choose among plausible foods or edible versus bone-in mass. "
+                "For food logging, extract structured items yourself and "
                 "call draft_meal_proposal or amend_meal_proposal; do not route raw user "
                 "text through deterministic parsers. For ordinary everyday foods, call "
                 "draft_meal_proposal directly with phrase, quantity_g, and your best "
@@ -461,19 +497,22 @@ class PydanticAINutritionAgent:
                 "different values; never reuse numbers across items or copy examples. "
                 "Call draft_meal_proposal exactly once per user message with all items together; "
                 "never draft the same meal twice. "
-                "The context JSON includes memory_notes: durable facts saved from earlier "
-                "conversations (preferences, routines, reusable results). Treat them as true "
-                "and apply them without being asked. When the user asks you to remember "
-                "something, or a conversation produces a durable reusable fact or result, "
-                "call draft_memory_note_proposal (pass note_id to update an existing note); "
-                "the user confirms before it is stored. Do not save transient chit-chat. "
+                "The context JSON includes memory_notes: a living, user-maintained workspace of "
+                "durable facts, preferences, routines, constraints, and reusable results. Treat "
+                "them as true and apply them without being asked. Before creating a memory note, "
+                "check existing titles and bodies. Update the closest existing note by passing its "
+                "note_id whenever the new fact extends, corrects, or replaces the same subject; "
+                "preserve still-valid detail in the rewritten body and avoid duplicate cards. "
+                "Create a new note only for a genuinely separate subject. The user confirms agent "
+                "memory proposals before storage. Do not save transient chit-chat. "
                 "Draft tools may create proposals, but they must not claim "
                 "that diary entries, profile fields, goal targets, or review notes were "
                 "applied. If asked to change data, draft a proposal and explain that "
                 "the user must confirm it. Never say you drafted something unless you actually "
                 "called a draft tool and received a proposal id. When you are ready to respond, "
                 "call the finish tool exactly once with the final response payload. "
-                "Keep answers concise and cite uncertainty. "
+                "Always answer in Brazilian Portuguese (pt-BR) unless the user explicitly "
+                "asks for another language. Keep answers concise and cite uncertainty. "
                 f"{task_instructions}"
             ),
         )
@@ -541,6 +580,26 @@ class PydanticAINutritionAgent:
             return tools.extract_label_text_from_attachment(ctx.deps, attachment_id=attachment_id)
 
         @agent.tool
+        async def inspect_image_attachment(ctx, attachment_id: str) -> dict[str, Any]:
+            """Use the configured vision model to understand a plate, package, table, or arbitrary image before deciding whether OCR is useful."""
+            return tools.inspect_image_attachment(ctx.deps, attachment_id=attachment_id)
+
+        @agent.tool
+        async def inspect_image_attachments(
+            ctx,
+            attachment_ids: list[str],
+            context_text: str = "",
+            ordering_strategy: str = "supplied",
+        ) -> dict[str, Any]:
+            """Analyze images together; reorder by capture time only for user-described sequences."""
+            return tools.inspect_image_attachments(
+                ctx.deps,
+                attachment_ids=attachment_ids,
+                context_text=context_text,
+                ordering_strategy=ordering_strategy,
+            )
+
+        @agent.tool
         async def draft_meal_proposal(
             ctx,
             items: list[dict[str, Any]],
@@ -549,7 +608,7 @@ class PydanticAINutritionAgent:
             meal_type: str | None = None,
             source_text: str = "",
         ) -> dict[str, Any]:
-            """Draft a meal proposal directly. Everyday items may include nutrients_per_100g estimates; this tool resolves or stores estimates."""
+            """Draft a meal after any required photo interpretation confirmation; unresolved items are returned for clarification."""
             return tools.draft_meal_proposal(
                 ctx.deps,
                 items=items,

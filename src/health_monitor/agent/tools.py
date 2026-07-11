@@ -300,7 +300,16 @@ class NutritionAgentTools:
         *,
         attachment_id: str,
     ) -> dict[str, Any]:
-        result = deps.service.extract_label_text_from_attachment(attachment_id=attachment_id)
+        attachment = deps.service.get_attachment(attachment_id)
+        if attachment.household_id != deps.household_id or attachment.created_by_person_id != deps.person_id:
+            raise ValueError("attachment does not belong to the active person")
+        self._emit_stage(deps, "reading_label", "started", "Lendo o texto do rótulo…")
+        try:
+            result = deps.service.extract_label_text_from_attachment(attachment_id=attachment_id)
+        except Exception:
+            self._emit_stage(deps, "reading_label", "failed", "Não consegui ler este rótulo")
+            raise
+        self._emit_stage(deps, "reading_label", "completed", "Rótulo lido")
         return {
             "attachment_id": str(result["attachment_id"]),
             "filename": None if result.get("filename") is None else str(result["filename"]),
@@ -309,6 +318,80 @@ class NutritionAgentTools:
             "confidence": float(result["confidence"]),
             "warnings": [str(item) for item in result.get("warnings", [])],
         }
+
+    def inspect_image_attachment(
+        self,
+        deps: AgentDeps,
+        *,
+        attachment_id: str,
+    ) -> dict[str, Any]:
+        attachment = deps.service.get_attachment(attachment_id)
+        if attachment.household_id != deps.household_id or attachment.created_by_person_id != deps.person_id:
+            raise ValueError("attachment does not belong to the active person")
+        self._emit_stage(deps, "inspecting_photo", "started", "Analisando uma foto…")
+        try:
+            result = deps.service.inspect_image_attachment(attachment_id=attachment_id)
+        except Exception:
+            self._emit_stage(deps, "inspecting_photo", "failed", "Não consegui analisar uma foto")
+            raise
+        self._emit_stage(deps, "inspecting_photo", "completed", "Foto analisada")
+        return {
+            "attachment_id": str(result["attachment_id"]),
+            "filename": None if result.get("filename") is None else str(result["filename"]),
+            "description": str(result["description"]),
+            "image_type": str(result["image_type"]),
+            "observations": [str(item) for item in result.get("observations", [])],
+            "visible_text": None if result.get("visible_text") is None else str(result["visible_text"]),
+            "ocr_recommended": bool(result.get("ocr_recommended")),
+            "source": str(result["source"]),
+            "confidence": float(result["confidence"]),
+            "warnings": [str(item) for item in result.get("warnings", [])],
+        }
+
+    def inspect_image_attachments(
+        self,
+        deps: AgentDeps,
+        *,
+        attachment_ids: list[str],
+        context_text: str = "",
+        ordering_strategy: str = "supplied",
+    ) -> dict[str, Any]:
+        attachments = [deps.service.get_attachment(item) for item in attachment_ids]
+        if not attachments:
+            raise ValueError("image inspection requires attachment ids")
+        if any(
+            attachment.household_id != deps.household_id
+            or attachment.created_by_person_id != deps.person_id
+            for attachment in attachments
+        ):
+            raise ValueError("attachment does not belong to the active person")
+        self._emit_stage(
+            deps,
+            "inspecting_photo_set",
+            "started",
+            f"Analisando {len(attachments)} fotos em conjunto…",
+        )
+        try:
+            result = deps.service.inspect_image_attachments(
+                attachment_ids=attachment_ids,
+                context_text=context_text,
+                ordering_strategy=ordering_strategy,
+            )
+        except Exception:
+            self._emit_stage(
+                deps,
+                "inspecting_photo_set",
+                "failed",
+                "Não consegui analisar as fotos em conjunto",
+            )
+            raise
+        self._emit_stage(
+            deps,
+            "inspecting_photo_set",
+            "completed",
+            "Fotos analisadas em conjunto",
+        )
+        return result
 
     def draft_meal_proposal(
         self,
@@ -321,16 +404,51 @@ class NutritionAgentTools:
         source_text: str = "",
     ) -> dict[str, Any]:
         normalized_items = [_normalize_meal_item(item) for item in items]
-        proposal = deps.service.draft_structured_meal_proposal(
-            person_id=deps.person_id,
-            items=normalized_items,
-            day=date.fromisoformat(day),
-            time_text=_normalized_time_text(time),
-            meal_type=_optional_text(meal_type),
-            agent_settings=deps.settings,
-            source_text=source_text or "structured meal draft from agent",
-        )
+        if deps.settings.get("photo_confirmation_required"):
+            return {
+                "proposal_created": False,
+                "confirmation_required": True,
+                "message": (
+                    "Confirme ou corrija primeiro os alimentos e porções identificados nas fotos. "
+                    "A proposta só pode ser criada na próxima mensagem."
+                ),
+                "observed_items": normalized_items,
+            }
+        self._emit_stage(deps, "preparing_meal", "started", "Preparando a proposta…")
+        try:
+            proposal = deps.service.draft_structured_meal_proposal(
+                person_id=deps.person_id,
+                items=normalized_items,
+                day=date.fromisoformat(day),
+                time_text=_normalized_time_text(time),
+                meal_type=_optional_text(meal_type),
+                agent_settings=deps.settings,
+                source_text=source_text or "structured meal draft from agent",
+            )
+        except ValueError as exc:
+            if not hasattr(exc, "unresolved_items"):
+                self._emit_stage(deps, "preparing_meal", "failed", "Não consegui preparar a proposta")
+                raise
+            self._emit_stage(deps, "preparing_meal", "needs_input", "Preciso confirmar alguns itens")
+            return {
+                "proposal_created": False,
+                "clarification_required": True,
+                "resolved_items": list(getattr(exc, "resolved_items")),
+                "unresolved_items": list(getattr(exc, "unresolved_items")),
+                "message": (
+                    "Alguns itens foram entendidos, mas faltam dados confiáveis para preparar "
+                    "a proposta. Pergunte apenas pelos itens em unresolved_items."
+                ),
+            }
+        self._emit_stage(deps, "preparing_meal", "completed", "Proposta preparada")
         return self._proposal_payload(proposal)
+
+    @staticmethod
+    def _emit_stage(deps: AgentDeps, name: str, status: str, label: str) -> None:
+        deps.service.stream_agent_event(
+            deps.person_id,
+            {"event": "stage", "data": {"name": name, "status": status, "label": label}},
+        )
 
     def amend_meal_proposal(
         self,

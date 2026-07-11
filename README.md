@@ -70,6 +70,14 @@ LABEL_TEXT_EXTRACTOR=ollama OLLAMA_OCR_MODEL=glm-ocr:latest make dev-api
 
 Set `LABEL_TEXT_EXTRACTOR=none` to require pasted table/OCR text. Extracted label text, source, confidence, warnings, and image attachment metadata are preserved on the proposal before any food version is saved.
 
+Arbitrary chat images use the main vision model for scene/plate understanding. The agent then calls GLM-OCR only when the inspection finds a label, table, receipt, menu, barcode, or other exact text worth extracting. The label-scan helper intentionally skips this gate and uses OCR directly:
+
+```bash
+IMAGE_ANALYZER=ollama OLLAMA_VISION_MODEL=kimi-k2.6:cloud OCR_MODEL=glm-ocr:latest make dev-api
+```
+
+Set `IMAGE_ANALYZER=none` to disable arbitrary-image inspection while keeping explicit label OCR available.
+
 Before alpha use, run the Ollama preflight against the models you intend to use:
 
 ```bash

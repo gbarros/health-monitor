@@ -4,7 +4,7 @@ import base64
 import queue
 import threading
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from typing import Any, Callable, Iterable
 from urllib.parse import parse_qs, urlparse
 
@@ -37,6 +37,7 @@ from health_monitor.domain.nutrients import Nutrients
 from health_monitor.domain.proposals import CreateDiaryEntriesProposal
 from health_monitor.lookup.foods import FoodLookupCandidate
 from health_monitor.observability.nexuslog import NexusLogEvent, NexusLogSink
+from health_monitor.observability.client_events import ClientEventStore
 
 
 @dataclass(frozen=True)
@@ -57,9 +58,15 @@ class HttpStreamResponse(HttpResponse):
 
 
 class HttpApi:
-    def __init__(self, service: HealthMonitorService, event_sink: NexusLogSink | None = None) -> None:
+    def __init__(
+        self,
+        service: HealthMonitorService,
+        event_sink: NexusLogSink | None = None,
+        client_event_store: ClientEventStore | None = None,
+    ) -> None:
         self.service = service
         self.event_sink = event_sink
+        self.client_event_store = client_event_store
 
     def handle(self, method: str, target: str, body: dict[str, Any] | None) -> HttpResponse:
         normalized_method = method.upper()
@@ -292,6 +299,49 @@ class HttpApi:
                 },
             )
 
+        if method == "POST" and path == "/api/client-events/batch":
+            events = body.get("events", [])
+            if not isinstance(events, list):
+                raise ValueError("client events must be an array")
+            if self.client_event_store is None:
+                accepted = events
+            else:
+                accepted = self.client_event_store.append_many(events)
+            for event in accepted:
+                payload = event.get("payload", {})
+                self._emit(
+                    NexusLogEvent(
+                        service="health-monitor-client",
+                        level=event.get("level", "info"),
+                        event=event["event"],
+                        entity_type="client_event",
+                        entity_id=event["id"],
+                        session_id=event["session_id"],
+                        payload={
+                            "client_event_id": event["id"],
+                            "page_id": event["page_id"],
+                            "client_ts": event["client_ts"],
+                            "sequence": event["sequence"],
+                            "route": event["route"],
+                            "visibility": event["visibility"],
+                            "online": event["online"],
+                            **payload,
+                        },
+                    )
+                )
+            return HttpResponse(202, {"accepted_ids": [event["id"] for event in events]})
+
+        if method == "GET" and path == "/api/client-events":
+            if self.client_event_store is None:
+                return HttpResponse(200, [])
+            events = self.client_event_store.search(
+                event=query.get("event"),
+                session_id=query.get("session_id"),
+                page_id=query.get("page_id"),
+                limit=int(query.get("limit", "200")),
+            )
+            return HttpResponse(200, events)
+
         if method == "GET" and path == "/api/households":
             return HttpResponse(
                 200,
@@ -355,6 +405,9 @@ class HttpApi:
                 object_type=body["object_type"],
                 mime_type=body["mime_type"],
                 filename=body.get("filename"),
+                captured_at=datetime.fromisoformat(body["captured_at"])
+                if body.get("captured_at")
+                else None,
                 content=base64.b64decode(body["content_base64"]),
                 retention_policy=body.get("retention_policy", "keep"),
             )
@@ -661,7 +714,12 @@ class HttpApi:
                         "event": "error",
                         "data": {
                             "type": error_type,
-                            "message": str(exc),
+                            "message": (
+                                "O agente não conseguiu concluir esta análise. "
+                                "Tente novamente ou confirme por texto o item incerto."
+                                if error_type == "agent_error"
+                                else str(exc)
+                            ),
                             "replay_message": getattr(exc, "replay_message", None),
                         },
                     }
@@ -682,6 +740,22 @@ class HttpApi:
         if method == "GET" and path == "/api/memory-notes":
             notes = self.service.memory_notes_for_person(query["person_id"])
             return HttpResponse(200, [memory_note_to_dict(note) for note in notes])
+
+        if method == "POST" and path == "/api/memory-notes":
+            note = self.service.create_memory_note(
+                person_id=body["person_id"],
+                title=body["title"],
+                body=body["body"],
+            )
+            return HttpResponse(201, memory_note_to_dict(note))
+
+        if method == "PATCH" and path.startswith("/api/memory-notes/"):
+            note = self.service.update_memory_note(
+                path.removeprefix("/api/memory-notes/"),
+                title=body["title"],
+                body=body["body"],
+            )
+            return HttpResponse(200, memory_note_to_dict(note))
 
         if method == "DELETE" and path.startswith("/api/memory-notes/"):
             note = self.service.delete_memory_note(path.removeprefix("/api/memory-notes/"))
@@ -804,6 +878,9 @@ def attachment_to_dict(attachment: AttachmentObject, *, include_content: bool = 
         "byte_size": attachment.byte_size,
         "sha256": attachment.sha256,
         "filename": attachment.filename,
+        "captured_at": attachment.captured_at.isoformat()
+        if attachment.captured_at is not None
+        else None,
         "storage_status": attachment.storage_status,
         "retention_policy": attachment.retention_policy,
         "linked_record_type": attachment.linked_record_type,

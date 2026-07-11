@@ -8,6 +8,7 @@ import { EntrySheet, WeightSheet } from "./DayEntrySheet";
 type Props = {
   personId: string;
   day: string;
+  today: string;
   onDayChange: (day: string) => void;
   onToast: (message: string) => void;
   onEntryDeleted: (entryId: string) => void;
@@ -23,7 +24,7 @@ const MEAL_LABELS: Record<string, string> = {
 
 const MEAL_ORDER = ["breakfast", "lunch", "snack", "dinner", "unknown"];
 
-export function DayCard({ personId, day, onDayChange, onToast, onEntryDeleted }: Props) {
+export function DayCard({ personId, day, today, onDayChange, onToast, onEntryDeleted }: Props) {
   const [collapsed, setCollapsed] = useState(false);
   const [selectedEntryId, setSelectedEntryId] = useState<string | null>(null);
   const [weightSheetOpen, setWeightSheetOpen] = useState(false);
@@ -54,12 +55,12 @@ export function DayCard({ personId, day, onDayChange, onToast, onEntryDeleted }:
             ‹
           </button>
           <label className="day-date-button">
-            <p className="eyebrow">{isToday(day) ? "Hoje" : "Dia"}</p>
+            <p className="eyebrow">{isToday(day, today) ? "Hoje" : "Dia"}</p>
             <h2>{formatDay(day)}</h2>
             <input
               type="date"
               value={day}
-              max={todayIsoLocal()}
+              max={today}
               aria-label="Escolher outro dia"
               onChange={(event) => event.target.value && onDayChange(event.target.value)}
             />
@@ -68,7 +69,7 @@ export function DayCard({ personId, day, onDayChange, onToast, onEntryDeleted }:
             type="button"
             aria-label="Próximo dia"
             onClick={() => onDayChange(addDays(day, 1))}
-            disabled={isToday(day)}
+            disabled={day >= today}
           >
             ›
           </button>
@@ -234,7 +235,8 @@ function WeightStrip({
         <span>Peso: nenhum registro recente.</span>
       ) : (
         <>
-          Peso: <strong>{formatKg(trend.latest_kg)}</strong>
+          <span>Peso recente</span>
+          <strong>{formatKg(trend.latest_kg)}</strong>
           {trend.delta_kg != null ? (
             <span>
               {trend.delta_kg >= 0 ? "+" : ""}
@@ -337,12 +339,8 @@ function findEntry(summary: DaySummary | undefined, entryId: string): DaySummary
   return null;
 }
 
-function isToday(day: string): boolean {
-  return day === todayIsoLocal();
-}
-
-function todayIsoLocal(): string {
-  return new Date().toISOString().slice(0, 10);
+function isToday(day: string, today: string): boolean {
+  return day === today;
 }
 
 function addDays(day: string, delta: number): string {

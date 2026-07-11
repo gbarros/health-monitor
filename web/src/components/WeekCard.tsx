@@ -42,9 +42,7 @@ export function WeekCard({ personId, day }: { personId: string; day: string }) {
     <section className="week-card" aria-label="Resumo da semana">
       <div className="section-heading">
         <span>Semana</span>
-        <strong>
-          {start.slice(5)} - {end.slice(5)}
-        </strong>
+        <strong>{formatDay(start)} – {formatDay(end)}</strong>
       </div>
       {summary ? (
         <>
@@ -53,7 +51,7 @@ export function WeekCard({ personId, day }: { personId: string; day: string }) {
               const target = summary.daily_targets[date]?.calories_kcal;
               const value = nutrients.calories_kcal ?? 0;
               const scale = Math.max(target ?? 2000, value, 1);
-              const percent = Math.max(4, Math.min(100, (value / scale) * 100));
+              const percent = value > 0 ? Math.max(2, Math.min(100, (value / scale) * 100)) : 0;
               const targetPercent = target != null ? Math.min(100, (target / scale) * 100) : null;
               return (
                 <div key={date} className="week-bar-row">
@@ -103,7 +101,7 @@ export function WeekCard({ personId, day }: { personId: string; day: string }) {
                 <div className="proposal-card__meta">
                   <strong>{note.title}</strong>
                   <span>
-                    {note.starts_on ?? "?"} - {note.ends_on ?? "?"} · {note.source}
+                    {note.starts_on ? formatDay(note.starts_on) : "?"} – {note.ends_on ? formatDay(note.ends_on) : "?"} · {note.source}
                   </span>
                 </div>
                 <p>{note.body}</p>
@@ -118,11 +116,11 @@ export function WeekCard({ personId, day }: { personId: string; day: string }) {
 
 function MacroSplit({ nutrients }: { nutrients: Nutrients }) {
   const segments = [
-    { label: "Prot", grams: nutrients.protein_g ?? 0, className: "macro-segment--protein" },
-    { label: "Carb", grams: nutrients.carbs_g ?? 0, className: "macro-segment--carbs" },
-    { label: "Gord", grams: nutrients.fat_g ?? 0, className: "macro-segment--fat" },
+    { label: "Prot", grams: nutrients.protein_g ?? 0, kcalPerGram: 4, className: "macro-segment--protein" },
+    { label: "Carb", grams: nutrients.carbs_g ?? 0, kcalPerGram: 4, className: "macro-segment--carbs" },
+    { label: "Gord", grams: nutrients.fat_g ?? 0, kcalPerGram: 9, className: "macro-segment--fat" },
   ];
-  const total = segments.reduce((sum, segment) => sum + segment.grams, 0);
+  const total = segments.reduce((sum, segment) => sum + segment.grams * segment.kcalPerGram, 0);
   if (total <= 0) {
     return null;
   }
@@ -133,7 +131,9 @@ function MacroSplit({ nutrients }: { nutrients: Nutrients }) {
           <span
             key={segment.label}
             className={segment.className}
-            style={{ width: `${Math.max(4, (segment.grams / total) * 100)}%` }}
+            style={{
+              width: `${segment.grams > 0 ? Math.max(4, ((segment.grams * segment.kcalPerGram) / total) * 100) : 0}%`,
+            }}
           />
         ))}
       </div>
@@ -170,7 +170,7 @@ function RollingStatTile({ label, rolling }: { label: string; rolling: RollingSu
       <strong>{Math.round(rolling.averages.calories_kcal ?? 0)} kcal</strong>
       <small>
         ± {Math.round(rolling.stddev.calories_kcal ?? 0)} · {roundOne(rolling.averages.protein_g)}g prot ·{" "}
-        {rolling.days_with_data}/{rolling.days} dias
+        média dos {rolling.days_with_data}/{rolling.days} dias registrados
       </small>
     </div>
   );
@@ -199,8 +199,8 @@ function CalorieTrendLine({ rolling }: { rolling: RollingSummary }) {
         <polyline points={points} fill="none" stroke="currentColor" strokeWidth="2.5" />
       </svg>
       <div className="trend-axis">
-        <span>{dates[0]?.slice(5) ?? ""}</span>
-        <span>{dates[dates.length - 1]?.slice(5) ?? ""}</span>
+        <span>{dates[0] ? formatDay(dates[0]) : ""}</span>
+        <span>{dates.length ? formatDay(dates[dates.length - 1]) : ""}</span>
       </div>
     </div>
   );
@@ -235,9 +235,9 @@ function WeightTrendChart({ entries, goal }: { entries: WeightEntry[]; goal: Goa
         <polyline points={points} fill="none" stroke="currentColor" strokeWidth="2" />
       </svg>
       <div className="trend-axis">
-        <span>{sorted[0].measured_at.slice(5, 10)}</span>
+        <span>{formatDay(sorted[0].measured_at.slice(0, 10))}</span>
         <span>{formatKg(sorted[0].weight_kg)} → {formatKg(sorted[sorted.length - 1].weight_kg)}</span>
-        <span>{sorted[sorted.length - 1].measured_at.slice(5, 10)}</span>
+        <span>{formatDay(sorted[sorted.length - 1].measured_at.slice(0, 10))}</span>
       </div>
       {guide ? <small>Guia: {guide.label}</small> : <small>Adicione uma meta em kg/sem nas notas para ver o guia.</small>}
     </div>
@@ -373,4 +373,9 @@ function roundOne(value?: number | null): number {
 
 function formatKg(value: number): string {
   return `${value.toLocaleString("pt-BR", { maximumFractionDigits: 1 })} kg`;
+}
+
+function formatDay(day: string): string {
+  const [, month, date] = day.split("-");
+  return `${date}/${month}`;
 }

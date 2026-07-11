@@ -1,10 +1,11 @@
 "use client";
 
-import { type PropsWithChildren, useEffect, useState, type FC } from "react";
+import { type FC, useEffect, useRef, useState } from "react";
 import {
   XIcon,
   PlusIcon,
   FileText,
+  ImageIcon,
   Loader2Icon,
   AlertCircleIcon,
 } from "lucide-react";
@@ -14,118 +15,67 @@ import {
   MessagePrimitive,
   useAuiState,
   useAui,
+  useComposerRuntime,
 } from "@assistant-ui/react";
-import { useShallow } from "zustand/shallow";
 import {
   Tooltip,
   TooltipContent,
+  TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import {
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogTrigger,
-} from "@/components/ui/dialog";
-import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import { cn } from "@/lib/utils";
-
-const useFileSrc = (file: File | undefined) => {
-  const [src, setSrc] = useState<string | undefined>(undefined);
-
-  useEffect(() => {
-    if (!file) {
-      setSrc(undefined);
-      return;
-    }
-
-    const objectUrl = URL.createObjectURL(file);
-    setSrc(objectUrl);
-
-    return () => {
-      URL.revokeObjectURL(objectUrl);
-    };
-  }, [file]);
-
-  return src;
-};
-
-const useAttachmentSrc = () => {
-  const { file, src } = useAuiState(
-    useShallow((s): { file?: File; src?: string } => {
-      if (s.attachment.type !== "image") return {};
-      if (s.attachment.file) return { file: s.attachment.file };
-      const src = s.attachment.content?.filter((c) => c.type === "image")[0]
-        ?.image;
-      if (!src) return {};
-      return { src };
-    }),
-  );
-
-  return useFileSrc(file) ?? src;
-};
-
-type AttachmentPreviewProps = {
-  src: string;
-};
-
-const AttachmentPreview: FC<AttachmentPreviewProps> = ({ src }) => {
-  const [isLoaded, setIsLoaded] = useState(false);
-  return (
-    <img
-      src={src}
-      alt="Attachment preview"
-      className={cn(
-        "block h-auto max-h-[80vh] w-auto max-w-full object-contain",
-        isLoaded
-          ? "aui-attachment-preview-image-loaded"
-          : "aui-attachment-preview-image-loading invisible",
-      )}
-      onLoad={() => setIsLoaded(true)}
-    />
-  );
-};
-
-const AttachmentPreviewDialog: FC<PropsWithChildren> = ({ children }) => {
-  const src = useAttachmentSrc();
-
-  if (!src) return children;
-
-  return (
-    <Dialog>
-      <DialogTrigger
-        className="aui-attachment-preview-trigger hover:bg-accent/50 cursor-pointer transition-colors"
-        asChild
-      >
-        {children}
-      </DialogTrigger>
-      <DialogContent className="aui-attachment-preview-dialog-content [&>button]:bg-foreground/60 [&_svg]:text-background [&>button]:hover:[&_svg]:text-destructive p-2 sm:max-w-3xl [&>button]:rounded-full [&>button]:p-1 [&>button]:opacity-100 [&>button]:ring-0!">
-        <DialogTitle className="aui-sr-only sr-only">
-          Image Attachment Preview
-        </DialogTitle>
-        <div className="aui-attachment-preview bg-background relative mx-auto flex max-h-[80dvh] w-full items-center justify-center overflow-hidden">
-          <AttachmentPreview src={src} />
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-};
+import { recordClientEvent, telemetryOperationId } from "@/clientTelemetry";
 
 const AttachmentThumb: FC = () => {
-  const src = useAttachmentSrc();
+  const isImage = useAuiState((s) => s.attachment.type === "image");
+  const file = useAuiState((s) => s.attachment.file);
+  const [thumbnail, setThumbnail] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setThumbnail(null);
+    if (!isImage || !file || typeof createImageBitmap !== "function") return;
+
+    void createImageBitmap(file, {
+      resizeWidth: 192,
+      resizeHeight: 192,
+      resizeQuality: "low",
+    })
+      .then((bitmap) => {
+        const canvas = document.createElement("canvas");
+        canvas.width = 128;
+        canvas.height = 128;
+        canvas.getContext("2d")?.drawImage(bitmap, 0, 0, 128, 128);
+        bitmap.close();
+        if (!cancelled) setThumbnail(canvas.toDataURL("image/jpeg", 0.72));
+      })
+      .catch(() => {
+        // Keep the lightweight icon when this browser cannot decode safely.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [file, isImage]);
 
   return (
-    <Avatar className="aui-attachment-tile-avatar h-full w-full rounded-none">
-      <AvatarImage
-        src={src}
-        alt="Attachment preview"
-        className="aui-attachment-tile-image object-cover"
-      />
-      <AvatarFallback>
-        <FileText className="aui-attachment-tile-fallback-icon text-muted-foreground size-8" />
-      </AvatarFallback>
-    </Avatar>
+    <div className="flex h-full w-full items-center justify-center">
+      {isImage && thumbnail ? (
+        <img
+          src={thumbnail}
+          alt=""
+          aria-hidden="true"
+          className="size-full object-cover"
+          width={128}
+          height={128}
+        />
+      ) : isImage ? (
+        <ImageIcon className="aui-attachment-tile-image-icon text-muted-foreground size-7" />
+      ) : (
+        <FileText className="aui-attachment-tile-fallback-icon text-muted-foreground size-7" />
+      )}
+    </div>
   );
 };
 
@@ -160,23 +110,23 @@ const AttachmentUI: FC = () => {
   const isError = uploadState === "error";
 
   return (
-    <Tooltip>
-      <AttachmentPrimitive.Root
-        className={cn(
-          "aui-attachment-root relative",
-          isImage &&
-            !isComposer &&
-            "aui-attachment-root-message only:*:first:size-24",
-        )}
-      >
-        <AttachmentPreviewDialog>
+    <TooltipProvider delayDuration={0}>
+      <Tooltip>
+        <AttachmentPrimitive.Root
+          className={cn(
+            "aui-attachment-root relative",
+            isImage &&
+              !isComposer &&
+              "aui-attachment-root-message only:*:first:size-24",
+          )}
+        >
           <TooltipTrigger asChild>
             <div
               className={cn(
-                "aui-attachment-tile bg-muted relative size-14 cursor-pointer overflow-hidden rounded-[calc(var(--composer-radius)-var(--composer-padding))] border transition-opacity hover:opacity-75",
+                "aui-attachment-tile bg-muted relative size-14 overflow-hidden rounded-[calc(var(--composer-radius)-var(--composer-padding))] border",
                 isError && "border-destructive",
               )}
-              role="button"
+              role="img"
               tabIndex={0}
               aria-label={`${typeLabel} attachment${
                 isError ? ", upload failed" : isUploading ? ", uploading" : ""
@@ -201,13 +151,13 @@ const AttachmentUI: FC = () => {
               )}
             </div>
           </TooltipTrigger>
-        </AttachmentPreviewDialog>
-        {isComposer && <AttachmentRemove />}
-      </AttachmentPrimitive.Root>
-      <TooltipContent side="top">
-        <AttachmentPrimitive.Name />
-      </TooltipContent>
-    </Tooltip>
+          {isComposer && <AttachmentRemove />}
+        </AttachmentPrimitive.Root>
+        <TooltipContent side="top">
+          <AttachmentPrimitive.Name />
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 };
 
@@ -246,18 +196,63 @@ export const ComposerAttachments: FC = () => {
 };
 
 export const ComposerAddAttachment: FC = () => {
+  const composer = useComposerRuntime();
+  const attachmentAccept = composer.getState().attachmentAccept;
+  const operationRef = useRef<string | null>(null);
+
   return (
-    <ComposerPrimitive.AddAttachment asChild>
-      <TooltipIconButton
-        tooltip="Anexar foto ou arquivo"
-        side="bottom"
-        variant="ghost"
-        size="icon"
-        className="aui-composer-add-attachment hover:bg-muted-foreground/15 dark:border-muted-foreground/15 dark:hover:bg-muted-foreground/30 size-11 rounded-full p-1 text-xs font-semibold"
+    <div className="aui-composer-add-attachment hover:bg-muted-foreground/15 dark:border-muted-foreground/15 dark:hover:bg-muted-foreground/30 focus-within:ring-ring/50 relative size-11 overflow-hidden rounded-full text-xs font-semibold focus-within:ring-[3px]">
+      <PlusIcon
+        className="aui-attachment-add-icon pointer-events-none absolute left-1/2 top-1/2 size-4.5 -translate-x-1/2 -translate-y-1/2 stroke-[1.5px]"
+        aria-hidden="true"
+      />
+      <input
+        type="file"
+        accept={attachmentAccept === "*" ? undefined : attachmentAccept}
+        multiple
+        className="absolute inset-0 size-full cursor-pointer opacity-0"
         aria-label="Anexar foto ou arquivo"
-      >
-        <PlusIcon className="aui-attachment-add-icon size-4.5 stroke-[1.5px]" />
-      </TooltipIconButton>
-    </ComposerPrimitive.AddAttachment>
+        onClick={() => {
+          const operationId = telemetryOperationId("picker");
+          operationRef.current = operationId;
+          recordClientEvent("client.attachment.picker_opened", {
+            operation_id: operationId,
+            accept_types: attachmentAccept,
+            allows_multiple: true,
+          });
+        }}
+        onChange={(event) => {
+          const files = Array.from(event.currentTarget.files ?? []);
+          event.currentTarget.value = "";
+          const operationId = operationRef.current ?? telemetryOperationId("picker");
+          operationRef.current = null;
+          recordClientEvent("client.attachment.selection_returned", {
+            operation_id: operationId,
+            file_count: files.length,
+            total_bytes: files.reduce((total, file) => total + file.size, 0),
+            max_bytes: files.reduce((maximum, file) => Math.max(maximum, file.size), 0),
+            mime_types: Array.from(new Set(files.map((file) => file.type || "unknown"))),
+          });
+          void Promise.all(files.map((file) => composer.addAttachment(file)))
+            .then(() => {
+              recordClientEvent("client.attachment.composer_add_completed", {
+                operation_id: operationId,
+                file_count: files.length,
+              });
+            })
+            .catch((error) => {
+              recordClientEvent(
+                "client.attachment.composer_add_failed",
+                {
+                  operation_id: operationId,
+                  error_name: error instanceof Error ? error.name : typeof error,
+                  error_detail: error instanceof Error ? error.message.slice(0, 300) : String(error).slice(0, 300),
+                },
+                "error",
+              );
+            });
+        }}
+      />
+    </div>
   );
 };

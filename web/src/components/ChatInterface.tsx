@@ -1,4 +1,4 @@
-import { createContext, useContext } from "react";
+import { createContext, useContext, useEffect } from "react";
 import { useComposerRuntime } from "@assistant-ui/react";
 import { Thread, ThreadUIConfigContext } from "@/components/assistant-ui/thread";
 
@@ -10,6 +10,7 @@ type ChatInterfaceProps = {
   placeholder?: string;
   allowAttachments?: boolean;
   onQuickActions?: () => void;
+  draftKey?: string;
 };
 
 const DEFAULT_SUGGESTIONS: ChatSuggestion[] = [
@@ -28,9 +29,11 @@ export function ChatInterface({
   placeholder = "Escreva uma refeição, pergunta, correção ou cole uma tabela...",
   allowAttachments = true,
   onQuickActions,
+  draftKey,
 }: ChatInterfaceProps) {
   return (
     <div className="chat-thread-shell">
+      {draftKey ? <ComposerDraftPersistence draftKey={draftKey} /> : null}
       <ThreadUIConfigContext.Provider value={{ placeholder, allowAttachments, onQuickActions }}>
         <WelcomeContext.Provider value={{ message: welcomeMessage, suggestions }}>
           <Thread components={{ Welcome: ChatWelcome }} />
@@ -38,6 +41,28 @@ export function ChatInterface({
       </ThreadUIConfigContext.Provider>
     </div>
   );
+}
+
+function ComposerDraftPersistence({ draftKey }: { draftKey: string }) {
+  const composer = useComposerRuntime();
+
+  useEffect(() => {
+    const textKey = `health-monitor.composer-draft.${draftKey}`;
+
+    const persist = () => {
+      const state = composer.getState();
+      if (state.text) localStorage.setItem(textKey, state.text);
+      else localStorage.removeItem(textKey);
+    };
+
+    const storedText = localStorage.getItem(textKey);
+    if (!composer.getState().text && storedText) composer.setText(storedText);
+    const unsubscribe = composer.subscribe(persist);
+
+    return unsubscribe;
+  }, [composer, draftKey]);
+
+  return null;
 }
 
 function ChatWelcome() {

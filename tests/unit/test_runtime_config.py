@@ -18,8 +18,11 @@ class RuntimeConfigTest(unittest.TestCase):
             "LIVE_MODEL_TESTS": "true",
             "LIVE_MODEL_NAME": "ornith:9b",
             "OCR_MODEL": "glm-ocr:latest",
+            "IMAGE_ANALYZER": "ollama",
+            "OLLAMA_VISION_MODEL": "qwen3.6:vision",
             "CLOUD_MODEL_CALLS_ENABLED": "true",
             "CLOUD_MODEL_NAME": "glm-5.2:cloud",
+            "CLIENT_EVENT_LOG_PATH": "/tmp/health-monitor-client-events.jsonl",
         }
         with patch.dict(os.environ, env, clear=True):
             config = load_config()
@@ -31,8 +34,11 @@ class RuntimeConfigTest(unittest.TestCase):
         self.assertTrue(config.live_model_tests)
         self.assertEqual(config.live_model_name, "ornith:9b")
         self.assertEqual(config.ocr_model, "glm-ocr:latest")
+        self.assertEqual(config.image_analyzer, "ollama")
+        self.assertEqual(config.vision_model, "qwen3.6:vision")
         self.assertTrue(config.cloud_model_calls_enabled)
         self.assertEqual(config.cloud_model_name, "glm-5.2:cloud")
+        self.assertEqual(str(config.client_event_log_path), "/tmp/health-monitor-client-events.jsonl")
 
 
 if __name__ == "__main__":

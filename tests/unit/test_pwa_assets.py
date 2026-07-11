@@ -23,7 +23,8 @@ class PwaAssetsTest(unittest.TestCase):
 
         self.assertEqual(manifest["name"], "Health Monitor")
         self.assertEqual(manifest["display"], "standalone")
-        self.assertEqual(manifest["start_url"], "/")
+        self.assertEqual(manifest["id"], "/")
+        self.assertEqual(manifest["start_url"], "/chat")
         self.assertEqual(manifest["icons"][0]["src"], "/app-icon.svg")
         self.assertIn("maskable", manifest["icons"][0]["purpose"])
 

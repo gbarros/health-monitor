@@ -5,10 +5,13 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { NavLink, useLocation } from "react-router-dom";
 import {
   ChefHatIcon,
+  CheckCircle2Icon,
   ClipboardListIcon,
+  Clock3Icon,
   DatabaseIcon,
   LayoutDashboardIcon,
   ListChecksIcon,
+  LoaderCircleIcon,
   MessageSquareTextIcon,
   PanelLeftCloseIcon,
   PanelLeftOpenIcon,
@@ -17,12 +20,15 @@ import {
   ScanLineIcon,
   SettingsIcon,
   SquarePenIcon,
+  ShieldCheckIcon,
   UtensilsCrossedIcon,
   WrenchIcon,
+  XIcon,
 } from "lucide-react";
 import {
   ApiError,
   confirmProposal,
+  createMemoryNote,
   defaultAgentSettings,
   activateChatSession,
   deleteDiaryEntry,
@@ -54,6 +60,7 @@ import {
   STORAGE_KEYS,
   todayIsoForTimezone,
   updateDiaryEntry,
+  updateMemoryNote,
   updateProposalEntry,
   updateWeightEntry,
   uploadDataUrlAttachment,
@@ -80,6 +87,7 @@ import type {
   ChatSession,
   DaySummaryEntry,
   FoodResponse,
+  MemoryNote,
   OnboardingTurn,
   Person,
   Proposal,
@@ -90,6 +98,7 @@ import type {
 type AppView = "chat" | "panel" | "data" | "settings";
 
 const TOP_LEVEL_VIEWS: readonly AppView[] = ["chat", "panel", "data", "settings"];
+const ACTIVE_IMAGE_FLOW_KEY = "health-monitor.active-image-flow";
 
 function App() {
   const queryClient = useQueryClient();
@@ -108,10 +117,11 @@ function App() {
   }, []);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [sessionsOpen, setSessionsOpen] = useState(false);
-  const [logFoodOpen, setLogFoodOpen] = useState(false);
+  const restoredImageFlow = readActiveImageFlow(personId);
+  const [logFoodOpen, setLogFoodOpen] = useState(() => restoredImageFlow === "log_food");
   const [weightOpen, setWeightOpen] = useState(false);
   const [recipeOpen, setRecipeOpen] = useState(false);
-  const [labelOpen, setLabelOpen] = useState(false);
+  const [labelOpen, setLabelOpen] = useState(() => restoredImageFlow === "label_scan");
   const [repeatOpen, setRepeatOpen] = useState(false);
   const [proposalInboxOpen, setProposalInboxOpen] = useState(false);
   const [foodLibraryOpen, setFoodLibraryOpen] = useState(false);
@@ -153,6 +163,18 @@ function App() {
   const people = peopleQuery.data ?? [];
   const activePerson = people.find((person) => person.id === personId) ?? people[0] ?? null;
   const selectedPersonId = activePerson?.id ?? personId;
+  const todayForActivePerson = todayIsoForTimezone(activePerson?.timezone);
+
+  useEffect(() => {
+    if (selectedPersonId && (logFoodOpen || labelOpen)) {
+      localStorage.setItem(
+        ACTIVE_IMAGE_FLOW_KEY,
+        JSON.stringify({ personId: selectedPersonId, flow: labelOpen ? "label_scan" : "log_food" }),
+      );
+    } else {
+      localStorage.removeItem(ACTIVE_IMAGE_FLOW_KEY);
+    }
+  }, [labelOpen, logFoodOpen, selectedPersonId]);
 
   const lastResetPersonRef = useRef<string | null | undefined>(undefined);
   useEffect(() => {
@@ -483,8 +505,12 @@ function App() {
         attachmentIds,
       });
     },
-    onSuccess: async (response) => {
+    onSuccess: async (response, variables) => {
       onAgentResponse(response);
+      if (variables.intent === "log_food" || variables.intent === "label_scan") {
+        const draftKey = imageFlowDraftKey(variables.intent, selectedPersonId ?? "unknown");
+        localStorage.removeItem(imageFlowFormDraftKey(draftKey));
+      }
       setLogFoodOpen(false);
       setRecipeOpen(false);
       setLabelOpen(false);
@@ -659,7 +685,7 @@ function App() {
           </button>
           <button
             type="button"
-            className="icon-button"
+            className="icon-button header-action-secondary"
             aria-label="Abrir alimentos"
             onClick={() => setFoodLibraryOpen(true)}
           >
@@ -668,7 +694,7 @@ function App() {
           </button>
           <button
             type="button"
-            className="icon-button"
+            className="icon-button header-action-secondary"
             aria-label="Abrir tarefas"
             onClick={() => setJobsSheetOpen(true)}
           >
@@ -680,13 +706,16 @@ function App() {
       </header>
 
       <main className="app-main">
-        {activeView === "chat" ? (
+        <div className="chat-view-host" hidden={activeView !== "chat"}>
+        {(
           chatHistoryQuery.isSuccess && (proposalsQuery.isSuccess || proposalsQuery.isError) && (chatSessionsQuery.isSuccess || chatSessionsQuery.isError) && (activeSessionId == null || sessionHistoryQuery.isSuccess) ? (
             <ChatWorkspace
               key={`${selectedPersonId}-${chatReloadKey}-${activeSessionId ?? "none"}`}
               householdId={householdId}
               personId={selectedPersonId}
+              draftKey={`chat:${selectedPersonId}:${activeSessionId ?? "default"}`}
               today={selectedDay}
+              latestDay={todayForActivePerson}
               settings={settings}
               initialMessages={initialMessages}
               proposal={fallbackDraft}
@@ -730,13 +759,15 @@ function App() {
               </div>
             </section>
           )
-        ) : null}
+        )}
+        </div>
 
         {activeView === "panel" ? (
           <section className="page-grid" aria-label="Painel">
           <DayCard
             personId={selectedPersonId}
             day={selectedDay}
+            today={todayForActivePerson}
             onDayChange={setSelectedDay}
             onToast={showToast}
             onEntryDeleted={onEntryDeleted}
@@ -903,6 +934,7 @@ function App() {
 
       {logFoodOpen ? (
         <LogFoodModal
+          draftKey={imageFlowDraftKey("log_food", selectedPersonId)}
           busy={promptBuilderSend.isPending}
           onClose={() => setLogFoodOpen(false)}
           onSubmit={(input) =>
@@ -930,6 +962,7 @@ function App() {
 
       {labelOpen ? (
         <LabelScanModal
+          draftKey={imageFlowDraftKey("label_scan", selectedPersonId)}
           busy={promptBuilderSend.isPending}
           onClose={() => setLabelOpen(false)}
           onSubmit={(input) =>
@@ -1002,7 +1035,9 @@ function App() {
 function ChatWorkspace({
   householdId,
   personId,
+  draftKey,
   today,
+  latestDay,
   settings,
   initialMessages,
   proposal,
@@ -1036,7 +1071,9 @@ function ChatWorkspace({
 }: {
   householdId: string | null;
   personId: string;
+  draftKey: string;
   today: string;
+  latestDay: string;
   settings: AgentSettings;
   initialMessages: readonly ThreadMessageLike[];
   proposal?: Proposal;
@@ -1103,7 +1140,7 @@ function ChatWorkspace({
         />
         <div className="chat-main">
           <div className="chat-top">
-            <DaySummaryStrip personId={personId} day={today} onDayChange={onDayChange} />
+            <DaySummaryStrip personId={personId} day={today} latestDay={latestDay} onDayChange={onDayChange} />
             <QuickActionRow
               onLogFoodClick={onLogFoodClick}
               onRepeatClick={onRepeatClick}
@@ -1120,7 +1157,7 @@ function ChatWorkspace({
               </button>
             </div>
           </div>
-          <ChatInterface onQuickActions={() => setActionsSheetOpen(true)} />
+          <ChatInterface draftKey={draftKey} onQuickActions={() => setActionsSheetOpen(true)} />
           {actionsSheetOpen ? (
             <QuickActionsSheet
               onClose={() => setActionsSheetOpen(false)}
@@ -1148,7 +1185,7 @@ function ChatWorkspace({
           />
         </div>
         <aside className="chat-rail" aria-label="Resumo do dia">
-          <DaySummaryStrip personId={personId} day={today} onDayChange={onDayChange} />
+          <DaySummaryStrip personId={personId} day={today} latestDay={latestDay} onDayChange={onDayChange} />
           <QuickActionRow
             onLogFoodClick={onLogFoodClick}
             onRepeatClick={onRepeatClick}
@@ -1236,6 +1273,36 @@ function generateClientId(): string {
   return `session-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
 }
 
+function readActiveImageFlow(personId: string | null): "log_food" | "label_scan" | null {
+  if (!personId) return null;
+  try {
+    const value = JSON.parse(localStorage.getItem(ACTIVE_IMAGE_FLOW_KEY) ?? "null") as {
+      personId?: string;
+      flow?: string;
+    } | null;
+    if (value?.personId !== personId) return null;
+    return value.flow === "log_food" || value.flow === "label_scan" ? value.flow : null;
+  } catch {
+    return null;
+  }
+}
+
+function imageFlowDraftKey(flow: "log_food" | "label_scan", personId: string): string {
+  return `image-flow:${personId}:${flow}`;
+}
+
+function imageFlowFormDraftKey(draftKey: string): string {
+  return `health-monitor.form-draft.${draftKey}`;
+}
+
+function readJsonDraft<T>(key: string): T | null {
+  try {
+    return JSON.parse(localStorage.getItem(key) ?? "null") as T | null;
+  } catch {
+    return null;
+  }
+}
+
 function viewFromPath(pathname: string): AppView {
   if (pathname === "/panel") return "panel";
   if (pathname === "/data") return "data";
@@ -1295,6 +1362,12 @@ function QuickActionsSheet({
         onClick={(event) => event.stopPropagation()}
       >
         <div className="action-sheet__grip" aria-hidden="true" />
+        <div className="action-sheet__header">
+          <strong>Ações rápidas</strong>
+          <button type="button" aria-label="Fechar ações rápidas" onClick={onClose}>
+            <XIcon size={18} aria-hidden="true" />
+          </button>
+        </div>
         {actions.map((action) => (
           <button
             key={action.label}
@@ -1317,10 +1390,12 @@ function QuickActionsSheet({
 function DaySummaryStrip({
   personId,
   day,
+  latestDay,
   onDayChange,
 }: {
   personId: string;
   day: string;
+  latestDay: string;
   onDayChange: (day: string) => void;
 }) {
   const summaryQuery = useQuery({
@@ -1336,29 +1411,58 @@ function DaySummaryStrip({
   const calories = Math.round(totals?.calories_kcal ?? 0);
   const calorieTarget = Math.round(target?.calories_kcal ?? 0);
   const remaining = calorieTarget > 0 ? calorieTarget - calories : null;
+  const protein = Math.round(totals?.protein_g ?? 0);
+  const proteinTarget = Math.round(target?.protein_g ?? 0);
+  const proteinRemaining = proteinTarget > 0 ? proteinTarget - protein : null;
   return (
     <section className="day-summary-strip" aria-label="Resumo rápido do dia">
       <div>
-        <strong>
-          {calories}
-          {calorieTarget > 0 ? ` / ${calorieTarget}` : ""} kcal
-        </strong>
-        <span>{remaining != null ? `Restante ${remaining}` : "Sem meta calórica ativa"}</span>
+        <strong>{calories.toLocaleString("pt-BR")} kcal</strong>
+        <span>
+          {remaining != null ? calorieBudgetLabel(remaining) : "Sem meta calórica ativa"}
+          {proteinRemaining != null ? ` · ${proteinBudgetLabel(proteinRemaining)}` : ""}
+        </span>
       </div>
       <div className="day-nav compact-day-nav">
         <button type="button" onClick={() => onDayChange(addDays(day, -1))} aria-label="Dia anterior">
           ‹
         </button>
         <label className="day-date-button">
-          <span>{day}</span>
-          <input type="date" value={day} onChange={(event) => onDayChange(event.target.value)} />
+          <span>{formatShortDay(day)}</span>
+          <input
+            type="date"
+            value={day}
+            max={latestDay}
+            aria-label="Escolher outro dia"
+            onChange={(event) => event.target.value && onDayChange(event.target.value)}
+          />
         </label>
-        <button type="button" onClick={() => onDayChange(addDays(day, 1))} aria-label="Próximo dia">
+        <button
+          type="button"
+          onClick={() => onDayChange(addDays(day, 1))}
+          aria-label="Próximo dia"
+          disabled={day >= latestDay}
+        >
           ›
         </button>
       </div>
     </section>
   );
+}
+
+function calorieBudgetLabel(remaining: number): string {
+  const amount = Math.abs(remaining).toLocaleString("pt-BR");
+  return remaining >= 0 ? `${amount} kcal restantes` : `${amount} kcal acima da meta`;
+}
+
+function proteinBudgetLabel(remaining: number): string {
+  const amount = Math.abs(remaining).toLocaleString("pt-BR");
+  return remaining >= 0 ? `Prot: faltam ${amount}g` : `Prot: ${amount}g acima`;
+}
+
+function formatShortDay(day: string): string {
+  const [, month, date] = day.split("-");
+  return `${date}/${month}`;
 }
 
 function DataPage({
@@ -1408,6 +1512,17 @@ function DataPage({
   const memoryNotesQuery = useQuery({
     queryKey: ["memoryNotes", personId],
     queryFn: () => loadMemoryNotes(personId),
+  });
+  const memoryNoteSave = useMutation({
+    mutationFn: (input: { noteId?: string; title: string; body: string }) =>
+      input.noteId
+        ? updateMemoryNote({ noteId: input.noteId, title: input.title, body: input.body })
+        : createMemoryNote({ personId, title: input.title, body: input.body }),
+    onSuccess: async () => {
+      await memoryNotesQuery.refetch();
+      onToast("Memória atualizada.");
+    },
+    onError: (error) => onToast(error instanceof Error ? error.message : "Não foi possível salvar a memória."),
   });
   const memoryNoteDelete = useMutation({
     mutationFn: (noteId: string) => deleteMemoryNote(noteId),
@@ -1506,24 +1621,11 @@ function DataPage({
         columns={["Criado", "Tipo", "Status", "Tentativas", "Erro"]}
         rows={jobs.map((job) => [formatDateTime(job.created_at), job.job_type, job.status, String(job.attempts), job.last_error ?? ""])}
       />
-      <DataTable
-        title="Memória do agente"
-        empty="Nenhuma nota de memória. Peça no chat: “lembre que…”"
-        columns={["Atualizado", "Título", "Conteúdo", ""]}
-        rows={(memoryNotesQuery.data ?? []).map((note) => [
-          formatDateTime(note.updated_at),
-          note.title,
-          note.body,
-          <button
-            key={`delete-${note.id}`}
-            type="button"
-            className="compact-button"
-            disabled={memoryNoteDelete.isPending}
-            onClick={() => memoryNoteDelete.mutate(note.id)}
-          >
-            Excluir
-          </button>,
-        ])}
+      <MemoryWorkspace
+        notes={memoryNotesQuery.data ?? []}
+        loading={memoryNotesQuery.isLoading}
+        onSave={(input) => memoryNoteSave.mutateAsync(input)}
+        onDelete={(noteId) => memoryNoteDelete.mutateAsync(noteId)}
       />
       <DataTable
         title="Chat turns"
@@ -1537,6 +1639,185 @@ function DataPage({
         ])}
       />
     </section>
+  );
+}
+
+function MemoryWorkspace({
+  notes,
+  loading,
+  onSave,
+  onDelete,
+}: {
+  notes: MemoryNote[];
+  loading: boolean;
+  onSave: (input: { noteId?: string; title: string; body: string }) => Promise<MemoryNote>;
+  onDelete: (noteId: string) => Promise<void>;
+}) {
+  const [creating, setCreating] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [title, setTitle] = useState("");
+  const [body, setBody] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const resetEditor = () => {
+    setCreating(false);
+    setEditingId(null);
+    setTitle("");
+    setBody("");
+  };
+  const startEdit = (note: MemoryNote) => {
+    setCreating(false);
+    setEditingId(note.id);
+    setTitle(note.title);
+    setBody(note.body);
+    setConfirmDeleteId(null);
+  };
+  const save = async () => {
+    if (!title.trim() || !body.trim()) return;
+    setBusy(true);
+    try {
+      await onSave({ noteId: editingId ?? undefined, title: title.trim(), body: body.trim() });
+      resetEditor();
+    } catch {
+      // The mutation reports the actionable error through the app toast.
+    } finally {
+      setBusy(false);
+    }
+  };
+  const remove = async (noteId: string) => {
+    setBusy(true);
+    try {
+      await onDelete(noteId);
+      setConfirmDeleteId(null);
+      if (editingId === noteId) resetEditor();
+    } catch {
+      // The mutation reports the actionable error through the app toast.
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="data-section memory-workspace" aria-label="Memória viva do agente">
+      <div className="section-heading">
+        <div>
+          <span>Memória viva</span>
+          <p>O agente usa este espaço em pedidos futuros e pode propor atualizações sem duplicar assuntos.</p>
+        </div>
+        <button
+          type="button"
+          className="compact-button"
+          onClick={() => {
+            resetEditor();
+            setCreating(true);
+          }}
+          disabled={busy || creating}
+        >
+          Nova memória
+        </button>
+      </div>
+
+      {creating ? (
+        <MemoryEditor
+          title={title}
+          body={body}
+          busy={busy}
+          onTitleChange={setTitle}
+          onBodyChange={setBody}
+          onCancel={resetEditor}
+          onSave={save}
+        />
+      ) : null}
+
+      {loading ? <p className="empty-copy">Carregando memória...</p> : null}
+      {!loading && notes.length === 0 && !creating ? (
+        <p className="empty-copy">Nenhuma memória ainda. Adicione uma aqui ou diga no chat: “lembre que…”</p>
+      ) : null}
+
+      <div className="memory-card-grid">
+        {notes.map((note) =>
+          editingId === note.id ? (
+            <MemoryEditor
+              key={note.id}
+              title={title}
+              body={body}
+              busy={busy}
+              onTitleChange={setTitle}
+              onBodyChange={setBody}
+              onCancel={resetEditor}
+              onSave={save}
+            />
+          ) : (
+            <article key={note.id} className="memory-card">
+              <div className="memory-card__header">
+                <div>
+                  <h3>{note.title}</h3>
+                  <small>Atualizada {formatDateTime(note.updated_at)} · {note.source}</small>
+                </div>
+                <div className="memory-card__actions">
+                  <button type="button" onClick={() => startEdit(note)} disabled={busy}>Editar</button>
+                  <button
+                    type="button"
+                    className={confirmDeleteId === note.id ? "danger-action" : undefined}
+                    onClick={() => {
+                      if (confirmDeleteId === note.id) void remove(note.id);
+                      else setConfirmDeleteId(note.id);
+                    }}
+                    disabled={busy}
+                  >
+                    {confirmDeleteId === note.id ? "Confirmar exclusão" : "Excluir"}
+                  </button>
+                </div>
+              </div>
+              <p>{note.body}</p>
+            </article>
+          ),
+        )}
+      </div>
+    </section>
+  );
+}
+
+function MemoryEditor({
+  title,
+  body,
+  busy,
+  onTitleChange,
+  onBodyChange,
+  onCancel,
+  onSave,
+}: {
+  title: string;
+  body: string;
+  busy: boolean;
+  onTitleChange: (value: string) => void;
+  onBodyChange: (value: string) => void;
+  onCancel: () => void;
+  onSave: () => void;
+}) {
+  return (
+    <div className="memory-editor">
+      <label className="field">
+        <span>Título do assunto</span>
+        <input value={title} onChange={(event) => onTitleChange(event.target.value)} placeholder="Ex.: Rotina do café da manhã" />
+      </label>
+      <label className="field">
+        <span>Contexto que deve continuar válido</span>
+        <textarea value={body} onChange={(event) => onBodyChange(event.target.value)} placeholder="Preferências, restrições, rotina e detalhes reutilizáveis…" />
+      </label>
+      <div className="proposal-actions">
+        <button type="button" onClick={onCancel} disabled={busy}>Cancelar</button>
+        <button
+          type="button"
+          className="primary-action"
+          onClick={onSave}
+          disabled={busy || !title.trim() || !body.trim()}
+        >
+          {busy ? "Salvando..." : "Salvar memória"}
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -1822,13 +2103,23 @@ function ToolTraceRenderer() {
     () => ({
       toolName: "agent_tool_trace",
       display: "standalone" as const,
-      render: ({ args }: { args?: { name?: string; status?: string } }) => {
+      render: ({ args }: { args?: { name?: string; status?: string; stageKey?: string } }) => {
         const status = String(args?.status ?? "");
+        const name = String(args?.name ?? "ferramenta");
+        if (args?.stageKey === "server:persisted-run") {
+          return <PersistedAgentRunStatus name={name} status={status} />;
+        }
         return (
           <div className={`tool-trace-chip${status === "failed" ? " is-failed" : ""}`}>
-            <WrenchIcon size={12} aria-hidden="true" />
-            <span>{String(args?.name ?? "ferramenta")}</span>
-            {status ? <span className="tool-trace-chip__status">{status}</span> : null}
+            {status === "completed" ? (
+              <CheckCircle2Icon size={13} aria-hidden="true" />
+            ) : status === "started" ? (
+              <LoaderCircleIcon className="agent-run-spin" size={13} aria-hidden="true" />
+            ) : (
+              <WrenchIcon size={12} aria-hidden="true" />
+            )}
+            <span>{name}</span>
+            {status ? <span className="tool-trace-chip__status">{stageStatusLabel(status)}</span> : null}
           </div>
         );
       },
@@ -1837,6 +2128,69 @@ function ToolTraceRenderer() {
   );
   useAssistantToolUI(tool);
   return null;
+}
+
+function PersistedAgentRunStatus({ name, status }: { name: string; status: string }) {
+  const running = status === "started";
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+
+  useEffect(() => {
+    if (!running) return;
+    const startedAt = Date.now();
+    const timer = window.setInterval(
+      () => setElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000)),
+      1000,
+    );
+    return () => window.clearInterval(timer);
+  }, [running]);
+
+  return (
+    <section className={`agent-run-status${running ? " is-running" : " is-complete"}`} role="status" aria-live="polite">
+      <div className="agent-run-status__icon" aria-hidden="true">
+        {running ? <LoaderCircleIcon className="agent-run-spin" size={20} /> : <CheckCircle2Icon size={20} />}
+      </div>
+      <div className="agent-run-status__content">
+        <div className="agent-run-status__heading">
+          <strong>{name}</strong>
+          {running ? (
+            <span className="agent-run-status__elapsed">
+              <Clock3Icon size={13} aria-hidden="true" />
+              {formatRunElapsed(elapsedSeconds)}
+            </span>
+          ) : null}
+        </div>
+        {running ? (
+          <>
+            <p>
+              {elapsedSeconds >= 45
+                ? "A visão está examinando as fotos; análises complexas podem levar alguns minutos."
+                : "O agente está preparando e analisando as imagens."}
+            </p>
+            <p className="agent-run-status__safe">
+              <ShieldCheckIcon size={15} aria-hidden="true" />
+              <span>Já está salvo no servidor. Pode fechar ou navegar; a resposta aparecerá nesta conversa.</span>
+            </p>
+          </>
+        ) : (
+          <p>A resposta foi salva nesta conversa.</p>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function stageStatusLabel(status: string): string {
+  if (status === "started") return "em andamento";
+  if (status === "completed") return "concluído";
+  if (status === "failed") return "falhou";
+  if (status === "needs_input") return "aguardando confirmação";
+  return status;
+}
+
+function formatRunElapsed(seconds: number): string {
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  return `${minutes}:${String(remainder).padStart(2, "0")}`;
 }
 
 function ProposalToolRenderer({
@@ -1994,18 +2348,29 @@ function WeightModal({
 }
 
 function LogFoodModal({
+  draftKey,
   busy,
   onClose,
   onSubmit,
 }: {
+  draftKey: string;
   busy: boolean;
   onClose: () => void;
   onSubmit: (input: { message: string; files: File[] }) => void;
 }) {
-  const [name, setName] = useState("");
-  const [portion, setPortion] = useState("");
-  const [notes, setNotes] = useState("");
+  const formDraftKey = imageFlowFormDraftKey(draftKey);
+  const stored = readJsonDraft<{ name?: string; portion?: string; notes?: string }>(formDraftKey);
+  const [name, setName] = useState(() => stored?.name ?? "");
+  const [portion, setPortion] = useState(() => stored?.portion ?? "");
+  const [notes, setNotes] = useState(() => stored?.notes ?? "");
   const [files, setFiles] = useState<File[]>([]);
+  useEffect(() => {
+    localStorage.setItem(formDraftKey, JSON.stringify({ name, portion, notes }));
+  }, [formDraftKey, name, notes, portion]);
+  const close = () => {
+    localStorage.removeItem(formDraftKey);
+    onClose();
+  };
   const message = [
     "Registrar alimento:",
     name.trim() ? `Nome: ${name.trim()}` : "",
@@ -2016,7 +2381,7 @@ function LogFoodModal({
     .filter(Boolean)
     .join("\n");
   return (
-    <div className="modal-backdrop" role="presentation" onClick={onClose}>
+    <div className="modal-backdrop" role="presentation" onClick={close}>
       <form
         className="small-modal"
         role="dialog"
@@ -2033,7 +2398,7 @@ function LogFoodModal({
       >
         <div className="section-heading">
           <span>Registrar alimento</span>
-          <button type="button" onClick={onClose}>
+          <button type="button" onClick={close}>
             Fechar
           </button>
         </div>
@@ -2212,22 +2577,31 @@ function RecipeModal({
 }
 
 function LabelScanModal({
+  draftKey,
   busy,
   onClose,
   onSubmit,
 }: {
+  draftKey: string;
   busy: boolean;
   onClose: () => void;
   onSubmit: (input: { message: string; files: File[] }) => void;
 }) {
-  const [product, setProduct] = useState("");
-  const [barcode, setBarcode] = useState("");
-  const [tableText, setTableText] = useState("");
+  const formDraftKey = imageFlowFormDraftKey(draftKey);
+  const stored = readJsonDraft<{ product?: string; barcode?: string; tableText?: string }>(formDraftKey);
+  const [product, setProduct] = useState(() => stored?.product ?? "");
+  const [barcode, setBarcode] = useState(() => stored?.barcode ?? "");
+  const [tableText, setTableText] = useState(() => stored?.tableText ?? "");
   const [files, setFiles] = useState<File[]>([]);
   const appendFiles = (incoming: FileList | null) => {
-    if (incoming?.length) {
-      setFiles((current) => [...current, ...Array.from(incoming)]);
-    }
+    if (incoming?.length) setFiles((current) => [...current, ...Array.from(incoming)]);
+  };
+  useEffect(() => {
+    localStorage.setItem(formDraftKey, JSON.stringify({ product, barcode, tableText }));
+  }, [barcode, formDraftKey, product, tableText]);
+  const close = () => {
+    localStorage.removeItem(formDraftKey);
+    onClose();
   };
   const text = [
     "Rótulo:",
@@ -2242,7 +2616,7 @@ function LabelScanModal({
     .join("\n");
   const canSubmit = text.trim() || files.length > 0;
   return (
-    <div className="modal-backdrop" role="presentation" onClick={onClose}>
+    <div className="modal-backdrop" role="presentation" onClick={close}>
       <form
         className="small-modal"
         role="dialog"
@@ -2258,7 +2632,7 @@ function LabelScanModal({
       >
         <div className="section-heading">
           <span>Escanear rótulo</span>
-          <button type="button" onClick={onClose}>
+          <button type="button" onClick={close}>
             Fechar
           </button>
         </div>

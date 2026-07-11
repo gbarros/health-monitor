@@ -2,6 +2,8 @@ import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter } from "react-router-dom";
 import App from "./App";
+import { ClientErrorBoundary } from "./components/ClientErrorBoundary";
+import { installClientTelemetry } from "./clientTelemetry";
 import "./styles.css";
 import "./tailwind.css";
 
@@ -14,10 +16,14 @@ const queryClient = new QueryClient({
   },
 });
 
+installClientTelemetry();
+
 createRoot(document.getElementById("app")!).render(
   <QueryClientProvider client={queryClient}>
     <BrowserRouter>
-      <App />
+      <ClientErrorBoundary>
+        <App />
+      </ClientErrorBoundary>
     </BrowserRouter>
   </QueryClientProvider>,
 );

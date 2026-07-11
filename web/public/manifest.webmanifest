@@ -1,8 +1,9 @@
 {
   "name": "Health Monitor",
   "short_name": "Health Monitor",
+  "id": "/",
   "description": "Private household nutrition tracker with agent-assisted logging.",
-  "start_url": "/",
+  "start_url": "/chat",
   "scope": "/",
   "display": "standalone",
   "background_color": "#f6f7f3",

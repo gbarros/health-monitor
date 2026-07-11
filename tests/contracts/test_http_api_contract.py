@@ -111,6 +111,37 @@ class HttpApiContractTest(unittest.TestCase):
             },
         )
 
+    def test_memory_workspace_supports_manual_create_update_and_delete(self) -> None:
+        service = HealthMonitorService()
+        household = service.create_household(name="Casa")
+        person = service.create_person(
+            household_id=household.id,
+            name="Gabriel",
+            timezone="America/Sao_Paulo",
+        )
+        api = BaseHttpApi(service)
+
+        created = api.handle(
+            "POST",
+            "/api/memory-notes",
+            {"person_id": person.id, "title": "Rotina", "body": "Café padrão com iogurte."},
+        )
+        updated = api.handle(
+            "PATCH",
+            f"/api/memory-notes/{created.body['id']}",
+            {"title": "Rotina da manhã", "body": "Café padrão com iogurte e whey."},
+        )
+        listed = api.handle("GET", f"/api/memory-notes?person_id={person.id}", None)
+        deleted = api.handle("DELETE", f"/api/memory-notes/{created.body['id']}", None)
+
+        self.assertEqual(created.status_code, 201)
+        self.assertEqual(updated.status_code, 200)
+        self.assertEqual(updated.body["id"], created.body["id"])
+        self.assertEqual(updated.body["title"], "Rotina da manhã")
+        self.assertEqual(listed.body[0]["body"], "Café padrão com iogurte e whey.")
+        self.assertEqual(deleted.status_code, 200)
+        self.assertEqual(service.memory_notes_for_person(person.id), ())
+
     def test_legacy_prompt_builder_endpoints_are_removed_from_http_surface(self) -> None:
         api = BaseHttpApi(HealthMonitorService())
 
@@ -1557,6 +1588,7 @@ class HttpApiContractTest(unittest.TestCase):
                 "object_type": "nutrition_label_image",
                 "mime_type": "image/png",
                 "filename": "label.png",
+                "captured_at": "2026-07-10T18:42:00+00:00",
                 "content_base64": "ZmFrZS1sYWJlbC1pbWFnZQ==",
                 "retention_policy": "keep",
             },
@@ -1590,6 +1622,8 @@ class HttpApiContractTest(unittest.TestCase):
         self.assertEqual(proposal["evidence"][0]["attachment_id"], attachment["id"])
         self.assertEqual(restored_attachment["linked_record_type"], "food_version")
         self.assertEqual(restored_attachment["linked_record_id"], applied["applied_record_ids"][1])
+        self.assertEqual(restored_attachment["filename"], "label.png")
+        self.assertEqual(restored_attachment["captured_at"], "2026-07-10T18:42:00+00:00")
 
     def test_label_scan_can_link_multiple_photo_attachments_through_http_contract(self) -> None:
         api = self.ocr_api()
@@ -2461,7 +2495,8 @@ class HttpApiContractTest(unittest.TestCase):
         self.assertEqual(first, {"event": "run_started", "data": {"status": "started"}})
         self.assertEqual(api.service.chat_turns_for_person(person["id"]), ())
         events = (first, *tuple(event_iter))
-        self.assertEqual([event["event"] for event in events], ["run_started", "final"])
+        self.assertEqual([event["event"] for event in events], ["run_started", "stage", "final"])
+        self.assertEqual(events[1]["data"]["name"], "understanding_request")
         self.assertTrue(events[-1]["data"]["message"])
         self.assertEqual(len(api.service.chat_turns_for_person(person["id"])), 1)
 
@@ -2532,7 +2567,8 @@ class HttpApiContractTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         events = tuple(response.iter_events())
-        self.assertEqual([event["event"] for event in events], ["run_started", "final"])
+        self.assertEqual([event["event"] for event in events], ["run_started", "stage", "final"])
+        self.assertEqual(events[1]["data"]["name"], "understanding_request")
         self.assertEqual(events[0]["data"]["status"], "started")
         self.assertEqual(api.service.chat_turns_for_person(person["id"])[0].user_message, "Pode resumir meu dia?")
 

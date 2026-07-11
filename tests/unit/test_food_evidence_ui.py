@@ -8,14 +8,21 @@ from tests.unit.frontend_helpers import read_web_file
 class FoodEvidenceUiTest(unittest.TestCase):
     def test_chat_composer_accepts_attachments_for_agent_ocr_paths(self) -> None:
         chat = read_web_file("components/ChatInterface.tsx")
+        thread = read_web_file("components/assistant-ui/thread.tsx")
+        attachment = read_web_file("components/assistant-ui/attachment.tsx")
         runtime = read_web_file("hooks/useAgentRuntime.ts")
         api = read_web_file("api.ts")
 
         self.assertIn("allowAttachments = true", chat)
         self.assertIn("ThreadUIConfigContext.Provider value={{ placeholder, allowAttachments, onQuickActions }}", chat)
+        self.assertIn("allowAttachments ? <ComposerAddAttachment />", thread)
+        self.assertIn('aria-label="Abrir ações de saúde"', thread)
+        self.assertIn('aria-label="Anexar foto ou arquivo"', attachment)
         self.assertIn("SimpleImageAttachmentAdapter", runtime)
         self.assertIn("SimpleTextAttachmentAdapter", runtime)
         self.assertIn("uploadMessageAttachments", runtime)
+        self.assertIn("lastMessage.attachments.flatMap", runtime)
+        self.assertIn("uniqueUploadableParts", runtime)
         self.assertIn("uploadDataUrlAttachment", runtime)
         self.assertIn("/api/attachments", api)
 

@@ -19,7 +19,7 @@ from health_monitor.domain.nutrients import Nutrients
 from health_monitor.domain.proposals import CreateDiaryEntriesProposal, ProposalService
 from health_monitor.lookup.estimates import FoodEstimator, NutritionEstimate
 from health_monitor.lookup.foods import FoodLookupCandidate, FoodLookupProvider
-from health_monitor.lookup.labels import LabelTextExtraction, LabelTextExtractor
+from health_monitor.lookup.labels import ImageAnalyzer, LabelTextExtraction, LabelTextExtractor
 from health_monitor.persistence.sqlite_state import StateRepository
 
 
@@ -41,6 +41,20 @@ class AgentExecutionError(RuntimeError):
     def __init__(self, message: str, *, replay_message: str | None = None) -> None:
         super().__init__(message)
         self.replay_message = replay_message
+
+
+class MealDraftClarificationRequired(ValueError):
+    """A meal was partly understood but is not safe to turn into a proposal yet."""
+
+    def __init__(
+        self,
+        *,
+        resolved_items: Sequence[dict[str, object]],
+        unresolved_items: Sequence[dict[str, object]],
+    ) -> None:
+        super().__init__("meal draft needs clarification")
+        self.resolved_items = tuple(resolved_items)
+        self.unresolved_items = tuple(unresolved_items)
 
 
 _CONNECTION_ERROR_TYPE_NAMES = {
@@ -79,7 +93,7 @@ AGENT_INTENT_TEMPLATES: dict[str, str] = {
         "ingredients with grams, and total cooked weight if present; ask for missing essentials."
     ),
     "label_scan": (
-        "The user opened the rotulo helper. Use attachment OCR tools when attachment ids are present, "
+        "The user opened the rotulo helper. Go directly to attachment OCR when attachment ids are present, "
         "then ask for missing product/portion details or draft a food-version proposal."
     ),
     "weight": "The user opened the peso helper. If a numeric weight is present, call log_weight.",
@@ -342,6 +356,7 @@ class AttachmentObject:
     sha256: str
     content: bytes
     filename: str | None = None
+    captured_at: datetime | None = None
     storage_status: str = "stored"
     retention_policy: str = "keep"
     linked_record_type: str | None = None
@@ -410,6 +425,7 @@ class HealthMonitorService:
         food_lookup_provider: FoodLookupProvider | None = None,
         research_lookup_provider: FoodLookupProvider | None = None,
         label_text_extractor: LabelTextExtractor | None = None,
+        image_analyzer: ImageAnalyzer | None = None,
         agent_runtime: str = "deterministic",
         model_provider: str = "deterministic",
         agent_model: str | None = None,
@@ -422,6 +438,7 @@ class HealthMonitorService:
         self.food_lookup_provider = food_lookup_provider
         self.research_lookup_provider = research_lookup_provider
         self.label_text_extractor = label_text_extractor
+        self.image_analyzer = image_analyzer
         self.agent_runtime = agent_runtime
         self.model_provider = model_provider
         self.agent_model = agent_model
@@ -665,6 +682,7 @@ class HealthMonitorService:
         mime_type: str,
         content: bytes,
         filename: str | None = None,
+        captured_at: datetime | None = None,
         retention_policy: str = "keep",
     ) -> AttachmentObject:
         self._require_household(household_id)
@@ -683,6 +701,7 @@ class HealthMonitorService:
             sha256=hashlib.sha256(content).hexdigest(),
             content=content,
             filename=filename,
+            captured_at=captured_at,
             retention_policy=retention_policy,
         )
         self.attachments[attachment.id] = attachment
@@ -728,6 +747,7 @@ class HealthMonitorService:
             sha256=attachment.sha256,
             content=attachment.content,
             filename=attachment.filename,
+            captured_at=attachment.captured_at,
             storage_status=attachment.storage_status,
             retention_policy=attachment.retention_policy,
             linked_record_type=linked_record_type,
@@ -757,6 +777,104 @@ class HealthMonitorService:
             "warnings": list(extraction.warnings),
         }
 
+    def inspect_image_attachment(self, *, attachment_id: str) -> dict[str, Any]:
+        attachment = self.get_attachment(attachment_id)
+        if not attachment.mime_type.startswith("image/"):
+            raise ValueError("attachment is not an image")
+        if self.image_analyzer is None:
+            raise ValueError("image analyzer is not configured")
+        inspection = self.image_analyzer.inspect(
+            image_bytes=attachment.content,
+            mime_type=attachment.mime_type,
+            filename=attachment.filename,
+        )
+        if inspection is None or not inspection.description.strip():
+            raise ValueError("could not inspect image attachment")
+        return {
+            "attachment_id": attachment.id,
+            "filename": attachment.filename,
+            "description": inspection.description.strip(),
+            "image_type": inspection.image_type,
+            "observations": list(inspection.observations),
+            "visible_text": inspection.visible_text,
+            "ocr_recommended": inspection.ocr_recommended,
+            "source": inspection.source,
+            "confidence": inspection.confidence,
+            "warnings": list(inspection.warnings),
+        }
+
+    def inspect_image_attachments(
+        self,
+        *,
+        attachment_ids: Sequence[str],
+        context_text: str = "",
+        ordering_strategy: str = "supplied",
+    ) -> dict[str, Any]:
+        attachments = tuple(self.get_attachment(item) for item in attachment_ids)
+        if not attachments:
+            raise ValueError("image inspection requires at least one attachment")
+        if any(not attachment.mime_type.startswith("image/") for attachment in attachments):
+            raise ValueError("all inspected attachments must be images")
+        if self.image_analyzer is None:
+            raise ValueError("image analyzer is not configured")
+        if ordering_strategy not in {"supplied", "capture_time"}:
+            raise ValueError("unsupported image ordering strategy")
+        if ordering_strategy == "capture_time":
+            attachments = tuple(
+                item[1]
+                for item in sorted(
+                    enumerate(attachments),
+                    key=lambda item: _attachment_capture_sort_key(item[1], item[0]),
+                )
+            )
+        inspect_many = getattr(self.image_analyzer, "inspect_many", None)
+        if not callable(inspect_many):
+            raise ValueError("configured image analyzer does not support image sets")
+        metadata_lines = [
+            f"{index}: filename={attachment.filename or 'unknown'}; "
+            f"captured_at={attachment.captured_at.isoformat() if attachment.captured_at else 'unknown'}"
+            for index, attachment in enumerate(attachments, start=1)
+        ]
+        inspection = inspect_many(
+            images=[
+                (attachment.content, attachment.mime_type, attachment.filename)
+                for attachment in attachments
+            ],
+            context_text=(
+                f"Original user message: {context_text.strip() or 'No additional context.'}\n"
+                f"Ordering strategy chosen by the local agent: {ordering_strategy}.\n"
+                "Attachment metadata in the exact image order sent below:\n"
+                + "\n".join(metadata_lines)
+            ),
+        )
+        if inspection is None or not inspection.description.strip():
+            raise ValueError("could not inspect image attachments")
+        return {
+            "attachment_ids": [attachment.id for attachment in attachments],
+            "ordering_strategy": ordering_strategy,
+            "attachment_metadata": [
+                {
+                    "attachment_id": attachment.id,
+                    "filename": attachment.filename,
+                    "captured_at": attachment.captured_at.isoformat()
+                    if attachment.captured_at
+                    else None,
+                }
+                for attachment in attachments
+            ],
+            "description": inspection.description.strip(),
+            "image_type": inspection.image_type,
+            "images": [dict(item) for item in inspection.images],
+            "chronological_attachment_order": list(
+                inspection.chronological_attachment_order
+            ),
+            "steps": [dict(item) for item in inspection.steps],
+            "questions": list(inspection.questions),
+            "ocr_recommended": inspection.ocr_recommended,
+            "source": inspection.source,
+            "confidence": inspection.confidence,
+            "warnings": list(inspection.warnings),
+        }
     def create_food_with_version(
         self,
         *,
@@ -1699,6 +1817,61 @@ class HealthMonitorService:
         notes.sort(key=lambda note: note.updated_at)
         return tuple(notes)
 
+    def create_memory_note(
+        self,
+        *,
+        person_id: str,
+        title: str,
+        body: str,
+        source: str = "manual_ui",
+    ) -> MemoryNote:
+        self._require_person(person_id)
+        note_title = title.strip()
+        note_body = body.strip()
+        if not note_title:
+            raise ValueError("memory note title is required")
+        if not note_body:
+            raise ValueError("memory note body is required")
+        note = MemoryNote(
+            id=self._next_id("memory_note"),
+            person_id=person_id,
+            title=note_title,
+            body=note_body,
+            source=source,
+        )
+        self.memory_notes[note.id] = note
+        self._persist()
+        return note
+
+    def update_memory_note(
+        self,
+        note_id: str,
+        *,
+        title: str,
+        body: str,
+        source: str = "manual_ui",
+    ) -> MemoryNote:
+        try:
+            existing = self.memory_notes[note_id]
+        except KeyError as exc:
+            raise ValueError(f"unknown memory_note id: {note_id}") from exc
+        note_title = title.strip()
+        note_body = body.strip()
+        if not note_title:
+            raise ValueError("memory note title is required")
+        if not note_body:
+            raise ValueError("memory note body is required")
+        updated = replace(
+            existing,
+            title=note_title,
+            body=note_body,
+            source=source,
+            updated_at=datetime.now(timezone.utc),
+        )
+        self.memory_notes[note_id] = updated
+        self._persist()
+        return updated
+
     def delete_memory_note(self, note_id: str) -> MemoryNote:
         try:
             note = self.memory_notes.pop(note_id)
@@ -2119,10 +2292,11 @@ class HealthMonitorService:
                 {
                     "id": note.id,
                     "title": note.title,
-                    "body": note.body[:800],
+                    "body": note.body[:1200],
+                    "source": note.source,
                     "updated_at": note.updated_at.isoformat(),
                 }
-                for note in self.memory_notes_for_person(person_id)[-20:]
+                for note in self.memory_notes_for_person(person_id)[-24:]
             ],
             "recent_chat_turns": [
                 {
@@ -2202,6 +2376,7 @@ class HealthMonitorService:
                         "openfoodfacts_enabled": self.food_lookup_provider is not None,
                         "research_lookup_enabled": self.research_lookup_provider is not None,
                         "ocr_enabled": self.label_text_extractor is not None,
+                        "image_analysis_enabled": self.image_analyzer is not None,
                     },
                 ),
                 message=message,
@@ -2304,6 +2479,11 @@ class HealthMonitorService:
         stream_event_sink: Callable[[dict[str, Any]], None] | None = None,
     ) -> AgentChatResponse:
         settings = self._agent_settings(agent_settings)
+        # Ordinary chat photos are observation-only on their first turn. The
+        # explicit label helper remains OCR-first because its intent is known.
+        settings["photo_confirmation_required"] = bool(
+            attachment_ids and intent != "label_scan"
+        )
         self._ensure_model_available(settings, replay_message=message)
         person = self._require_person(person_id)
         run = AgentRun(
@@ -2320,12 +2500,28 @@ class HealthMonitorService:
         if stream_event_sink is not None:
             self._agent_event_sinks[person_id] = stream_event_sink
         self._active_meal_draft_requests[person_id] = []
+        pending_turn = AgentChatTurn(
+            id=self._next_id("agent_chat_turn"),
+            person_id=person_id,
+            agent_run_id=run.id,
+            user_message=message,
+            assistant_message="Processando esta mensagem…",
+            behavior_label="processing",
+            created_at=datetime.now(timezone.utc),
+            session_id=self._active_session_id(person_id),
+        )
+        self.chat_turns[pending_turn.id] = pending_turn
+        # Persist before model or vision work begins. Navigation, refreshes, or
+        # a dropped stream must never make an accepted user message disappear.
+        self._persist()
 
         def finish(response: AgentChatResponse) -> AgentChatResponse:
-            self._record_agent_chat_turn(
-                run=run,
-                user_message=message,
-                response=response,
+            self.chat_turns[pending_turn.id] = replace(
+                pending_turn,
+                assistant_message=response.message,
+                behavior_label=response.behavior_label,
+                citations=response.citations,
+                proposal_id=response.proposal_id,
             )
             self._persist()
             return response
@@ -2336,11 +2532,25 @@ class HealthMonitorService:
             if attachment_ids:
                 user_payload = (
                     f"{message}\n\nAttachment ids available to inspect: "
-                    f"{', '.join(str(item) for item in attachment_ids)}"
+                    f"{', '.join(str(item) for item in attachment_ids)}\n"
+                    "photo_confirmation_required="
+                    f"{str(settings['photo_confirmation_required']).lower()}"
                 ).strip()
             if intent_block:
                 user_payload = f"Intent context: {intent_block}\n\nUser message: {user_payload}"
             agent_message = self._agent_context_message(person_id, today, user_payload)
+
+            self.stream_agent_event(
+                person_id,
+                {
+                    "event": "stage",
+                    "data": {
+                        "name": "understanding_request",
+                        "status": "started",
+                        "label": "Entendendo seu pedido…",
+                    },
+                },
+            )
 
             pydantic_response = self._try_pydantic_ai_chat(
                 person_id=person_id,
@@ -2376,18 +2586,13 @@ class HealthMonitorService:
             # with an inline error reply, then let the API report the failure.
             # ModelUnavailableError is excluded — the client outbox owns replay
             # there, and persisting the turn would duplicate it on replay.
-            self._record_agent_chat_turn(
-                run=run,
-                user_message=message,
-                response=AgentChatResponse(
-                    run_id=run.id,
-                    person_id=person_id,
-                    message=(
-                        "O agente encontrou um erro e não concluiu esta mensagem. "
-                        "Você pode reenviar quando quiser."
-                    ),
-                    behavior_label="agent_error",
+            self.chat_turns[pending_turn.id] = replace(
+                pending_turn,
+                assistant_message=(
+                    "O agente encontrou um erro e não concluiu esta mensagem. "
+                    "Você pode reenviar quando quiser."
                 ),
+                behavior_label="agent_error",
             )
             self._persist()
             raise exc
@@ -2581,7 +2786,7 @@ class HealthMonitorService:
             **self._run_metadata(settings),
         )
         self.agent_runs[run.id] = run
-        entries, evidence, totals, estimated_food_versions = self._draft_structured_meal_entries(
+        entries, evidence, totals, estimated_food_versions, unresolved_items = self._draft_structured_meal_entries(
             person=person,
             run=run,
             items=items,
@@ -2589,6 +2794,19 @@ class HealthMonitorService:
             default_meal_type=default_meal_type,
             settings=settings,
         )
+        if unresolved_items:
+            raise MealDraftClarificationRequired(
+                resolved_items=tuple(
+                    {
+                        "phrase": item.get("phrase"),
+                        "food_name": item.get("food_name"),
+                        "quantity_g": item.get("quantity_g"),
+                        "confidence": item.get("confidence"),
+                    }
+                    for item in evidence
+                ),
+                unresolved_items=unresolved_items,
+            )
         proposal_type = "diary_entries_with_estimates" if estimated_food_versions else "diary_entries"
         proposal = self.proposals.create(
             CreateDiaryEntriesProposal(
@@ -2735,7 +2953,7 @@ class HealthMonitorService:
             )
 
         person = self._require_person(person_id)
-        added_entries, added_evidence, _added_totals, new_pending_versions = self._draft_structured_meal_entries(
+        added_entries, added_evidence, _added_totals, new_pending_versions, unresolved_items = self._draft_structured_meal_entries(
             person=person,
             run=run,
             items=add,
@@ -2744,6 +2962,19 @@ class HealthMonitorService:
             settings=settings,
             source_type="structured_meal_amendment",
         )
+        if unresolved_items:
+            raise MealDraftClarificationRequired(
+                resolved_items=tuple(
+                    {
+                        "phrase": item.get("phrase"),
+                        "food_name": item.get("food_name"),
+                        "quantity_g": item.get("quantity_g"),
+                        "confidence": item.get("confidence"),
+                    }
+                    for item in added_evidence
+                ),
+                unresolved_items=unresolved_items,
+            )
         updated_entries.extend(added_entries)
         evidence.extend(added_evidence)
         if not updated_entries:
@@ -2803,27 +3034,45 @@ class HealthMonitorService:
         default_meal_type: str,
         settings: dict[str, Any],
         source_type: str = "structured_meal",
-    ) -> tuple[list[DiaryEntry], list[dict[str, object]], Nutrients, list[dict[str, object]]]:
+    ) -> tuple[
+        list[DiaryEntry],
+        list[dict[str, object]],
+        Nutrients,
+        list[dict[str, object]],
+        list[dict[str, object]],
+    ]:
         entries: list[DiaryEntry] = []
         evidence: list[dict[str, object]] = []
         estimated_food_versions: list[dict[str, object]] = []
+        unresolved_items: list[dict[str, object]] = []
         totals = Nutrients()
         for item in items:
             phrase = str(item.get("phrase") or "").strip()
             quantity_g = float(item.get("quantity_g") or item.get("quantity") or 0)
             if not phrase or quantity_g <= 0:
                 raise ValueError("structured meal items require phrase and positive quantity_g")
-            resolved = self._resolve_meal_item_model_estimate(
-                person=person,
-                run=run,
-                phrase=phrase,
-                item=item,
-            ) or self._resolve_meal_item_food(
-                person=person,
-                run=run,
-                phrase=phrase,
-                settings=settings,
-            )
+            try:
+                resolved = self._resolve_meal_item_model_estimate(
+                    person=person,
+                    run=run,
+                    phrase=phrase,
+                    item=item,
+                ) or self._resolve_meal_item_food(
+                    person=person,
+                    run=run,
+                    phrase=phrase,
+                    settings=settings,
+                )
+            except ValueError as exc:
+                unresolved_items.append(
+                    {
+                        "phrase": phrase,
+                        "quantity_g": quantity_g,
+                        "reason": "nutrition_reference_unresolved",
+                        "detail": str(exc),
+                    }
+                )
+                continue
             if resolved.pending_version is not None:
                 estimated_food_versions.append(resolved.pending_version)
             item_meal_type = normalize_meal_type(str(item.get("meal_type") or default_meal_type))
@@ -2853,7 +3102,7 @@ class HealthMonitorService:
                     **resolved.evidence_source_details,
                 }
             )
-        return entries, evidence, totals, estimated_food_versions
+        return entries, evidence, totals, estimated_food_versions, unresolved_items
 
     def _resolve_meal_item_model_estimate(
         self,
@@ -5084,6 +5333,22 @@ class HealthMonitorService:
         }
 
 
+def _attachment_capture_sort_key(
+    attachment: AttachmentObject,
+    supplied_index: int,
+) -> tuple[object, ...]:
+    """Order only image sets that the local agent identified as sequences."""
+    if attachment.captured_at is not None:
+        return (0, attachment.captured_at.timestamp(), supplied_index)
+    filename = attachment.filename or ""
+    numeric_groups = tuple(
+        int(value) for value in re.findall(r"\d+", filename.rsplit(".", 1)[0])
+    )
+    if numeric_groups:
+        return (1, numeric_groups, filename.casefold(), supplied_index)
+    return (2, filename.casefold(), supplied_index)
+
+
 def infer_meal_type(logged_at: datetime) -> str:
     hour = logged_at.hour
     if 5 <= hour < 11:
@@ -6063,6 +6328,9 @@ def attachment_to_snapshot(attachment: AttachmentObject) -> dict[str, Any]:
         "sha256": attachment.sha256,
         "content_base64": base64.b64encode(attachment.content).decode("ascii"),
         "filename": attachment.filename,
+        "captured_at": attachment.captured_at.isoformat()
+        if attachment.captured_at is not None
+        else None,
         "storage_status": attachment.storage_status,
         "retention_policy": attachment.retention_policy,
         "linked_record_type": attachment.linked_record_type,
@@ -6083,6 +6351,9 @@ def attachment_from_snapshot(value: dict[str, Any]) -> AttachmentObject:
         sha256=value["sha256"],
         content=content,
         filename=value.get("filename"),
+        captured_at=datetime.fromisoformat(value["captured_at"])
+        if value.get("captured_at")
+        else None,
         storage_status=value.get("storage_status", "stored"),
         retention_policy=value.get("retention_policy", "keep"),
         linked_record_type=value.get("linked_record_type"),
