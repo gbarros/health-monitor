@@ -93,7 +93,11 @@ export function DayCard({ personId, day, today, onDayChange, onToast, onEntryDel
           <SummaryStrip summary={summary} target={target} remaining={remaining} />
           {!collapsed ? (
             <>
-              <MealGroups summary={summary} onEntryClick={(entry) => setSelectedEntryId(entry.id)} />
+              <MealGroups
+                summary={summary}
+                proteinTarget={target?.protein_g ?? null}
+                onEntryClick={(entry) => setSelectedEntryId(entry.id)}
+              />
               <WeightStrip
                 trend={weightQuery.data}
                 loading={weightQuery.isLoading}
@@ -135,12 +139,31 @@ function SummaryStrip({
   target: Nutrients | null;
   remaining: Nutrients | null;
 }) {
+  const entryCount = Object.values(summary.meals).reduce((total, entries) => total + entries.length, 0);
+  const withinCalorieTarget =
+    target?.calories_kcal != null && (summary.totals.calories_kcal ?? 0) <= target.calories_kcal;
   return (
     <div className="summary-strip">
       <div className="summary-primary">
         <strong>{number(summary.totals.calories_kcal)} kcal</strong>
         <span>de {target?.calories_kcal != null ? `${number(target.calories_kcal)} kcal` : "meta aberta"}</span>
       </div>
+      <GoalBar
+        label="kcal"
+        value={summary.totals.calories_kcal ?? 0}
+        target={target?.calories_kcal ?? null}
+        fillClass="goal-bar__fill--kcal"
+        overClass="goal-bar__fill--over"
+        format={(value) => `${number(value)} kcal`}
+      />
+      <GoalBar
+        label="proteína"
+        value={summary.totals.protein_g ?? 0}
+        target={target?.protein_g ?? null}
+        fillClass="goal-bar__fill--protein"
+        overClass="goal-bar__fill--met"
+        format={(value) => `${number(value)} g`}
+      />
       <div className="macro-grid" aria-label="Macronutrientes do dia">
         <Macro label="Prot" value={summary.totals.protein_g} target={target?.protein_g} />
         <Macro label="Carb" value={summary.totals.carbs_g} target={target?.carbs_g} />
@@ -148,8 +171,48 @@ function SummaryStrip({
         <Macro label="Fibra" value={summary.totals.fiber_g} target={target?.fiber_g} />
       </div>
       <p className="remaining-line">
-        Restante: {remaining ? remainingText(remaining) : "sem meta ativa para este dia"}
+        {entryCount} {entryCount === 1 ? "item" : "itens"} · Restante:{" "}
+        {remaining ? remainingText(remaining) : "sem meta ativa para este dia"}
+        {withinCalorieTarget ? " ✓" : ""}
       </p>
+    </div>
+  );
+}
+
+function GoalBar({
+  label,
+  value,
+  target,
+  fillClass,
+  overClass,
+  format,
+}: {
+  label: string;
+  value: number;
+  target: number | null;
+  fillClass: string;
+  overClass: string;
+  format: (value: number) => string;
+}) {
+  if (target == null || target <= 0) {
+    return null;
+  }
+  const scale = Math.max(value, target);
+  const fillPct = value > 0 ? Math.max(1.5, (value / scale) * 100) : 0;
+  const targetPct = Math.min(100, (target / scale) * 100);
+  return (
+    <div className="goal-bar" aria-label={`Progresso de ${label}: ${format(value)} de ${format(target)}`}>
+      <div className="goal-bar__track">
+        <div
+          className={`goal-bar__fill ${fillClass}${value > target ? ` ${overClass}` : ""}`}
+          style={{ width: `${fillPct}%` }}
+        />
+        <div className="goal-bar__tick" style={{ left: `${targetPct}%` }} />
+      </div>
+      <div className="goal-bar__labels">
+        <span>{format(value)}</span>
+        <span>meta {format(target)}</span>
+      </div>
     </div>
   );
 }
@@ -168,9 +231,11 @@ function Macro({ label, value, target }: { label: string; value?: number; target
 
 function MealGroups({
   summary,
+  proteinTarget,
   onEntryClick,
 }: {
   summary: DaySummary;
+  proteinTarget: number | null;
   onEntryClick: (entry: DaySummaryEntry) => void;
 }) {
   const groups = orderedMealEntries(summary.meals);
@@ -197,12 +262,24 @@ function MealGroups({
                   <div>
                     <strong>{entry.food_name}</strong>
                     <span>
-                      {number(entry.quantity_g)}g ·{" "}
-                      {[entry.brand, entry.food_version_label].filter(Boolean).join(" · ")}
+                      {[
+                        `${number(entry.quantity_g)}g`,
+                        formatTime(entry.logged_at),
+                        entry.brand,
+                        entry.food_version_label,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")}
                     </span>
                   </div>
+                  <EntryProteinShare protein={entry.nutrients.protein_g} proteinTarget={proteinTarget} />
                   <div className="entry-meta">
-                    <strong>{number(entry.nutrients.calories_kcal)} kcal</strong>
+                    <strong>
+                      {entry.nutrients.protein_g != null && entry.nutrients.protein_g >= 1
+                        ? `${number(entry.nutrients.protein_g)}g P · `
+                        : ""}
+                      {number(entry.nutrients.calories_kcal)} kcal
+                    </strong>
                     <span className={`confidence-badge confidence-${confidenceKind(entry)}`}>
                       {confidenceLabel(entry)}
                     </span>
@@ -215,6 +292,34 @@ function MealGroups({
       ))}
     </div>
   );
+}
+
+function EntryProteinShare({
+  protein,
+  proteinTarget,
+}: {
+  protein?: number | null;
+  proteinTarget: number | null;
+}) {
+  if (proteinTarget == null || proteinTarget <= 0) {
+    return null;
+  }
+  const share = Math.round(((protein ?? 0) / proteinTarget) * 100);
+  return (
+    <div className="entry-protein-share" aria-label={`${share}% da meta de proteína`}>
+      <span>{share}%</span>
+      <div className="entry-protein-share__track">
+        <div
+          className="entry-protein-share__fill"
+          style={{ width: `${Math.min(100, Math.max(share > 0 ? 4 : 0, share))}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function formatTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
 }
 
 function WeightStrip({

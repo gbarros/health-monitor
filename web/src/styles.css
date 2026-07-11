@@ -2429,3 +2429,213 @@ h3 {
   gap: 0.5rem;
   flex-shrink: 0;
 }
+
+.trends-card {
+  display: grid;
+  gap: 18px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+@media (min-width: 900px) {
+  .page-grid .trends-card {
+    grid-column: 1 / -1;
+  }
+
+  .trends-card {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.trend-chart {
+  display: grid;
+  gap: 6px;
+}
+
+.trend-chart__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.trend-chart__head small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.trend-columns {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.trend-col {
+  display: grid;
+  grid-template-rows: 16px 96px auto;
+  gap: 4px;
+  min-height: 0;
+  padding: 4px 2px 6px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  justify-items: center;
+}
+
+.trend-col:hover:not(:disabled) {
+  border-color: var(--border);
+}
+
+.trend-col.is-selected {
+  border-color: var(--border-strong);
+  background: var(--surface-soft);
+}
+
+.trend-col__value {
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.trend-col__area {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  width: 100%;
+  height: 96px;
+  border-radius: 6px;
+  background: var(--surface-soft);
+}
+
+.trend-bar {
+  display: block;
+  width: min(26px, 70%);
+  border-radius: 5px 5px 2px 2px;
+  transition: height 0.25s ease;
+}
+
+.trend-bar--ok {
+  background: #4ca772;
+}
+
+.trend-bar--over {
+  background: #e2705f;
+}
+
+.trend-bar--partial {
+  background: #5a8be8;
+}
+
+.trend-bar--today {
+  outline: 2px solid rgba(22, 35, 34, 0.25);
+  outline-offset: 1px;
+}
+
+.trend-col__target {
+  position: absolute;
+  left: 6%;
+  right: 6%;
+  height: 2px;
+  border-radius: 999px;
+  background: rgba(22, 35, 34, 0.55);
+  pointer-events: none;
+}
+
+.trend-col__day {
+  display: grid;
+  justify-items: center;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.2;
+  text-transform: capitalize;
+}
+
+.goal-bar {
+  display: grid;
+  gap: 3px;
+}
+
+.goal-bar__track {
+  position: relative;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+}
+
+.goal-bar__fill {
+  height: 100%;
+  border-radius: inherit;
+}
+
+.goal-bar__fill--kcal {
+  background: #4ca772;
+}
+
+.goal-bar__fill--protein {
+  background: #5a8be8;
+}
+
+.goal-bar__fill--over {
+  background: #e2705f;
+}
+
+.goal-bar__tick {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  background: rgba(22, 35, 34, 0.6);
+  transform: translateX(-1px);
+}
+
+.goal-bar__labels {
+  display: flex;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.entry-protein-share {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  width: 96px;
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.entry-protein-share__track {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+}
+
+.entry-protein-share__fill {
+  height: 100%;
+  border-radius: inherit;
+  background: #5a8be8;
+}
+
+@media (max-width: 430px) {
+  .entry-protein-share {
+    width: 72px;
+  }
+}
+
+.meal-entry {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
+.goal-bar__fill--met {
+  background: #4ca772;
+}

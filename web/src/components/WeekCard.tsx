@@ -46,28 +46,6 @@ export function WeekCard({ personId, day }: { personId: string; day: string }) {
       </div>
       {summary ? (
         <>
-          <div className="week-bars">
-            {Object.entries(summary.daily).map(([date, nutrients]) => {
-              const target = summary.daily_targets[date]?.calories_kcal;
-              const value = nutrients.calories_kcal ?? 0;
-              const scale = Math.max(target ?? 2000, value, 1);
-              const percent = value > 0 ? Math.max(2, Math.min(100, (value / scale) * 100)) : 0;
-              const targetPercent = target != null ? Math.min(100, (target / scale) * 100) : null;
-              return (
-                <div key={date} className="week-bar-row">
-                  <span>{weekdayLabel(date)}</span>
-                  <div className="week-bar-track">
-                    <div className="week-bar-fill" style={{ width: `${percent}%` }} />
-                    {targetPercent != null ? (
-                      <div className="week-bar-target" style={{ left: `${targetPercent}%` }} />
-                    ) : null}
-                  </div>
-                  <strong>{Math.round(value)}</strong>
-                </div>
-              );
-            })}
-          </div>
-
           {trendWeights.length > 1 ? <WeightTrendChart entries={trendWeights} goal={goalQuery.data ?? null} /> : null}
 
           <p className="week-card__summary">

@@ -18,6 +18,15 @@
       "port": 5173
     },
     {
+      "name": "web-alt",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "cd web && npx vite --host 0.0.0.0 --port 5199"
+      ],
+      "port": 5199
+    },
+    {
       "name": "web-preview",
       "runtimeExecutable": "sh",
       "runtimeArgs": [

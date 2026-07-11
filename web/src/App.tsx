@@ -73,6 +73,7 @@ import { ContextPanel, DataPortabilityPanel } from "./components/ManualInputs";
 import { QuickActionRow, ReplayBanner } from "./components/ModesAndTemplates";
 import { ProposalCard } from "./components/ProposalCard";
 import { ProposalInbox } from "./components/ProposalInbox";
+import { TrendsCard } from "./components/TrendsCard";
 import { WeekCard } from "./components/WeekCard";
 import { useAgentRuntime } from "./hooks/useAgentRuntime";
 import { useOnboardingRuntime } from "./hooks/useOnboardingRuntime";
@@ -764,6 +765,12 @@ function App() {
 
         {activeView === "panel" ? (
           <section className="page-grid" aria-label="Painel">
+          <TrendsCard
+            personId={selectedPersonId}
+            day={selectedDay}
+            today={todayForActivePerson}
+            onDayChange={setSelectedDay}
+          />
           <DayCard
             personId={selectedPersonId}
             day={selectedDay}
